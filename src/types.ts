@@ -6,7 +6,10 @@ import type {
   IMetricsComponent,
   IFetchComponent
 } from '@well-known-components/interfaces'
+import { IPgComponent } from '@well-known-components/pg-component'
 import { metricDeclarations } from './metrics'
+import { IDbComponent } from './adapters/db'
+import { ISlackComponent } from './adapters/slack'
 
 export type GlobalContext = {
   components: BaseComponents
@@ -18,6 +21,10 @@ export type BaseComponents = {
   logs: ILoggerComponent
   server: IHttpServerComponent<GlobalContext>
   metrics: IMetricsComponent<keyof typeof metricDeclarations>
+  fetch: IFetchComponent
+  pg: IPgComponent
+  db: IDbComponent
+  slack: ISlackComponent
 }
 
 // components used in runtime

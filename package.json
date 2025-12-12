@@ -1,14 +1,21 @@
 {
-  "name": "template-server",
+  "name": "delete-account-server",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node --trace-warnings --abort-on-uncaught-exception --unhandled-rejections=strict dist/index.js",
     "test": "jest --forceExit --detectOpenHandles --coverage --verbose",
-    "dev": "nodemon"
+    "test:unit": "jest --forceExit --detectOpenHandles --coverage --verbose test/unit",
+    "dev": "nodemon",
+    "db:migrate": "node-pg-migrate --tsconfig ./tsconfig.json --migrations-dir ./src/migrations",
+    "docs:generate": "redocly build-docs openapi.yaml -o docs/api.html",
+    "docs:lint": "redocly lint openapi.yaml",
+    "docs:preview": "redocly preview-docs openapi.yaml"
   },
   "devDependencies": {
+    "@redocly/cli": "^1.25.15",
     "@types/node": "^20.14.2",
     "@well-known-components/test-helpers": "^1.5.8",
+    "node-pg-migrate": "^7.9.1",
     "typescript": "^5.7.3"
   },
   "prettier": {
@@ -19,12 +26,18 @@
     "tabWidth": 2
   },
   "dependencies": {
+    "@dcl/crypto": "^3.4.5",
+    "@dcl/platform-crypto-middleware": "^1.1.0",
+    "@dcl/schemas": "^19.4.0",
     "@well-known-components/env-config-provider": "^1.2.0",
+    "@well-known-components/fetch-component": "^3.0.0",
     "@well-known-components/http-server": "^2.1.0",
     "@well-known-components/interfaces": "^1.5.1",
     "@well-known-components/logger": "^3.1.3",
     "@well-known-components/metrics": "^2.1.0",
+    "@well-known-components/pg-component": "^1.1.0",
     "nodemon": "^3.1.11",
+    "sql-template-strings": "^2.2.2",
     "ts-node": "^10.9.2"
   },
   "nodemonConfig": {

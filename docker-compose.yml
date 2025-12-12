@@ -1,0 +1,38 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: delete-account-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: delete_account
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    container_name: delete-account-app
+    environment:
+      HTTP_SERVER_PORT: 3000
+      HTTP_SERVER_HOST: 0.0.0.0
+      PG_COMPONENT_PSQL_HOST: postgres
+      PG_COMPONENT_PSQL_PORT: 5432
+      PG_COMPONENT_PSQL_DATABASE: delete_account
+      PG_COMPONENT_PSQL_USER: postgres
+      PG_COMPONENT_PSQL_PASSWORD: postgres
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
