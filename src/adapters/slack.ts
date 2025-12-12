@@ -13,26 +13,70 @@ export async function createSlackComponent({
   logs
 }: Pick<AppComponents, 'config' | 'fetch' | 'logs'>): Promise<ISlackComponent> {
   const logger = logs.getLogger('slack')
-  const webhookUrl = await config.getString('SLACK_WEBHOOK_URL')
+  const botToken = await config.getString('SLACK_BOT_TOKEN')
+  const channelId = await config.getString('SLACK_CHANNEL_ID')
 
-  async function sendMessage(text: string): Promise<void> {
-    if (!webhookUrl) {
-      logger.warn('SLACK_WEBHOOK_URL not configured, skipping notification')
+  const SLACK_API_URL = 'https://slack.com/api/chat.postMessage'
+
+  async function sendMessage(text: string): Promise<string | null> {
+    if (!botToken || !channelId) {
+      logger.warn('SLACK_BOT_TOKEN or SLACK_CHANNEL_ID not configured, skipping notification')
+      return null
+    }
+
+    try {
+      const response = await fetch.fetch(SLACK_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${botToken}`
+        },
+        body: JSON.stringify({
+          channel: channelId,
+          text
+        })
+      })
+
+      const data = await response.json() as { ok: boolean; ts?: string; error?: string }
+
+      if (!data.ok) {
+        logger.error('Failed to send Slack notification', { error: data.error || 'Unknown error' })
+        return null
+      }
+
+      return data.ts || null
+    } catch (error) {
+      logger.error('Error sending Slack notification', { error: (error as Error).message })
+      return null
+    }
+  }
+
+  async function sendThreadReply(text: string, threadTs: string): Promise<void> {
+    if (!botToken || !channelId) {
       return
     }
 
     try {
-      const response = await fetch.fetch(webhookUrl, {
+      const response = await fetch.fetch(SLACK_API_URL, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text })
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${botToken}`
+        },
+        body: JSON.stringify({
+          channel: channelId,
+          text,
+          thread_ts: threadTs
+        })
       })
 
-      if (!response.ok) {
-        logger.error('Failed to send Slack notification', { status: response.status })
+      const data = await response.json() as { ok: boolean; error?: string }
+
+      if (!data.ok) {
+        logger.error('Failed to send Slack thread reply', { error: data.error || 'Unknown error' })
       }
     } catch (error) {
-      logger.error('Error sending Slack notification', { error: (error as Error).message })
+      logger.error('Error sending Slack thread reply', { error: (error as Error).message })
     }
   }
 
@@ -41,25 +85,37 @@ export async function createSlackComponent({
   }
 
   async function sendDeletionRequestNotification(userAddress: string, authChain: AuthChain): Promise<void> {
-    const message = [
+    const mainMessage = [
       `:wastebasket: *Account deletion requested*`,
-      `Address: \`${userAddress}\``,
-      ``,
-      `:white_check_mark: *Authchain validated*`,
-      formatAuthChain(authChain)
+      `Address: \`${userAddress}\``
     ].join('\n')
-    await sendMessage(message)
+
+    const threadTs = await sendMessage(mainMessage)
+
+    if (threadTs) {
+      const authChainMessage = [
+        `:white_check_mark: *Authchain validated*`,
+        formatAuthChain(authChain)
+      ].join('\n')
+      await sendThreadReply(authChainMessage, threadTs)
+    }
   }
 
   async function sendCancellationNotification(userAddress: string, authChain: AuthChain): Promise<void> {
-    const message = [
+    const mainMessage = [
       `:no_entry_sign: *Account deletion cancelled*`,
-      `Address: \`${userAddress}\``,
-      ``,
-      `:white_check_mark: *Authchain validated*`,
-      formatAuthChain(authChain)
+      `Address: \`${userAddress}\``
     ].join('\n')
-    await sendMessage(message)
+
+    const threadTs = await sendMessage(mainMessage)
+
+    if (threadTs) {
+      const authChainMessage = [
+        `:white_check_mark: *Authchain validated*`,
+        formatAuthChain(authChain)
+      ].join('\n')
+      await sendThreadReply(authChainMessage, threadTs)
+    }
   }
 
   return {
