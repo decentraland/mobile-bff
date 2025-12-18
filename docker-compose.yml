@@ -5,7 +5,7 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: delete_account
+      POSTGRES_DB: mobile
     ports:
       - "5432:5432"
     volumes:
@@ -24,10 +24,11 @@ services:
       HTTP_SERVER_HOST: 0.0.0.0
       PG_COMPONENT_PSQL_HOST: postgres
       PG_COMPONENT_PSQL_PORT: 5432
-      PG_COMPONENT_PSQL_DATABASE: delete_account
+      PG_COMPONENT_PSQL_DATABASE: mobile
       PG_COMPONENT_PSQL_USER: postgres
       PG_COMPONENT_PSQL_PASSWORD: postgres
-      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
+      SLACK_CHANNEL_ID: ${SLACK_CHANNEL_ID:-}
     ports:
       - "3000:3000"
     depends_on:

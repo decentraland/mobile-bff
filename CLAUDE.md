@@ -65,7 +65,7 @@ Uses PostgreSQL via `@well-known-components/pg-component`. Connection configured
 
 ### Slack Notifications
 
-Deletion requests and cancellations are reported via Slack webhook. Configure `SLACK_WEBHOOK_URL` in `.env`.
+Deletion requests and cancellations are reported via Slack Bot API. Configure `SLACK_BOT_TOKEN` and `SLACK_CHANNEL_ID` in `.env`.
 
 ### Testing
 

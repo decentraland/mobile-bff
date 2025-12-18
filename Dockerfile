@@ -1,6 +1,4 @@
-ARG RUN
-
-FROM --platform=$BUILDPLATFORM node:20-alpine as builderenv
+FROM node:20-alpine as builderenv
 
 WORKDIR /app
 
