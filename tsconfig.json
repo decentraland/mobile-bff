@@ -18,8 +18,4 @@
   },
   "include": [
     "src"
-  ],
-  "exclude": [
-    "src/migrations"
-  ]
-}
+  ]}
