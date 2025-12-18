@@ -12,9 +12,14 @@
     "noImplicitReturns": true,
     "noImplicitAny": true,
     "noImplicitThis": true,
-    "forceConsistentCasingInFileNames": true
+    "forceConsistentCasingInFileNames": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true
   },
   "include": [
     "src"
+  ],
+  "exclude": [
+    "src/migrations"
   ]
 }

@@ -1,0 +1,424 @@
+openapi: 3.0.3
+info:
+  title: Decentraland Account Deletion API
+  description: |
+    API for managing account deletion requests in Decentraland.
+
+    ## Authentication
+    All `/deletion` endpoints require **signed fetch** authentication per [ADR-44](https://adr.decentraland.org/adr/ADR-44).
+    The user's Ethereum address is extracted from the cryptographic signature in the request headers.
+
+    ### Required Headers for Signed Fetch
+    - `x-identity-auth-chain-0`: First element of the auth chain (signer)
+    - `x-identity-auth-chain-1`: Second element of the auth chain (delegation)
+    - `x-identity-auth-chain-2`: Third element of the auth chain (request signature)
+    - `x-identity-timestamp`: Request timestamp
+    - `x-identity-metadata`: Request metadata (JSON)
+  version: 1.0.0
+  contact:
+    name: Decentraland
+    url: https://decentraland.org
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+
+servers:
+  - url: https://mobile-bff.decentraland.org
+    description: Production server
+  - url: http://localhost:3000
+    description: Local development server
+
+tags:
+  - name: Health
+    description: Health check endpoints
+  - name: Deletion
+    description: Account deletion management endpoints
+
+paths:
+  /ping:
+    get:
+      tags:
+        - Health
+      summary: Health check
+      description: Simple health check endpoint that returns the path
+      operationId: ping
+      security: []
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: /ping
+        '503':
+          description: Service unavailable
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: Service unavailable
+
+  /health/ready:
+    get:
+      tags:
+        - Health
+      summary: Readiness check
+      description: Returns the readiness status of all components
+      operationId: healthReady
+      security: []
+      responses:
+        '200':
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: Service not ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: fail
+                details:
+                  server:
+                    status: fail
+
+  /deletion:
+    post:
+      tags:
+        - Deletion
+      summary: Request account deletion
+      description: |
+        Creates a new account deletion request for the authenticated user.
+        If a previous request exists (pending or cancelled), it will be reset to pending status.
+
+        A Slack notification is sent when a deletion request is created.
+      operationId: requestDeletion
+      security:
+        - signedFetch: []
+      responses:
+        '201':
+          description: Deletion request created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeletionRequestResponse'
+              example:
+                ok: true
+                data:
+                  userAddress: "0x1234567890abcdef1234567890abcdef12345678"
+                  requestedAt: "2025-12-10T21:35:46.000Z"
+                  status: pending
+        '401':
+          description: Unauthorized - Invalid or missing signed fetch
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                unauthorized:
+                  $ref: '#/components/examples/UnauthorizedError'
+                signedFetchError:
+                  $ref: '#/components/examples/SignedFetchError'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                ok: false
+                error: Internal server error
+
+    get:
+      tags:
+        - Deletion
+      summary: Get deletion request status
+      description: |
+        Retrieves the current deletion request status for the authenticated user.
+        Returns `null` in the data field if no deletion request exists.
+      operationId: getDeletionStatus
+      security:
+        - signedFetch: []
+      responses:
+        '200':
+          description: Deletion request status retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeletionStatusResponse'
+              examples:
+                pending:
+                  summary: Pending deletion request
+                  value:
+                    ok: true
+                    data:
+                      userAddress: "0x1234567890abcdef1234567890abcdef12345678"
+                      requestedAt: "2025-12-10T21:35:46.000Z"
+                      cancelledAt: null
+                      status: pending
+                cancelled:
+                  summary: Cancelled deletion request
+                  value:
+                    ok: true
+                    data:
+                      userAddress: "0x1234567890abcdef1234567890abcdef12345678"
+                      requestedAt: "2025-12-10T21:35:46.000Z"
+                      cancelledAt: "2025-12-10T22:00:00.000Z"
+                      status: cancelled
+                noRequest:
+                  summary: No deletion request exists
+                  value:
+                    ok: true
+                    data: null
+        '401':
+          description: Unauthorized - Invalid or missing signed fetch
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                unauthorized:
+                  $ref: '#/components/examples/UnauthorizedError'
+                signedFetchError:
+                  $ref: '#/components/examples/SignedFetchError'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                ok: false
+                error: Internal server error
+
+    delete:
+      tags:
+        - Deletion
+      summary: Cancel deletion request
+      description: |
+        Cancels a pending account deletion request for the authenticated user.
+        Only pending requests can be cancelled.
+
+        A Slack notification is sent when a deletion request is cancelled.
+      operationId: cancelDeletion
+      security:
+        - signedFetch: []
+      responses:
+        '200':
+          description: Deletion request cancelled successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeletionStatusResponse'
+              example:
+                ok: true
+                data:
+                  userAddress: "0x1234567890abcdef1234567890abcdef12345678"
+                  requestedAt: "2025-12-10T21:35:46.000Z"
+                  cancelledAt: "2025-12-10T22:00:00.000Z"
+                  status: cancelled
+        '401':
+          description: Unauthorized - Invalid or missing signed fetch
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                unauthorized:
+                  $ref: '#/components/examples/UnauthorizedError'
+                signedFetchError:
+                  $ref: '#/components/examples/SignedFetchError'
+        '404':
+          description: No pending deletion request found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                ok: false
+                error: No pending deletion request found
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                ok: false
+                error: Internal server error
+
+components:
+  securitySchemes:
+    signedFetch:
+      type: apiKey
+      in: header
+      name: x-identity-auth-chain-0
+      description: |
+        Decentraland Signed Fetch authentication (ADR-44).
+
+        Requires multiple headers:
+        - `x-identity-auth-chain-0`: Signer address and signature
+        - `x-identity-auth-chain-1`: Delegation link
+        - `x-identity-auth-chain-2`: Request signature with method, path, and timestamp
+        - `x-identity-timestamp`: Unix timestamp of the request
+        - `x-identity-metadata`: JSON metadata including intent
+
+  schemas:
+    DeletionRequest:
+      type: object
+      required:
+        - userAddress
+        - requestedAt
+        - status
+      properties:
+        userAddress:
+          type: string
+          description: Ethereum address of the user (lowercase, 42 characters)
+          pattern: "^0x[a-f0-9]{40}$"
+          example: "0x1234567890abcdef1234567890abcdef12345678"
+        requestedAt:
+          type: string
+          format: date-time
+          description: Timestamp when the deletion was requested
+          example: "2025-12-10T21:35:46.000Z"
+        cancelledAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Timestamp when the deletion was cancelled (null if not cancelled)
+          example: "2025-12-10T22:00:00.000Z"
+        status:
+          type: string
+          enum:
+            - pending
+            - cancelled
+          description: Current status of the deletion request
+          example: pending
+
+    DeletionRequestResponse:
+      type: object
+      required:
+        - ok
+        - data
+      properties:
+        ok:
+          type: boolean
+          example: true
+        data:
+          type: object
+          required:
+            - userAddress
+            - requestedAt
+            - status
+          properties:
+            userAddress:
+              type: string
+              pattern: "^0x[a-f0-9]{40}$"
+              example: "0x1234567890abcdef1234567890abcdef12345678"
+            requestedAt:
+              type: string
+              format: date-time
+              example: "2025-12-10T21:35:46.000Z"
+            status:
+              type: string
+              enum:
+                - pending
+              example: pending
+
+    DeletionStatusResponse:
+      type: object
+      required:
+        - ok
+      properties:
+        ok:
+          type: boolean
+          example: true
+        data:
+          type: object
+          description: The deletion request data, or null if no request exists
+          nullable: true
+          properties:
+            userAddress:
+              type: string
+              description: Ethereum address of the user (lowercase, 42 characters)
+              pattern: "^0x[a-f0-9]{40}$"
+              example: "0x1234567890abcdef1234567890abcdef12345678"
+            requestedAt:
+              type: string
+              format: date-time
+              description: Timestamp when the deletion was requested
+              example: "2025-12-10T21:35:46.000Z"
+            cancelledAt:
+              type: string
+              format: date-time
+              nullable: true
+              description: Timestamp when the deletion was cancelled (null if not cancelled)
+              example: "2025-12-10T22:00:00.000Z"
+            status:
+              type: string
+              enum:
+                - pending
+                - cancelled
+              description: Current status of the deletion request
+              example: pending
+
+    ErrorResponse:
+      type: object
+      required:
+        - ok
+        - error
+      properties:
+        ok:
+          type: boolean
+          example: false
+        error:
+          type: string
+          description: Error message
+          example: Unauthorized
+        message:
+          type: string
+          description: Additional error details (present for signed fetch errors)
+          example: This endpoint requires a signed fetch request. See ADR-44.
+
+    HealthResponse:
+      type: object
+      required:
+        - status
+        - details
+      properties:
+        status:
+          type: string
+          enum:
+            - pass
+            - fail
+          example: pass
+        details:
+          type: object
+          properties:
+            server:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum:
+                    - pass
+                    - fail
+                  example: pass
+
+  examples:
+    UnauthorizedError:
+      summary: Missing authentication
+      value:
+        ok: false
+        error: Unauthorized
+
+    SignedFetchError:
+      summary: Invalid signed fetch
+      value:
+        ok: false
+        error: Invalid signature
+        message: This endpoint requires a signed fetch request. See ADR-44.
