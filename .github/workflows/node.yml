@@ -19,24 +19,3 @@ jobs:
         run: npm run build
       - name: test
         run: npm test
-
-  docs:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Use Node.js 20.x
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20.x
-          cache: npm
-      - name: install
-        run: npm ci
-      - name: lint openapi spec
-        run: npm run docs:lint
-      - name: generate docs
-        run: npm run docs:generate
-      - name: upload docs artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: api-docs
-          path: docs/api.html
