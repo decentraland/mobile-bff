@@ -1,16 +1,6 @@
-import { DecentralandSignatureContext, AUTH_CHAIN_HEADER_PREFIX } from '@dcl/platform-crypto-middleware'
-import { AuthChain, AuthLink } from '@dcl/crypto'
+import { DecentralandSignatureContext } from '@dcl/platform-crypto-middleware'
 import { HandlerContextWithPath } from '../../types'
-
-function extractAuthChain(headers: Record<string, string>): AuthChain {
-  const authChain: AuthLink[] = []
-  let i = 0
-  while (headers[`${AUTH_CHAIN_HEADER_PREFIX}${i}`]) {
-    authChain.push(JSON.parse(headers[`${AUTH_CHAIN_HEADER_PREFIX}${i}`]))
-    i++
-  }
-  return authChain
-}
+import { extractAuthChain } from '../../logic/auth'
 
 export async function requestDeletionHandler(
   context: HandlerContextWithPath<'db' | 'slack' | 'logs', '/deletion'> & DecentralandSignatureContext<any>
