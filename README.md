@@ -1,5 +1,6 @@
 # Mobile Backend-for-Frontend
 
+
 Backend-for-frontend service for Decentraland mobile applications. Currently handles account deletion requests.
 
 ## Architecture
