@@ -9,7 +9,7 @@ npm run build      # Compile TypeScript to dist/
 npm run dev        # Run with nodemon (hot reload)
 npm run start      # Run compiled code from dist/
 npm run test       # Run all tests with coverage
-npm run db:migrate # Run database migrations
+npm run migrate # Run database migrations
 
 # Run a single test file
 npx jest test/unit/ping-controller.spec.ts

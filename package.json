@@ -6,7 +6,7 @@
     "test": "jest --forceExit --detectOpenHandles --coverage --verbose",
     "test:unit": "jest --forceExit --detectOpenHandles --coverage --verbose test/unit",
     "dev": "nodemon",
-    "db:migrate": "node-pg-migrate --tsconfig ./tsconfig.json --migrations-dir ./src/migrations",
+    "migrate": "node-pg-migrate --tsconfig ./tsconfig.json --migrations-dir ./src/migrations",
     "docs:generate": "redocly build-docs openapi.yaml -o docs/api.html",
     "docs:lint": "redocly lint openapi.yaml",
     "docs:preview": "redocly preview-docs openapi.yaml"
@@ -15,7 +15,6 @@
     "@redocly/cli": "^1.25.15",
     "@types/node": "^20.14.2",
     "@well-known-components/test-helpers": "^1.5.8",
-    "node-pg-migrate": "^8.0.4",
     "typescript": "^5.7.3"
   },
   "prettier": {
@@ -36,6 +35,7 @@
     "@well-known-components/logger": "^3.1.3",
     "@well-known-components/metrics": "^2.1.0",
     "@well-known-components/pg-component": "^1.1.0",
+    "node-pg-migrate": "^8.0.4",
     "nodemon": "^3.1.11",
     "sql-template-strings": "^2.2.2",
     "ts-node": "^10.9.2"
