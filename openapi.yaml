@@ -23,7 +23,7 @@ info:
     url: https://www.apache.org/licenses/LICENSE-2.0
 
 servers:
-  - url: https://delete-account.decentraland.org
+  - url: https://mobile-bff.decentraland.org
     description: Production server
   - url: http://localhost:3000
     description: Local development server
