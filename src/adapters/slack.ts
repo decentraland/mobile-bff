@@ -13,11 +13,12 @@ export async function createSlackComponent({
   logs
 }: Pick<AppComponents, 'config' | 'fetch' | 'logs'>): Promise<ISlackComponent> {
   const logger = logs.getLogger('slack')
-  const webhookUrl = await config.getString('SLACK_WEBHOOK_URL')
+  // TODO: update this to slack_webhook
+  const webhookUrl = await config.getString('SLACK_BOT_TOKEN')
 
   async function sendMessage(text: string): Promise<void> {
     if (!webhookUrl) {
-      logger.warn('SLACK_WEBHOOK_URL not configured, skipping notification')
+      logger.warn('SLACK_BOT_TOKEN not configured, skipping notification')
       return
     }
 
