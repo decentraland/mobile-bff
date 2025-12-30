@@ -51,6 +51,41 @@ We use the components abstraction to organize our adapters (e.g. HTTP client, da
 
 We make components available to incoming http and kafka handlers. For instance, the http-server handlers have access to things like the database or HTTP components, and pass them down to the controller level for general use.
 
+## Hub Frontend
+
+The Mobile Hub frontend (`@dcl-regenesislabs/mobile-hub`) is served as static files at `/hub/`.
+
+### How It Works
+
+1. The npm package is installed as a dependency
+2. `hub-static-handler.ts` serves files from the package directory
+3. HTML files are rewritten on-the-fly to:
+   - Prefix asset paths with `/hub/` (e.g., `/assets/...` → `/hub/assets/...`)
+   - Set `window.__BASE_PATH__ = "/hub"` for React Router
+
+### Accessing the Frontend
+
+Once deployed, access the hub at:
+```
+https://your-backend-url/hub/
+```
+
+### Changing the Base Path
+
+To serve from a different path, modify `HUB_BASE_PATH` in `src/controllers/handlers/hub-static-handler.ts`:
+
+```typescript
+const HUB_BASE_PATH = '/hub'  // Change to '/app' or any other path
+```
+
+Then update the route in `src/controllers/routes.ts`:
+```typescript
+router.get("/app", hubStaticHandler)
+router.get("/app/(.*)", hubStaticHandler)
+```
+
+---
+
 ## API Endpoints
 
 ### Scene Groups
@@ -106,6 +141,18 @@ These endpoints require signed requests and the wallet address must be in the `A
 | `PG_COMPONENT_PSQL_*` | PostgreSQL connection settings |
 | `ALLOWED_USERS` | Comma-separated wallet addresses allowed to use backoffice endpoints |
 | `SLACK_WEBHOOK_URL` | Webhook for deletion request notifications |
+
+## Dependencies
+
+### Hub Frontend
+
+The hub frontend is served from the npm package:
+
+```bash
+npm install @dcl-regenesislabs/mobile-hub
+```
+
+This installs the built static files that are served at `/hub/`.
 
 ## Database
 
