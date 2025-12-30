@@ -1,7 +1,6 @@
 import { Authenticator } from '@dcl/crypto'
 import { test } from '../components'
 import { getAuthHeaders, getIdentity, Identity } from '../utils/signed-fetch'
-import { createTestDeletionRequest } from '../mocks/db-mock'
 
 describe('deletion controller integration tests', () => {
   test('deletion endpoints with signed fetch', function ({ components }) {
@@ -9,6 +8,8 @@ describe('deletion controller integration tests', () => {
 
     beforeEach(async () => {
       identity = await getIdentity()
+      // Clean up deletion requests for this user
+      await components.pg.query('DELETE FROM deletion_requests')
     })
 
     function makeRequest(method: string, path: string) {
@@ -67,16 +68,9 @@ describe('deletion controller integration tests', () => {
       })
 
       describe('when the user has a pending deletion request', () => {
-        beforeEach(() => {
-          const mockRequest = createTestDeletionRequest({
-            userAddress: identity.realAccount.address.toLowerCase(),
-            status: 'pending'
-          })
-          ;(components.db as any)._setGetDeletionRequestResult(mockRequest)
-        })
-
-        afterEach(() => {
-          ;(components.db as any)._setGetDeletionRequestResult(null)
+        beforeEach(async () => {
+          // Create a real deletion request
+          await components.db.createDeletionRequest(identity.realAccount.address.toLowerCase())
         })
 
         it('should return 200 with the deletion request', async () => {
@@ -103,17 +97,9 @@ describe('deletion controller integration tests', () => {
 
     describe('DELETE /deletion - Cancel deletion request', () => {
       describe('when the user has a pending deletion request', () => {
-        beforeEach(() => {
-          const mockCancelledRequest = createTestDeletionRequest({
-            userAddress: identity.realAccount.address.toLowerCase(),
-            status: 'cancelled',
-            cancelledAt: new Date()
-          })
-          ;(components.db as any)._setCancelDeletionRequestResult(mockCancelledRequest)
-        })
-
-        afterEach(() => {
-          ;(components.db as any)._setCancelDeletionRequestResult(null)
+        beforeEach(async () => {
+          // Create a real deletion request to cancel
+          await components.db.createDeletionRequest(identity.realAccount.address.toLowerCase())
         })
 
         it('should return 200 and cancel the request', async () => {

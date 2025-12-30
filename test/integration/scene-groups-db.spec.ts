@@ -25,11 +25,14 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
       migration: {
         databaseUrl: await getDbConnectionString(config),
         dir: __dirname + '/../../dist/migrations',
-        migrationsTable: 'pgmigrations_test',
+        migrationsTable: 'pgmigrations',
         ignorePattern: '.*\\.map',
         direction: 'up'
       }
     })
+
+    // Start the pg component to run migrations
+    await pg.start()
 
     sceneGroupsDb = await createSceneGroupsDbComponent({ pg })
   })

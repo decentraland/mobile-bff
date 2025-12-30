@@ -3,38 +3,10 @@
 
 import { createRunner, createLocalFetchCompoment } from "@well-known-components/test-helpers"
 import { createDotEnvConfigComponent } from "@well-known-components/env-config-provider"
-import { createLogComponent } from "@well-known-components/logger"
-import { createMetricsComponent } from "@well-known-components/metrics"
-import { createFetchComponent } from "@well-known-components/fetch-component"
-import {
-  createServerComponent,
-  instrumentHttpServerWithPromClientRegistry
-} from "@well-known-components/http-server"
 
 import { main } from "../src/service"
-import { TestComponents, GlobalContext } from "../src/types"
-import { metricDeclarations } from "../src/metrics"
-import { createDbMockComponent } from "./mocks/db-mock"
-import { createSlackMockComponent } from "./mocks/slack-mock"
-import { createSceneGroupsDbMockComponent } from "./mocks/scene-groups-db-mock"
-
-// Config mock for ALLOWED_USERS
-function createConfigMockComponent(baseConfig: any) {
-  const configOverrides: Record<string, string> = {}
-  return {
-    ...baseConfig,
-    getString: async (key: string) => {
-      if (configOverrides[key] !== undefined) return configOverrides[key]
-      return baseConfig.getString(key)
-    },
-    requireString: async (key: string) => {
-      if (configOverrides[key] !== undefined) return configOverrides[key]
-      return baseConfig.requireString(key)
-    },
-    _setConfigValue: (key: string, value: string) => { configOverrides[key] = value },
-    _clearConfigOverrides: () => { Object.keys(configOverrides).forEach(k => delete configOverrides[k]) }
-  }
-}
+import { TestComponents } from "../src/types"
+import { initComponents as originalInitComponents } from "../src/components"
 
 /**
  * Behaves like Jest "describe" function, used to describe a test for a
@@ -49,41 +21,14 @@ export const test = createRunner<TestComponents>({
 })
 
 async function initComponents(): Promise<TestComponents> {
-  // Use a random high port for tests
-  const testPort = String(Math.floor(Math.random() * 10000) + 40000)
-  process.env.HTTP_SERVER_PORT = testPort
+  // Use test database
+  process.env.PG_COMPONENT_PSQL_DATABASE = 'mobile_test'
 
-  const baseConfig = await createDotEnvConfigComponent({ path: [".env.default", ".env"] })
-  const config = createConfigMockComponent(baseConfig) as any
-  const metrics = await createMetricsComponent(metricDeclarations, { config })
-  const logs = await createLogComponent({ metrics })
-  const fetch = await createFetchComponent()
-  const server = await createServerComponent<GlobalContext>({ config, logs }, {})
-
-  // Use mock components for testing (no real DB needed)
-  const pg = {
-    query: jest.fn(),
-    getPool: jest.fn(),
-    start: jest.fn(),
-    stop: jest.fn()
-  } as any
-
-  const db = createDbMockComponent()
-  const slack = createSlackMockComponent()
-  const sceneGroupsDb = createSceneGroupsDbMockComponent()
-
-  await instrumentHttpServerWithPromClientRegistry({ metrics, server, config, registry: metrics.registry! })
+  const config = await createDotEnvConfigComponent({ path: [".env.default", ".env"] })
+  const components = await originalInitComponents()
 
   return {
-    config,
-    logs,
-    server,
-    metrics,
-    fetch,
-    pg,
-    db,
-    slack,
-    sceneGroupsDb,
+    ...components,
     localFetch: await createLocalFetchCompoment(config),
   }
 }

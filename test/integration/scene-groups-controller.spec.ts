@@ -1,10 +1,15 @@
 import { Authenticator } from '@dcl/crypto'
 import { test } from '../components'
 import { getAuthHeaders, getIdentity, Identity } from '../utils/signed-fetch'
-import { createTestSceneGroup } from '../mocks/scene-groups-db-mock'
 
 describe('scene-groups controller integration tests', () => {
   test('public scene-groups endpoints', function ({ components }) {
+    beforeEach(async () => {
+      // Clean up database before each test
+      await components.pg.query('DELETE FROM scene_group_parcels')
+      await components.pg.query('DELETE FROM scene_groups')
+    })
+
     describe('GET /scene-groups', () => {
       it('should return 200 with empty array when no groups exist', async () => {
         const { localFetch } = components
@@ -17,8 +22,12 @@ describe('scene-groups controller integration tests', () => {
       })
 
       it('should return scene groups when they exist', async () => {
-        const mockGroup = createTestSceneGroup()
-        ;(components.sceneGroupsDb as any)._setGetAllSceneGroupsResult([mockGroup])
+        // Create a real scene group
+        const created = await components.sceneGroupsDb.createSceneGroup({
+          name: 'Test Group',
+          color: '#FF6B6B',
+          parcels: [{ x: 10, y: 10 }]
+        })
 
         const { localFetch } = components
         const response = await localFetch.fetch('/scene-groups')
@@ -27,15 +36,16 @@ describe('scene-groups controller integration tests', () => {
         expect(response.status).toBe(200)
         expect(body.ok).toBe(true)
         expect(body.data).toHaveLength(1)
-        expect(body.data[0].name).toBe(mockGroup.name)
-
-        // Clean up
-        ;(components.sceneGroupsDb as any)._setGetAllSceneGroupsResult([])
+        expect(body.data[0].name).toBe('Test Group')
       })
 
       it('should filter by parcel when parcel param is provided', async () => {
-        const mockGroup = createTestSceneGroup({ name: 'Found Group' })
-        ;(components.sceneGroupsDb as any)._setGetSceneGroupByParcelResult(mockGroup)
+        // Create a real scene group with specific parcel
+        await components.sceneGroupsDb.createSceneGroup({
+          name: 'Found Group',
+          color: '#00FF00',
+          parcels: [{ x: 0, y: 0 }]
+        })
 
         const { localFetch } = components
         const response = await localFetch.fetch('/scene-groups?parcel=0,0')
@@ -44,9 +54,6 @@ describe('scene-groups controller integration tests', () => {
         expect(response.status).toBe(200)
         expect(body.ok).toBe(true)
         expect(body.data.name).toBe('Found Group')
-
-        // Clean up
-        ;(components.sceneGroupsDb as any)._setGetSceneGroupByParcelResult(null)
       })
 
       it('should return null when parcel not in any group', async () => {
@@ -90,35 +97,38 @@ describe('scene-groups controller integration tests', () => {
       })
 
       it('should return the group when it exists', async () => {
-        const mockGroup = createTestSceneGroup({ id: 'test-id-123' })
-        ;(components.sceneGroupsDb as any)._setGetSceneGroupByIdResult(mockGroup)
+        // Create a real scene group
+        const created = await components.sceneGroupsDb.createSceneGroup({
+          name: 'Get By ID Group',
+          color: '#0000FF',
+          parcels: [{ x: 20, y: 20 }]
+        })
 
         const { localFetch } = components
-        const response = await localFetch.fetch('/scene-groups/test-id-123')
+        const response = await localFetch.fetch(`/scene-groups/${created.id}`)
         const body = await response.json()
 
         expect(response.status).toBe(200)
         expect(body.ok).toBe(true)
-        expect(body.data.id).toBe('test-id-123')
-
-        // Clean up
-        ;(components.sceneGroupsDb as any)._setGetSceneGroupByIdResult(null)
+        expect(body.data.id).toBe(created.id)
+        expect(body.data.name).toBe('Get By ID Group')
       })
     })
   })
 
   test('backoffice scene-groups endpoints with signed fetch', function ({ components }) {
     let identity: Identity
-    const ALLOWED_ADDRESS = '0x1234567890123456789012345678901234567890'
 
-    beforeEach(async () => {
+    beforeAll(async () => {
       identity = await getIdentity()
-      // Set the allowed users to include our test identity
-      ;(components.config as any)._setConfigValue('ALLOWED_USERS', identity.realAccount.address)
+      // Set ALLOWED_USERS env var before tests
+      process.env.ALLOWED_USERS = identity.realAccount.address
     })
 
-    afterEach(() => {
-      ;(components.config as any)._clearConfigOverrides()
+    beforeEach(async () => {
+      // Clean up database before each test
+      await components.pg.query('DELETE FROM scene_group_parcels')
+      await components.pg.query('DELETE FROM scene_groups')
     })
 
     function makeSignedRequest(method: string, path: string, body?: any) {
@@ -161,13 +171,16 @@ describe('scene-groups controller integration tests', () => {
       })
 
       it('should return 403 when user is not in allowed list', async () => {
-        ;(components.config as any)._setConfigValue('ALLOWED_USERS', '0xOTHER_ADDRESS')
+        process.env.ALLOWED_USERS = '0xOTHER_ADDRESS'
 
         const response = await makeSignedRequest('GET', '/backoffice/scene-groups')
         const body = await response.json()
 
         expect(response.status).toBe(403)
         expect(body.error).toContain('Forbidden')
+
+        // Restore
+        process.env.ALLOWED_USERS = identity.realAccount.address
       })
     })
 
@@ -229,10 +242,14 @@ describe('scene-groups controller integration tests', () => {
       })
 
       it('should return 200 when updating a group', async () => {
-        const mockGroup = createTestSceneGroup({ id: 'update-id', name: 'Updated Name' })
-        ;(components.sceneGroupsDb as any)._setUpdateSceneGroupResult(mockGroup)
+        // Create a group first
+        const created = await components.sceneGroupsDb.createSceneGroup({
+          name: 'Original Name',
+          color: '#111111',
+          parcels: [{ x: 30, y: 30 }]
+        })
 
-        const response = await makeSignedRequest('PUT', '/backoffice/scene-groups/update-id', {
+        const response = await makeSignedRequest('PUT', `/backoffice/scene-groups/${created.id}`, {
           name: 'Updated Name'
         })
         const body = await response.json()
@@ -240,9 +257,6 @@ describe('scene-groups controller integration tests', () => {
         expect(response.status).toBe(200)
         expect(body.ok).toBe(true)
         expect(body.data.name).toBe('Updated Name')
-
-        // Clean up
-        ;(components.sceneGroupsDb as any)._setUpdateSceneGroupResult(null)
       })
     })
 
@@ -256,17 +270,19 @@ describe('scene-groups controller integration tests', () => {
       })
 
       it('should return 200 when deleting a group', async () => {
-        ;(components.sceneGroupsDb as any)._setDeleteSceneGroupResult(true)
+        // Create a group first
+        const created = await components.sceneGroupsDb.createSceneGroup({
+          name: 'To Delete',
+          color: '#222222',
+          parcels: [{ x: 40, y: 40 }]
+        })
 
-        const response = await makeSignedRequest('DELETE', '/backoffice/scene-groups/delete-id')
+        const response = await makeSignedRequest('DELETE', `/backoffice/scene-groups/${created.id}`)
         const body = await response.json()
 
         expect(response.status).toBe(200)
         expect(body.ok).toBe(true)
-        expect(body.data.id).toBe('delete-id')
-
-        // Clean up
-        ;(components.sceneGroupsDb as any)._setDeleteSceneGroupResult(false)
+        expect(body.data.id).toBe(created.id)
       })
     })
   })

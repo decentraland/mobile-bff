@@ -27,7 +27,7 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
 
   const signedFetch = signedFetchMiddleware({
     fetcher: fetch,
-    optional: true,
+    optional: false,
     onError: (err: any) => ({
       error: err.message,
       message: 'This endpoint requires a signed fetch request. See ADR-44.'
