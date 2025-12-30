@@ -24,7 +24,7 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
     pg = await createPgComponent({ logs, config, metrics }, {
       migration: {
         databaseUrl: await getDbConnectionString(config),
-        dir: __dirname + '/../../src/migrations',
+        dir: __dirname + '/../../dist/migrations',
         migrationsTable: 'pgmigrations_test',
         ignorePattern: '.*\\.map',
         direction: 'up'
