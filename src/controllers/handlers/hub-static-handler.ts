@@ -59,7 +59,18 @@ export async function hubStaticHandler(
       body: content,
     }
   } catch {
-    // SPA fallback: serve index.html for missing files
+    const ext = path.extname(urlPath).toLowerCase()
+
+    // Only use SPA fallback for routes (no extension), not for missing assets
+    if (ext && ext !== '.html') {
+      return {
+        status: 404,
+        headers: { 'content-type': 'text/plain' },
+        body: 'Not found',
+      }
+    }
+
+    // SPA fallback: serve index.html for missing routes
     const indexPath = path.join(packageDir, 'index.html')
     const content = await fs.promises.readFile(indexPath)
     const html = rewriteHtmlPaths(content.toString('utf-8'))
