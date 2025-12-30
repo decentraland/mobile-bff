@@ -1,6 +1,6 @@
 # Mobile Backend-for-Frontend
 
-Backend-for-frontend service for Decentraland mobile applications. Currently handles account deletion requests.
+Backend-for-frontend service for Decentraland mobile applications. Handles account deletion requests and scene groups management.
 
 ## Architecture
 
@@ -50,3 +50,72 @@ The layer that converts external data representations into internal ones, and vi
 We use the components abstraction to organize our adapters (e.g. HTTP client, database client, redis client) and any other logic that needs to track mutable state or encode dependencies between stateful components. For every environment (e.g. test, e2e, prod, staging...) we have a different version of our component systems, enabling us to easily inject mocks or different implementations for different contexts.
 
 We make components available to incoming http and kafka handlers. For instance, the http-server handlers have access to things like the database or HTTP components, and pass them down to the controller level for general use.
+
+## API Endpoints
+
+### Scene Groups
+
+Scene groups allow organizing parcels into named collections for the mobile app.
+
+#### Public Endpoints (no auth required)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/scene-groups` | List all scene groups |
+| GET | `/scene-groups?parcel=0,1` | Get scene group containing a specific parcel |
+| GET | `/scene-groups/:id` | Get a scene group by ID |
+
+#### Backoffice Endpoints (signedFetch + ALLOWED_USERS)
+
+These endpoints require signed requests and the wallet address must be in the `ALLOWED_USERS` environment variable.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/backoffice/scene-groups` | List all scene groups |
+| POST | `/backoffice/scene-groups` | Create a new scene group |
+| PUT | `/backoffice/scene-groups/:id` | Update a scene group |
+| DELETE | `/backoffice/scene-groups/:id` | Delete a scene group |
+
+#### Scene Group Schema
+
+```json
+{
+  "id": "uuid",
+  "name": "Group Name",
+  "description": "Optional description",
+  "color": "#FF6B6B",
+  "tags": ["tag1", "tag2"],
+  "parcels": [{ "x": 0, "y": 0 }, { "x": 1, "y": 0 }],
+  "createdAt": "2024-01-01T00:00:00.000Z",
+  "updatedAt": "2024-01-01T00:00:00.000Z"
+}
+```
+
+### Account Deletion
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/deletion-request` | Request account deletion (signedFetch) |
+| GET | `/deletion-status` | Get deletion request status (signedFetch) |
+| DELETE | `/deletion-request` | Cancel deletion request (signedFetch) |
+
+## Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `PG_COMPONENT_PSQL_*` | PostgreSQL connection settings |
+| `ALLOWED_USERS` | Comma-separated wallet addresses allowed to use backoffice endpoints |
+| `SLACK_WEBHOOK_URL` | Webhook for deletion request notifications |
+
+## Database
+
+Uses PostgreSQL with the following tables:
+
+- `scene_groups` - Scene group metadata
+- `scene_group_parcels` - Parcel coordinates (PK on x,y ensures one parcel per group)
+- `deletion_requests` - Account deletion requests
+
+Run migrations with:
+```bash
+npm run migrate
+```

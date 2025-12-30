@@ -10,6 +10,7 @@ import { IPgComponent } from '@well-known-components/pg-component'
 import { metricDeclarations } from './metrics'
 import { IDbComponent } from './adapters/db'
 import { ISlackComponent } from './adapters/slack'
+import { ISceneGroupsDbComponent } from './adapters/scene-groups-db'
 
 export type GlobalContext = {
   components: BaseComponents
@@ -25,6 +26,7 @@ export type BaseComponents = {
   pg: IPgComponent
   db: IDbComponent
   slack: ISlackComponent
+  sceneGroupsDb: ISceneGroupsDbComponent
 }
 
 // components used in runtime

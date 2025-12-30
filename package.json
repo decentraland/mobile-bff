@@ -1,5 +1,5 @@
 {
-  "name": "mobile-bff",
+  "name": "@dcl-regenesislabs/mobile-bff",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node --trace-warnings --abort-on-uncaught-exception --unhandled-rejections=strict dist/index.js",
@@ -25,6 +25,7 @@
     "tabWidth": 2
   },
   "dependencies": {
+    "@dcl-regenesislabs/mobile-hub": "^1.0.0-20602542878.commit-e36a386",
     "@dcl/crypto": "^3.4.5",
     "@dcl/platform-crypto-middleware": "^1.1.0",
     "@dcl/schemas": "^19.4.0",

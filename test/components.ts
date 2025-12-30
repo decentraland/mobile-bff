@@ -16,6 +16,25 @@ import { TestComponents, GlobalContext } from "../src/types"
 import { metricDeclarations } from "../src/metrics"
 import { createDbMockComponent } from "./mocks/db-mock"
 import { createSlackMockComponent } from "./mocks/slack-mock"
+import { createSceneGroupsDbMockComponent } from "./mocks/scene-groups-db-mock"
+
+// Config mock for ALLOWED_USERS
+function createConfigMockComponent(baseConfig: any) {
+  const configOverrides: Record<string, string> = {}
+  return {
+    ...baseConfig,
+    getString: async (key: string) => {
+      if (configOverrides[key] !== undefined) return configOverrides[key]
+      return baseConfig.getString(key)
+    },
+    requireString: async (key: string) => {
+      if (configOverrides[key] !== undefined) return configOverrides[key]
+      return baseConfig.requireString(key)
+    },
+    _setConfigValue: (key: string, value: string) => { configOverrides[key] = value },
+    _clearConfigOverrides: () => { Object.keys(configOverrides).forEach(k => delete configOverrides[k]) }
+  }
+}
 
 /**
  * Behaves like Jest "describe" function, used to describe a test for a
@@ -34,7 +53,8 @@ async function initComponents(): Promise<TestComponents> {
   const testPort = String(Math.floor(Math.random() * 10000) + 40000)
   process.env.HTTP_SERVER_PORT = testPort
 
-  const config = await createDotEnvConfigComponent({ path: [".env.default", ".env"] })
+  const baseConfig = await createDotEnvConfigComponent({ path: [".env.default", ".env"] })
+  const config = createConfigMockComponent(baseConfig) as any
   const metrics = await createMetricsComponent(metricDeclarations, { config })
   const logs = await createLogComponent({ metrics })
   const fetch = await createFetchComponent()
@@ -50,6 +70,7 @@ async function initComponents(): Promise<TestComponents> {
 
   const db = createDbMockComponent()
   const slack = createSlackMockComponent()
+  const sceneGroupsDb = createSceneGroupsDbMockComponent()
 
   await instrumentHttpServerWithPromClientRegistry({ metrics, server, config, registry: metrics.registry! })
 
@@ -62,6 +83,7 @@ async function initComponents(): Promise<TestComponents> {
     pg,
     db,
     slack,
+    sceneGroupsDb,
     localFetch: await createLocalFetchCompoment(config),
   }
 }

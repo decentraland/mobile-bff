@@ -12,6 +12,7 @@ import { AppComponents, GlobalContext } from './types'
 import { metricDeclarations } from './metrics'
 import { createDbComponent } from './adapters/db'
 import { createSlackComponent } from './adapters/slack'
+import { createSceneGroupsDbComponent } from './adapters/scene-groups-db'
 
 // Initialize all the components of the app
 export async function initComponents(): Promise<AppComponents> {
@@ -19,7 +20,13 @@ export async function initComponents(): Promise<AppComponents> {
   const metrics = await createMetricsComponent(metricDeclarations, { config })
   const logs = await createLogComponent({ metrics })
   const fetch = await createFetchComponent()
-  const server = await createServerComponent<GlobalContext>({ config, logs }, {})
+  const server = await createServerComponent<GlobalContext>({ config, logs }, {
+    cors: {
+      origin: '*',
+      methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+      allowedHeaders: ['*']
+    }
+  })
   const statusChecks = await createStatusCheckComponent({ server, config })
 
   const pg = await createPgComponent({ logs, config, metrics }, {
@@ -34,6 +41,7 @@ export async function initComponents(): Promise<AppComponents> {
 
   const db = await createDbComponent({ pg })
   const slack = await createSlackComponent({ config, fetch, logs })
+  const sceneGroupsDb = await createSceneGroupsDbComponent({ pg })
 
   await instrumentHttpServerWithPromClientRegistry({ metrics, server, config, registry: metrics.registry! })
 
@@ -46,7 +54,8 @@ export async function initComponents(): Promise<AppComponents> {
     fetch,
     pg,
     db,
-    slack
+    slack,
+    sceneGroupsDb
   }
 }
 
