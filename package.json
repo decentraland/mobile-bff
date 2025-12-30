@@ -25,7 +25,7 @@
     "tabWidth": 2
   },
   "dependencies": {
-    "@dcl-regenesislabs/mobile-hub": "^1.0.0-20602542878.commit-e36a386",
+    "@dcl-regenesislabs/mobile-hub": "^1.0.0-20602706943.commit-d13162f",
     "@dcl/crypto": "^3.4.5",
     "@dcl/platform-crypto-middleware": "^1.1.0",
     "@dcl/schemas": "^19.4.0",
