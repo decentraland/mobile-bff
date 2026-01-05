@@ -22,6 +22,9 @@ import { getBansHandler } from "./handlers/backoffice/bans/get-bans-handler"
 import { createBanHandler } from "./handlers/backoffice/bans/create-ban-handler"
 import { deleteBanHandler } from "./handlers/backoffice/bans/delete-ban-handler"
 
+// Worlds handlers (public)
+import { getWorldInfoHandler } from "./handlers/worlds/get-world-info-handler"
+
 // Hub frontend (static files)
 import { hubStaticHandler } from "./handlers/hub-static-handler"
 
@@ -64,6 +67,9 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
   router.get("/backoffice/bans", signedFetch, getBansHandler)
   router.post("/backoffice/bans", signedFetch, createBanHandler)
   router.delete("/backoffice/bans/:id", signedFetch, deleteBanHandler)
+
+  // Worlds API (public)
+  router.get("/worlds/:worldName", getWorldInfoHandler)
 
   // Hub frontend (static files)
   router.get("/hub", hubStaticHandler)

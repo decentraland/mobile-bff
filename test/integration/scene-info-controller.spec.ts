@@ -84,7 +84,7 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
           parcels: [{ x: 10, y: 20 }, { x: 11, y: 20 }]
         })
 
-        const context = createContext('?parcels=10,20')
+        const context = createContext('?parcel=10,20')
         const response = await getSceneInfoHandler(context as any)
 
         expect(response.status).toBe(200)
@@ -104,7 +104,7 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
         })
         await bansDb.createGroupBan({ groupId: group.id, reason: 'Test ban' }, '0x1234')
 
-        const context = createContext('?parcels=30,40')
+        const context = createContext('?parcel=30,40')
         const response = await getSceneInfoHandler(context as any)
 
         expect(response.status).toBe(200)
@@ -121,7 +121,7 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
         })
 
         // Query with just one parcel
-        const context = createContext('?parcels=51,60')
+        const context = createContext('?parcel=51,60')
         const response = await getSceneInfoHandler(context as any)
 
         expect(response.status).toBe(200)
@@ -132,43 +132,27 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
 
     describe('for isolated scenes (no group)', () => {
       it('should return scene info with isBanned=false when not banned', async () => {
-        const context = createContext('?parcels=100,200;101,200')
+        const context = createContext('?parcel=100,200')
         const response = await getSceneInfoHandler(context as any)
 
         expect(response.status).toBe(200)
         expect(response.body.ok).toBe(true)
         expect(response.body.data.type).toBe('scene')
-        expect(response.body.data.parcels).toEqual([{ x: 100, y: 200 }, { x: 101, y: 200 }])
+        expect(response.body.data.parcel).toEqual({ x: 100, y: 200 })
         expect(response.body.data.isBanned).toBe(false)
       })
 
       it('should return scene info with isBanned=true when scene is banned', async () => {
-        // Ban the scene first
-        const parcels = [{ x: 150, y: 250 }, { x: 151, y: 250 }]
+        // Ban the scene first (single parcel)
+        const parcels = [{ x: 150, y: 250 }]
         await bansDb.createSceneBan({ parcels, reason: 'Inappropriate content' }, '0x5678')
 
-        const context = createContext('?parcels=150,250;151,250')
+        const context = createContext('?parcel=150,250')
         const response = await getSceneInfoHandler(context as any)
 
         expect(response.status).toBe(200)
         expect(response.body.data.type).toBe('scene')
         expect(response.body.data.isBanned).toBe(true)
-      })
-
-      it('should NOT find ban if parcels dont match exactly', async () => {
-        // Ban with specific parcels
-        await bansDb.createSceneBan({
-          parcels: [{ x: 200, y: 300 }, { x: 201, y: 300 }],
-          reason: 'Test'
-        }, '0xABC')
-
-        // Query with subset of parcels
-        const context = createContext('?parcels=200,300')
-        const response = await getSceneInfoHandler(context as any)
-
-        expect(response.status).toBe(200)
-        expect(response.body.data.type).toBe('scene')
-        expect(response.body.data.isBanned).toBe(false) // Not banned because parcels don't match
       })
 
       it('should handle negative coordinates', async () => {
@@ -177,7 +161,7 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
           reason: 'Banned negative coords'
         }, '0xDEF')
 
-        const context = createContext('?parcels=-50,-60')
+        const context = createContext('?parcel=-50,-60')
         const response = await getSceneInfoHandler(context as any)
 
         expect(response.status).toBe(200)
@@ -187,16 +171,16 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
     })
 
     describe('validation errors', () => {
-      it('should return 400 when parcels parameter is missing', async () => {
+      it('should return 400 when parcel parameter is missing', async () => {
         const context = createContext('')
         const response = await getSceneInfoHandler(context as any)
 
         expect(response.status).toBe(400)
-        expect(response.body.error).toContain('Missing parcels')
+        expect(response.body.error).toContain('Missing parcel')
       })
 
       it('should return 400 for invalid parcel format', async () => {
-        const context = createContext('?parcels=invalid')
+        const context = createContext('?parcel=invalid')
         const response = await getSceneInfoHandler(context as any)
 
         expect(response.status).toBe(400)
@@ -213,7 +197,7 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
         })
 
         // Initially not banned
-        let context = createContext('?parcels=300,400')
+        let context = createContext('?parcel=300,400')
         let response = await getSceneInfoHandler(context as any)
         expect(response.body.data.isBanned).toBe(false)
 
@@ -221,7 +205,7 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
         const ban = await bansDb.createGroupBan({ groupId: group.id }, '0x123')
 
         // Now should be banned
-        context = createContext('?parcels=300,400')
+        context = createContext('?parcel=300,400')
         response = await getSceneInfoHandler(context as any)
         expect(response.body.data.isBanned).toBe(true)
 
@@ -229,7 +213,7 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
         await bansDb.deleteBan(ban.id)
 
         // Should be unbanned again
-        context = createContext('?parcels=300,400')
+        context = createContext('?parcel=300,400')
         response = await getSceneInfoHandler(context as any)
         expect(response.body.data.isBanned).toBe(false)
       })
@@ -238,7 +222,7 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
         const parcels = [{ x: 500, y: 600 }]
 
         // Initially not banned
-        let context = createContext('?parcels=500,600')
+        let context = createContext('?parcel=500,600')
         let response = await getSceneInfoHandler(context as any)
         expect(response.body.data.isBanned).toBe(false)
 
@@ -246,7 +230,7 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
         const ban = await bansDb.createSceneBan({ parcels }, '0x456')
 
         // Now should be banned
-        context = createContext('?parcels=500,600')
+        context = createContext('?parcel=500,600')
         response = await getSceneInfoHandler(context as any)
         expect(response.body.data.isBanned).toBe(true)
 
@@ -254,7 +238,7 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
         await bansDb.deleteBan(ban.id)
 
         // Should be unbanned again
-        context = createContext('?parcels=500,600')
+        context = createContext('?parcel=500,600')
         response = await getSceneInfoHandler(context as any)
         expect(response.body.data.isBanned).toBe(false)
       })

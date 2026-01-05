@@ -8,8 +8,10 @@ export type ParcelCoord = {
 
 export type Ban = {
   id: string
-  groupId: string | null  // If set, it's a group ban; if null, it's a scene ban
+  groupId: string | null  // If set, it's a group ban
+  worldName: string | null  // If set, it's a world ban
   parcels: ParcelCoord[]  // For scene bans, the parcels that identify the scene
+  sceneId: string | null  // Entity/scene ID at ban time (for detecting redeploys)
   reason?: string
   createdBy: string
   createdAt: number
@@ -22,6 +24,13 @@ export type CreateGroupBanInput = {
 
 export type CreateSceneBanInput = {
   parcels: ParcelCoord[]
+  sceneId?: string  // Entity ID of the scene at ban time
+  reason?: string
+}
+
+export type CreateWorldBanInput = {
+  worldName: string
+  sceneId?: string  // Entity ID of the world at ban time
   reason?: string
 }
 
@@ -30,15 +39,19 @@ export type IBansDbComponent = {
   getBanById(id: string): Promise<Ban | null>
   getBanByGroupId(groupId: string): Promise<Ban | null>
   getBanByParcels(parcels: ParcelCoord[]): Promise<Ban | null>
+  getBanByWorldName(worldName: string): Promise<Ban | null>
   createGroupBan(input: CreateGroupBanInput, createdBy: string): Promise<Ban>
   createSceneBan(input: CreateSceneBanInput, createdBy: string): Promise<Ban>
+  createWorldBan(input: CreateWorldBanInput, createdBy: string): Promise<Ban>
   deleteBan(id: string): Promise<boolean>
 }
 
 type BanRow = {
   id: string
   groupId: string | null
+  worldName: string | null
   parcels: ParcelCoord[] | null
+  sceneId: string | null
   reason: string | null
   createdBy: string
   createdAt: Date
@@ -55,7 +68,9 @@ export async function createBansDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
     return {
       id: row.id,
       groupId: row.groupId,
+      worldName: row.worldName,
       parcels: row.parcels || [],
+      sceneId: row.sceneId,
       reason: row.reason || undefined,
       createdBy: row.createdBy,
       createdAt: new Date(row.createdAt).getTime()
@@ -67,6 +82,8 @@ export async function createBansDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
       SELECT
         b.id,
         b.group_id as "groupId",
+        b.world_name as "worldName",
+        b.scene_id as "sceneId",
         b.reason,
         b.created_by as "createdBy",
         b.created_at as "createdAt",
@@ -85,6 +102,8 @@ export async function createBansDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
       SELECT
         b.id,
         b.group_id as "groupId",
+        b.world_name as "worldName",
+        b.scene_id as "sceneId",
         b.reason,
         b.created_by as "createdBy",
         b.created_at as "createdAt",
@@ -103,6 +122,8 @@ export async function createBansDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
       SELECT
         b.id,
         b.group_id as "groupId",
+        b.world_name as "worldName",
+        b.scene_id as "sceneId",
         b.reason,
         b.created_by as "createdBy",
         b.created_at as "createdAt",
@@ -114,10 +135,28 @@ export async function createBansDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
     return result.rows.length > 0 ? toBan(result.rows[0]) : null
   }
 
+  async function getBanByWorldName(worldName: string): Promise<Ban | null> {
+    const query = SQL`
+      SELECT
+        b.id,
+        b.group_id as "groupId",
+        b.world_name as "worldName",
+        b.scene_id as "sceneId",
+        b.reason,
+        b.created_by as "createdBy",
+        b.created_at as "createdAt",
+        '[]'::json as parcels
+      FROM bans b
+      WHERE b.world_name = ${worldName}
+    `
+    const result = await pg.query<BanRow>(query)
+    return result.rows.length > 0 ? toBan(result.rows[0]) : null
+  }
+
   async function getBanByParcels(parcels: ParcelCoord[]): Promise<Ban | null> {
     if (parcels.length === 0) return null
 
-    // Find scene bans (group_id IS NULL) that have matching parcels
+    // Find scene bans (group_id IS NULL AND world_name IS NULL) that have matching parcels
     // We need to match the exact set of parcels
     const parcelKey = generateParcelKey(parcels)
 
@@ -125,13 +164,15 @@ export async function createBansDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
       SELECT
         b.id,
         b.group_id as "groupId",
+        b.world_name as "worldName",
+        b.scene_id as "sceneId",
         b.reason,
         b.created_by as "createdBy",
         b.created_at as "createdAt",
         COALESCE(json_agg(json_build_object('x', bp.x, 'y', bp.y)) FILTER (WHERE bp.x IS NOT NULL), '[]') as parcels
       FROM bans b
       LEFT JOIN ban_parcels bp ON b.id = bp.ban_id
-      WHERE b.group_id IS NULL
+      WHERE b.group_id IS NULL AND b.world_name IS NULL
       GROUP BY b.id
       HAVING string_agg(bp.x || ',' || bp.y, '|' ORDER BY bp.x, bp.y) = ${parcelKey}
     `
@@ -161,8 +202,8 @@ export async function createBansDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
 
     try {
       const insertBanQuery = SQL`
-        INSERT INTO bans (group_id, reason, created_by)
-        VALUES (NULL, ${input.reason || null}, ${createdBy})
+        INSERT INTO bans (group_id, scene_id, reason, created_by)
+        VALUES (NULL, ${input.sceneId || null}, ${input.reason || null}, ${createdBy})
         RETURNING id
       `
       const banResult = await pg.query<{ id: string }>(insertBanQuery)
@@ -185,6 +226,18 @@ export async function createBansDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
     }
   }
 
+  async function createWorldBan(input: CreateWorldBanInput, createdBy: string): Promise<Ban> {
+    const insertBanQuery = SQL`
+      INSERT INTO bans (world_name, scene_id, reason, created_by)
+      VALUES (${input.worldName}, ${input.sceneId || null}, ${input.reason || null}, ${createdBy})
+      RETURNING id
+    `
+    const banResult = await pg.query<{ id: string }>(insertBanQuery)
+    const banId = banResult.rows[0].id
+
+    return (await getBanById(banId))!
+  }
+
   async function deleteBan(id: string): Promise<boolean> {
     const query = SQL`DELETE FROM bans WHERE id = ${id}`
     const result = await pg.query(query)
@@ -196,8 +249,10 @@ export async function createBansDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
     getBanById,
     getBanByGroupId,
     getBanByParcels,
+    getBanByWorldName,
     createGroupBan,
     createSceneBan,
+    createWorldBan,
     deleteBan
   }
 }

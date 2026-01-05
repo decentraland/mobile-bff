@@ -69,7 +69,7 @@ describe('create-ban-handler', () => {
         const response = await createBanHandler(context as any)
 
         expect(response.status).toBe(400)
-        expect(response.body.error).toContain('Cannot specify both')
+        expect(response.body.error).toContain('Cannot specify multiple')
       })
 
       it('should return 400 when parcels have invalid structure', async () => {

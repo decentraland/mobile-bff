@@ -25,7 +25,7 @@ describe('get-scene-info-handler', () => {
     }
   }
 
-  describe('when parcels parameter is missing', () => {
+  describe('when parcel parameter is missing', () => {
     it('should return 400 Bad Request', async () => {
       const context = createContext('')
       const response = await getSceneInfoHandler(context as any)
@@ -33,14 +33,14 @@ describe('get-scene-info-handler', () => {
       expect(response.status).toBe(400)
       expect(response.body).toEqual({
         ok: false,
-        error: 'Missing parcels parameter. Use parcels=x1,y1;x2,y2'
+        error: 'Missing parcel parameter. Use parcel=x,y'
       })
     })
   })
 
-  describe('when parcels format is invalid', () => {
+  describe('when parcel format is invalid', () => {
     it('should return 400 for malformed parcel', async () => {
-      const context = createContext('?parcels=invalid')
+      const context = createContext('?parcel=invalid')
       const response = await getSceneInfoHandler(context as any)
 
       expect(response.status).toBe(400)
@@ -48,15 +48,15 @@ describe('get-scene-info-handler', () => {
     })
 
     it('should return 400 for non-integer coordinates', async () => {
-      const context = createContext('?parcels=abc,2')
+      const context = createContext('?parcel=abc,2')
       const response = await getSceneInfoHandler(context as any)
 
       expect(response.status).toBe(400)
       expect(response.body.error).toContain('Must be integers')
     })
 
-    it('should return 400 for empty parcels', async () => {
-      const context = createContext('?parcels=')
+    it('should return 400 for empty parcel', async () => {
+      const context = createContext('?parcel=')
       const response = await getSceneInfoHandler(context as any)
 
       expect(response.status).toBe(400)
@@ -77,7 +77,7 @@ describe('get-scene-info-handler', () => {
     it('should return group info with isBanned=false when not banned', async () => {
       mockBansDb.getBanByGroupId.mockResolvedValue(null)
 
-      const context = createContext('?parcels=10,20')
+      const context = createContext('?parcel=10,20')
       const response = await getSceneInfoHandler(context as any)
 
       expect(response.status).toBe(200)
@@ -86,7 +86,8 @@ describe('get-scene-info-handler', () => {
         data: {
           type: 'group',
           group: testGroup,
-          isBanned: false
+          isBanned: false,
+          sceneId: null
         }
       })
     })
@@ -94,7 +95,7 @@ describe('get-scene-info-handler', () => {
     it('should return group info with isBanned=true when banned', async () => {
       mockBansDb.getBanByGroupId.mockResolvedValue(createTestGroupBan('group-123'))
 
-      const context = createContext('?parcels=10,20')
+      const context = createContext('?parcel=10,20')
       const response = await getSceneInfoHandler(context as any)
 
       expect(response.status).toBe(200)
@@ -103,13 +104,14 @@ describe('get-scene-info-handler', () => {
         data: {
           type: 'group',
           group: testGroup,
-          isBanned: true
+          isBanned: true,
+          sceneId: null
         }
       })
     })
 
     it('should check group ban by group id', async () => {
-      const context = createContext('?parcels=10,20')
+      const context = createContext('?parcel=10,20')
       await getSceneInfoHandler(context as any)
 
       expect(mockBansDb.getBanByGroupId).toHaveBeenCalledWith('group-123')
@@ -124,7 +126,7 @@ describe('get-scene-info-handler', () => {
     it('should return scene info with isBanned=false when not banned', async () => {
       mockBansDb.getBanByParcels.mockResolvedValue(null)
 
-      const context = createContext('?parcels=50,60;51,60')
+      const context = createContext('?parcel=50,60')
       const response = await getSceneInfoHandler(context as any)
 
       expect(response.status).toBe(200)
@@ -132,17 +134,18 @@ describe('get-scene-info-handler', () => {
         ok: true,
         data: {
           type: 'scene',
-          parcels: [{ x: 50, y: 60 }, { x: 51, y: 60 }],
-          isBanned: false
+          parcel: { x: 50, y: 60 },
+          isBanned: false,
+          sceneId: null
         }
       })
     })
 
     it('should return scene info with isBanned=true when banned', async () => {
-      const parcels = [{ x: 50, y: 60 }, { x: 51, y: 60 }]
+      const parcels = [{ x: 50, y: 60 }]
       mockBansDb.getBanByParcels.mockResolvedValue(createTestSceneBan(parcels))
 
-      const context = createContext('?parcels=50,60;51,60')
+      const context = createContext('?parcel=50,60')
       const response = await getSceneInfoHandler(context as any)
 
       expect(response.status).toBe(200)
@@ -150,33 +153,28 @@ describe('get-scene-info-handler', () => {
         ok: true,
         data: {
           type: 'scene',
-          parcels: parcels,
-          isBanned: true
+          parcel: { x: 50, y: 60 },
+          isBanned: true,
+          sceneId: null
         }
       })
     })
 
-    it('should check scene ban by parcels', async () => {
-      const context = createContext('?parcels=50,60;51,60')
+    it('should check scene ban by parcel', async () => {
+      const context = createContext('?parcel=50,60')
       await getSceneInfoHandler(context as any)
 
-      expect(mockBansDb.getBanByParcels).toHaveBeenCalledWith([
-        { x: 50, y: 60 },
-        { x: 51, y: 60 }
-      ])
+      expect(mockBansDb.getBanByParcels).toHaveBeenCalledWith([{ x: 50, y: 60 }])
     })
 
     it('should handle negative coordinates', async () => {
       mockBansDb.getBanByParcels.mockResolvedValue(null)
 
-      const context = createContext('?parcels=-10,-20;-11,-20')
+      const context = createContext('?parcel=-10,-20')
       const response = await getSceneInfoHandler(context as any)
 
       expect(response.status).toBe(200)
-      expect(response.body.data.parcels).toEqual([
-        { x: -10, y: -20 },
-        { x: -11, y: -20 }
-      ])
+      expect(response.body.data.parcel).toEqual({ x: -10, y: -20 })
     })
   })
 
@@ -184,7 +182,7 @@ describe('get-scene-info-handler', () => {
     it('should return 500 Internal Server Error', async () => {
       mockSceneGroupsDb.getSceneGroupByParcel.mockRejectedValue(new Error('Database error'))
 
-      const context = createContext('?parcels=0,0')
+      const context = createContext('?parcel=0,0')
       const response = await getSceneInfoHandler(context as any)
 
       expect(response.status).toBe(500)
@@ -194,7 +192,7 @@ describe('get-scene-info-handler', () => {
     it('should log the error', async () => {
       mockSceneGroupsDb.getSceneGroupByParcel.mockRejectedValue(new Error('Connection lost'))
 
-      const context = createContext('?parcels=0,0')
+      const context = createContext('?parcel=0,0')
       await getSceneInfoHandler(context as any)
 
       const logger = mockLogs.getLogger('get-scene-info')

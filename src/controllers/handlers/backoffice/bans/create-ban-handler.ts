@@ -1,10 +1,13 @@
 import { DecentralandSignatureContext } from '@dcl/platform-crypto-middleware'
 import { HandlerContextWithPath } from '../../../../types'
 import { isAllowedUser } from '../../../../logic/allowed-users'
+import { Ban } from '../../../../adapters/bans-db'
 
 type CreateBanBody = {
   groupId?: string
   parcels?: { x: number; y: number }[]
+  worldName?: string
+  sceneId?: string  // Entity ID of the scene/world at ban time (for detecting redeploys)
   reason?: string
 }
 
@@ -37,30 +40,41 @@ export async function createBanHandler(
   try {
     const body = await request.json() as CreateBanBody
 
-    // Must have either groupId (group ban) or parcels (scene ban), but not both
+    // Must have exactly one of: groupId, parcels, or worldName
     const hasGroupId = body.groupId !== undefined && body.groupId !== null
     const hasParcels = body.parcels !== undefined && Array.isArray(body.parcels) && body.parcels.length > 0
+    const hasWorldName = body.worldName !== undefined && body.worldName !== null && body.worldName.trim() !== ''
 
-    if (hasGroupId && hasParcels) {
+    const optionCount = [hasGroupId, hasParcels, hasWorldName].filter(Boolean).length
+
+    if (optionCount === 0) {
       return {
         status: 400,
-        body: { ok: false, error: 'Cannot specify both groupId and parcels. Use groupId for group bans or parcels for scene bans.' }
+        body: { ok: false, error: 'Must specify one of: groupId (group ban), parcels (scene ban), or worldName (world ban)' }
       }
     }
 
-    if (!hasGroupId && !hasParcels) {
+    if (optionCount > 1) {
       return {
         status: 400,
-        body: { ok: false, error: 'Must specify either groupId (for group ban) or parcels (for scene ban)' }
+        body: { ok: false, error: 'Cannot specify multiple ban types. Use only one of: groupId, parcels, or worldName.' }
       }
     }
 
-    let ban
+    let ban: Ban
 
     if (hasGroupId) {
       // Group ban
       ban = await bansDb.createGroupBan({ groupId: body.groupId!, reason: body.reason }, userAddress)
       logger.info('Group ban created', { id: ban.id, groupId: body.groupId!, createdBy: userAddress })
+    } else if (hasWorldName) {
+      // World ban
+      ban = await bansDb.createWorldBan({
+        worldName: body.worldName!.trim(),
+        sceneId: body.sceneId,
+        reason: body.reason
+      }, userAddress)
+      logger.info('World ban created', { id: ban.id, worldName: body.worldName!, sceneId: body.sceneId || '', createdBy: userAddress })
     } else {
       // Scene ban - validate parcels structure
       for (const parcel of body.parcels!) {
@@ -72,8 +86,12 @@ export async function createBanHandler(
         }
       }
 
-      ban = await bansDb.createSceneBan({ parcels: body.parcels!, reason: body.reason }, userAddress)
-      logger.info('Scene ban created', { id: ban.id, parcelCount: body.parcels!.length, createdBy: userAddress })
+      ban = await bansDb.createSceneBan({
+        parcels: body.parcels!,
+        sceneId: body.sceneId,
+        reason: body.reason
+      }, userAddress)
+      logger.info('Scene ban created', { id: ban.id, parcelCount: body.parcels!.length, sceneId: body.sceneId || '', createdBy: userAddress })
     }
 
     return {
