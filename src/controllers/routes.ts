@@ -9,6 +9,7 @@ import { cancelDeletionHandler } from "./handlers/cancel-deletion-handler"
 // Scene Groups handlers (public)
 import { getSceneGroupsHandler } from "./handlers/scene-groups/get-scene-groups-handler"
 import { getSceneGroupHandler } from "./handlers/scene-groups/get-scene-group-handler"
+import { getSceneInfoHandler } from "./handlers/scene-groups/get-scene-info-handler"
 
 // Scene Groups handlers (backoffice)
 import { createSceneGroupHandler } from "./handlers/backoffice/scene-groups/create-scene-group-handler"
@@ -51,6 +52,7 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
   // Public read-only endpoints (for mobile app)
   router.get("/scene-groups", getSceneGroupsHandler)
   router.get("/scene-groups/:id", getSceneGroupHandler)
+  router.get("/scene-info", getSceneInfoHandler)
 
   // Backoffice endpoints (require signed fetch + ALLOWED_USERS)
   router.get("/backoffice/scene-groups", signedFetch, getBackofficeSceneGroupsHandler)

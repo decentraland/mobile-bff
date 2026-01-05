@@ -156,21 +156,33 @@ export async function createBansDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
       throw new Error('Scene ban requires at least one parcel')
     }
 
-    const insertBanQuery = SQL`
-      INSERT INTO bans (group_id, reason, created_by)
-      VALUES (NULL, ${input.reason || null}, ${createdBy})
-      RETURNING id
-    `
-    const banResult = await pg.query<{ id: string }>(insertBanQuery)
-    const banId = banResult.rows[0].id
+    // Use a transaction to ensure atomicity
+    await pg.query(SQL`BEGIN`)
 
-    // Insert parcels
-    const values = input.parcels.map(p => `('${banId}', ${p.x}, ${p.y})`).join(', ')
-    const insertParcelsQuery = SQL``
-    insertParcelsQuery.append(`INSERT INTO ban_parcels (ban_id, x, y) VALUES ${values}`)
-    await pg.query(insertParcelsQuery)
+    try {
+      const insertBanQuery = SQL`
+        INSERT INTO bans (group_id, reason, created_by)
+        VALUES (NULL, ${input.reason || null}, ${createdBy})
+        RETURNING id
+      `
+      const banResult = await pg.query<{ id: string }>(insertBanQuery)
+      const banId = banResult.rows[0].id
 
-    return (await getBanById(banId))!
+      // Insert parcels
+      for (const parcel of input.parcels) {
+        await pg.query(SQL`
+          INSERT INTO ban_parcels (ban_id, x, y)
+          VALUES (${banId}, ${parcel.x}, ${parcel.y})
+        `)
+      }
+
+      await pg.query(SQL`COMMIT`)
+
+      return (await getBanById(banId))!
+    } catch (error) {
+      await pg.query(SQL`ROLLBACK`)
+      throw error
+    }
   }
 
   async function deleteBan(id: string): Promise<boolean> {
