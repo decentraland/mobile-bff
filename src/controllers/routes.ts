@@ -16,6 +16,11 @@ import { getBackofficeSceneGroupsHandler } from "./handlers/backoffice/scene-gro
 import { updateSceneGroupHandler } from "./handlers/backoffice/scene-groups/update-scene-group-handler"
 import { deleteSceneGroupHandler } from "./handlers/backoffice/scene-groups/delete-scene-group-handler"
 
+// Bans handlers (backoffice)
+import { getBansHandler } from "./handlers/backoffice/bans/get-bans-handler"
+import { createBanHandler } from "./handlers/backoffice/bans/create-ban-handler"
+import { deleteBanHandler } from "./handlers/backoffice/bans/delete-ban-handler"
+
 // Hub frontend (static files)
 import { hubStaticHandler } from "./handlers/hub-static-handler"
 
@@ -52,6 +57,11 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
   router.post("/backoffice/scene-groups", signedFetch, createSceneGroupHandler)
   router.put("/backoffice/scene-groups/:id", signedFetch, updateSceneGroupHandler)
   router.delete("/backoffice/scene-groups/:id", signedFetch, deleteSceneGroupHandler)
+
+  // Bans management (backoffice)
+  router.get("/backoffice/bans", signedFetch, getBansHandler)
+  router.post("/backoffice/bans", signedFetch, createBanHandler)
+  router.delete("/backoffice/bans/:id", signedFetch, deleteBanHandler)
 
   // Hub frontend (static files)
   router.get("/hub", hubStaticHandler)

@@ -11,6 +11,7 @@ import { metricDeclarations } from './metrics'
 import { IDbComponent } from './adapters/db'
 import { ISlackComponent } from './adapters/slack'
 import { ISceneGroupsDbComponent } from './adapters/scene-groups-db'
+import { IBansDbComponent } from './adapters/bans-db'
 
 export type GlobalContext = {
   components: BaseComponents
@@ -27,6 +28,7 @@ export type BaseComponents = {
   db: IDbComponent
   slack: ISlackComponent
   sceneGroupsDb: ISceneGroupsDbComponent
+  bansDb: IBansDbComponent
 }
 
 // components used in runtime
