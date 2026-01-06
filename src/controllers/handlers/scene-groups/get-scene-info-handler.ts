@@ -64,8 +64,7 @@ export async function getSceneInfoHandler(
     }
 
     // Isolated scene - check if this parcel is banned
-    // For isolated scenes, we check by the single parcel
-    const ban = await bansDb.getBanByParcels([parcel])
+    const ban = await bansDb.getBanByParcel(parcel)
 
     return {
       status: 200,

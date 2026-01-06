@@ -124,7 +124,7 @@ describe('get-scene-info-handler', () => {
     })
 
     it('should return scene info with isBanned=false when not banned', async () => {
-      mockBansDb.getBanByParcels.mockResolvedValue(null)
+      mockBansDb.getBanByParcel.mockResolvedValue(null)
 
       const context = createContext('?parcel=50,60')
       const response = await getSceneInfoHandler(context as any)
@@ -143,7 +143,7 @@ describe('get-scene-info-handler', () => {
 
     it('should return scene info with isBanned=true when banned', async () => {
       const parcels = [{ x: 50, y: 60 }]
-      mockBansDb.getBanByParcels.mockResolvedValue(createTestSceneBan(parcels))
+      mockBansDb.getBanByParcel.mockResolvedValue(createTestSceneBan(parcels))
 
       const context = createContext('?parcel=50,60')
       const response = await getSceneInfoHandler(context as any)
@@ -164,11 +164,11 @@ describe('get-scene-info-handler', () => {
       const context = createContext('?parcel=50,60')
       await getSceneInfoHandler(context as any)
 
-      expect(mockBansDb.getBanByParcels).toHaveBeenCalledWith([{ x: 50, y: 60 }])
+      expect(mockBansDb.getBanByParcel).toHaveBeenCalledWith({ x: 50, y: 60 })
     })
 
     it('should handle negative coordinates', async () => {
-      mockBansDb.getBanByParcels.mockResolvedValue(null)
+      mockBansDb.getBanByParcel.mockResolvedValue(null)
 
       const context = createContext('?parcel=-10,-20')
       const response = await getSceneInfoHandler(context as any)

@@ -263,54 +263,48 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
     })
   })
 
-  describe('getBanByParcels', () => {
-    it('should return null when no scene ban matches parcels', async () => {
-      const result = await bansDb.getBanByParcels([{ x: 999, y: 999 }])
+  describe('getBanByParcel', () => {
+    it('should return null when parcel is not in any ban', async () => {
+      const result = await bansDb.getBanByParcel({ x: 999, y: 999 })
       expect(result).toBeNull()
     })
 
-    it('should return null for empty parcels array', async () => {
-      const result = await bansDb.getBanByParcels([])
-      expect(result).toBeNull()
-    })
-
-    it('should return the ban when parcels match exactly', async () => {
-      const parcels = [{ x: 10, y: 20 }, { x: 11, y: 20 }]
-      const created = await bansDb.createSceneBan(
-        { parcels },
+    it('should return the ban when parcel matches', async () => {
+      const ban = await bansDb.createSceneBan(
+        { parcels: [{ x: 10, y: 20 }] },
         '0x1234567890123456789012345678901234567890'
       )
 
-      const result = await bansDb.getBanByParcels(parcels)
+      const result = await bansDb.getBanByParcel({ x: 10, y: 20 })
 
       expect(result).not.toBeNull()
-      expect(result!.id).toBe(created.id)
+      expect(result!.id).toBe(ban.id)
     })
 
-    it('should match parcels regardless of order', async () => {
-      const parcels = [{ x: 10, y: 20 }, { x: 11, y: 20 }, { x: 12, y: 20 }]
-      const created = await bansDb.createSceneBan(
-        { parcels },
-        '0x1234567890123456789012345678901234567890'
-      )
-
-      // Query with different order
-      const result = await bansDb.getBanByParcels([{ x: 12, y: 20 }, { x: 10, y: 20 }, { x: 11, y: 20 }])
-
-      expect(result).not.toBeNull()
-      expect(result!.id).toBe(created.id)
-    })
-
-    it('should not match if parcels are different', async () => {
-      await bansDb.createSceneBan(
+    it('should find ban when querying a parcel that is part of multi-parcel ban', async () => {
+      const ban = await bansDb.createSceneBan(
         { parcels: [{ x: 10, y: 20 }, { x: 11, y: 20 }] },
         '0x1234567890123456789012345678901234567890'
       )
 
-      // Query with different parcels
-      const result = await bansDb.getBanByParcels([{ x: 10, y: 20 }])
+      const result = await bansDb.getBanByParcel({ x: 10, y: 20 })
 
-      expect(result).toBeNull()
+      expect(result).not.toBeNull()
+      expect(result!.id).toBe(ban.id)
+      // Should include all parcels from the ban
+      expect(result!.parcels).toHaveLength(2)
+    })
+
+    it('should handle negative coordinates', async () => {
+      const ban = await bansDb.createSceneBan(
+        { parcels: [{ x: -10, y: -20 }] },
+        '0x1234567890123456789012345678901234567890'
+      )
+
+      const result = await bansDb.getBanByParcel({ x: -10, y: -20 })
+
+      expect(result).not.toBeNull()
+      expect(result!.id).toBe(ban.id)
     })
   })
 
@@ -344,7 +338,8 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
 
       expect(result).toBe(true)
       expect(await bansDb.getBanById(created.id)).toBeNull()
-      expect(await bansDb.getBanByParcels(parcels)).toBeNull()
+      // Check that neither parcel can be found anymore
+      expect(await bansDb.getBanByParcel(parcels[0])).toBeNull()
     })
   })
 

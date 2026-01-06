@@ -38,7 +38,7 @@ export type IBansDbComponent = {
   getAllBans(): Promise<Ban[]>
   getBanById(id: string): Promise<Ban | null>
   getBanByGroupId(groupId: string): Promise<Ban | null>
-  getBanByParcels(parcels: ParcelCoord[]): Promise<Ban | null>
+  getBanByParcel(parcel: ParcelCoord): Promise<Ban | null>
   getBanByWorldName(worldName: string): Promise<Ban | null>
   createGroupBan(input: CreateGroupBanInput, createdBy: string): Promise<Ban>
   createSceneBan(input: CreateSceneBanInput, createdBy: string): Promise<Ban>
@@ -55,11 +55,6 @@ type BanRow = {
   reason: string | null
   createdBy: string
   createdAt: Date
-}
-
-// Generate a unique key from parcels for lookups
-function generateParcelKey(parcels: ParcelCoord[]): string {
-  return parcels.map(p => `${p.x},${p.y}`).sort().join('|')
 }
 
 export async function createBansDbComponent({ pg }: Pick<AppComponents, 'pg'>): Promise<IBansDbComponent> {
@@ -153,13 +148,8 @@ export async function createBansDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
     return result.rows.length > 0 ? toBan(result.rows[0]) : null
   }
 
-  async function getBanByParcels(parcels: ParcelCoord[]): Promise<Ban | null> {
-    if (parcels.length === 0) return null
-
-    // Find scene bans (group_id IS NULL AND world_name IS NULL) that have matching parcels
-    // We need to match the exact set of parcels
-    const parcelKey = generateParcelKey(parcels)
-
+  async function getBanByParcel(parcel: ParcelCoord): Promise<Ban | null> {
+    const { x, y } = parcel
     const query = SQL`
       SELECT
         b.id,
@@ -169,12 +159,16 @@ export async function createBansDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
         b.reason,
         b.created_by as "createdBy",
         b.created_at as "createdAt",
-        COALESCE(json_agg(json_build_object('x', bp.x, 'y', bp.y)) FILTER (WHERE bp.x IS NOT NULL), '[]') as parcels
-      FROM bans b
-      LEFT JOIN ban_parcels bp ON b.id = bp.ban_id
-      WHERE b.group_id IS NULL AND b.world_name IS NULL
-      GROUP BY b.id
-      HAVING string_agg(bp.x || ',' || bp.y, '|' ORDER BY bp.x, bp.y) = ${parcelKey}
+        COALESCE(
+          (SELECT json_agg(json_build_object('x', bp2.x, 'y', bp2.y))
+           FROM ban_parcels bp2 WHERE bp2.ban_id = b.id),
+          '[]'
+        ) as parcels
+      FROM ban_parcels bp
+      JOIN bans b ON bp.ban_id = b.id
+      WHERE bp.x = ${x} AND bp.y = ${y}
+        AND b.group_id IS NULL AND b.world_name IS NULL
+      LIMIT 1
     `
     const result = await pg.query<BanRow>(query)
     return result.rows.length > 0 ? toBan(result.rows[0]) : null
@@ -248,7 +242,7 @@ export async function createBansDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
     getAllBans,
     getBanById,
     getBanByGroupId,
-    getBanByParcels,
+    getBanByParcel,
     getBanByWorldName,
     createGroupBan,
     createSceneBan,

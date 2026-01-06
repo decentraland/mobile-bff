@@ -8,7 +8,7 @@ export function createBansDbJestMockComponent(
     getAllBans: jest.fn().mockResolvedValue([]),
     getBanById: jest.fn().mockResolvedValue(null),
     getBanByGroupId: jest.fn().mockResolvedValue(null),
-    getBanByParcels: jest.fn().mockResolvedValue(null),
+    getBanByParcel: jest.fn().mockResolvedValue(null),
     getBanByWorldName: jest.fn().mockResolvedValue(null),
     createGroupBan: jest.fn().mockImplementation((input: CreateGroupBanInput, createdBy: string) =>
       Promise.resolve(createTestBan({
@@ -46,7 +46,7 @@ export function createBansDbMockComponent(): IBansDbComponent & {
   _setGetAllBansResult: (result: Ban[]) => void
   _setGetBanByIdResult: (result: Ban | null) => void
   _setGetBanByGroupIdResult: (result: Ban | null) => void
-  _setGetBanByParcelsResult: (result: Ban | null) => void
+  _setGetBanByParcelResult: (result: Ban | null) => void
   _setGetBanByWorldNameResult: (result: Ban | null) => void
   _setCreateGroupBanResult: (result: Ban) => void
   _setCreateSceneBanResult: (result: Ban) => void
@@ -56,7 +56,7 @@ export function createBansDbMockComponent(): IBansDbComponent & {
   let getAllBansResult: Ban[] = []
   let getBanByIdResult: Ban | null = null
   let getBanByGroupIdResult: Ban | null = null
-  let getBanByParcelsResult: Ban | null = null
+  let getBanByParcelResult: Ban | null = null
   let getBanByWorldNameResult: Ban | null = null
   let createGroupBanResult: Ban | null = null
   let createSceneBanResult: Ban | null = null
@@ -67,7 +67,7 @@ export function createBansDbMockComponent(): IBansDbComponent & {
     getAllBans: async () => getAllBansResult,
     getBanById: async () => getBanByIdResult,
     getBanByGroupId: async () => getBanByGroupIdResult,
-    getBanByParcels: async () => getBanByParcelsResult,
+    getBanByParcel: async () => getBanByParcelResult,
     getBanByWorldName: async () => getBanByWorldNameResult,
     createGroupBan: async (input: CreateGroupBanInput, createdBy: string) => {
       if (createGroupBanResult) return createGroupBanResult
@@ -102,7 +102,7 @@ export function createBansDbMockComponent(): IBansDbComponent & {
     _setGetAllBansResult: (result) => { getAllBansResult = result },
     _setGetBanByIdResult: (result) => { getBanByIdResult = result },
     _setGetBanByGroupIdResult: (result) => { getBanByGroupIdResult = result },
-    _setGetBanByParcelsResult: (result) => { getBanByParcelsResult = result },
+    _setGetBanByParcelResult: (result) => { getBanByParcelResult = result },
     _setGetBanByWorldNameResult: (result) => { getBanByWorldNameResult = result },
     _setCreateGroupBanResult: (result) => { createGroupBanResult = result },
     _setCreateSceneBanResult: (result) => { createSceneBanResult = result },
