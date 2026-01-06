@@ -73,6 +73,7 @@ export async function getSceneInfoHandler(
         data: {
           type: 'scene',
           parcel: parcel,
+          parcels: ban?.parcels || [parcel],
           isBanned: ban !== null,
           sceneId: ban?.sceneId || null
         }

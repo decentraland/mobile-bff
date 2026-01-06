@@ -17,16 +17,16 @@ import { getBackofficeSceneGroupsHandler } from "./handlers/backoffice/scene-gro
 import { updateSceneGroupHandler } from "./handlers/backoffice/scene-groups/update-scene-group-handler"
 import { deleteSceneGroupHandler } from "./handlers/backoffice/scene-groups/delete-scene-group-handler"
 
+// Bans handlers (public)
+import { getBansHandler } from "./handlers/bans/get-bans-handler"
+
 // Bans handlers (backoffice)
-import { getBansHandler } from "./handlers/backoffice/bans/get-bans-handler"
+import { getBansHandler as getBackofficeBansHandler } from "./handlers/backoffice/bans/get-bans-handler"
 import { createBanHandler } from "./handlers/backoffice/bans/create-ban-handler"
 import { deleteBanHandler } from "./handlers/backoffice/bans/delete-ban-handler"
 
 // Worlds handlers (public)
 import { getWorldInfoHandler } from "./handlers/worlds/get-world-info-handler"
-
-// Hub frontend (static files)
-import { hubStaticHandler } from "./handlers/hub-static-handler"
 
 // We return the entire router because it will be easier to test than a whole server
 export async function setupRouter(globalContext: GlobalContext): Promise<Router<GlobalContext>> {
@@ -56,6 +56,7 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
   router.get("/scene-groups", getSceneGroupsHandler)
   router.get("/scene-groups/:id", getSceneGroupHandler)
   router.get("/scene-info", getSceneInfoHandler)
+  router.get("/bans", getBansHandler)
 
   // Backoffice endpoints (require signed fetch + ALLOWED_USERS)
   router.get("/backoffice/scene-groups", signedFetch, getBackofficeSceneGroupsHandler)
@@ -64,16 +65,12 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
   router.delete("/backoffice/scene-groups/:id", signedFetch, deleteSceneGroupHandler)
 
   // Bans management (backoffice)
-  router.get("/backoffice/bans", signedFetch, getBansHandler)
+  router.get("/backoffice/bans", signedFetch, getBackofficeBansHandler)
   router.post("/backoffice/bans", signedFetch, createBanHandler)
   router.delete("/backoffice/bans/:id", signedFetch, deleteBanHandler)
 
   // Worlds API (public)
   router.get("/worlds/:worldName", getWorldInfoHandler)
-
-  // Hub frontend (static files)
-  router.get("/hub", hubStaticHandler)
-  router.get("/hub/(.*)", hubStaticHandler)
 
   return router
 }

@@ -100,6 +100,7 @@ Scene groups allow organizing parcels into named collections for the mobile app.
 | GET | `/scene-groups?parcel=0,1` | Get scene group containing a specific parcel |
 | GET | `/scene-groups/:id` | Get a scene group by ID |
 | GET | `/scene-info?parcel=x,y` | Get scene/group info with ban status for a parcel |
+| GET | `/bans` | List all bans (scenes, groups, and worlds) |
 
 ### Worlds
 
@@ -173,6 +174,7 @@ Content moderation endpoints for banning scenes, scene groups, and worlds.
 
 #### Scene Info Response
 
+For parcels in a scene group:
 ```json
 {
   "ok": true,
@@ -192,11 +194,39 @@ For isolated scenes (not in a group):
   "data": {
     "type": "scene",
     "parcel": { "x": 0, "y": 0 },
+    "parcels": [{ "x": 0, "y": 0 }, { "x": 1, "y": 0 }],
     "isBanned": true,
     "sceneId": "bafk..."
   }
 }
 ```
+
+Note: For isolated scenes, `parcels` contains all parcels of the banned scene (from the ban record). If not banned, it defaults to the queried parcel.
+
+#### Bans Response
+
+```json
+{
+  "ok": true,
+  "data": [
+    {
+      "id": "uuid",
+      "groupId": null,
+      "worldName": null,
+      "parcels": [{ "x": 0, "y": 0 }, { "x": 1, "y": 0 }],
+      "sceneId": "bafk...",
+      "reason": "Optional reason",
+      "createdBy": "0x...",
+      "createdAt": 1704067200000
+    }
+  ]
+}
+```
+
+Ban types:
+- **Scene ban**: `groupId` and `worldName` are null, `parcels` contains the banned parcels
+- **Group ban**: `groupId` is set, `parcels` is empty
+- **World ban**: `worldName` is set, `parcels` is empty
 
 ### Account Deletion
 

@@ -135,6 +135,7 @@ describe('get-scene-info-handler', () => {
         data: {
           type: 'scene',
           parcel: { x: 50, y: 60 },
+          parcels: [{ x: 50, y: 60 }],
           isBanned: false,
           sceneId: null
         }
@@ -142,7 +143,7 @@ describe('get-scene-info-handler', () => {
     })
 
     it('should return scene info with isBanned=true when banned', async () => {
-      const parcels = [{ x: 50, y: 60 }]
+      const parcels = [{ x: 50, y: 60 }, { x: 51, y: 60 }]
       mockBansDb.getBanByParcel.mockResolvedValue(createTestSceneBan(parcels))
 
       const context = createContext('?parcel=50,60')
@@ -154,6 +155,7 @@ describe('get-scene-info-handler', () => {
         data: {
           type: 'scene',
           parcel: { x: 50, y: 60 },
+          parcels: parcels,
           isBanned: true,
           sceneId: null
         }
