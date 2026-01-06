@@ -98,11 +98,6 @@ Scene groups allow organizing parcels into named collections for the mobile app.
 |--------|------|-------------|
 | GET | `/scene-info?parcel=x,y` | Get scene/group info with ban status for a parcel |
 | GET | `/bans` | List all bans (scenes, groups, and worlds) |
-
-### Worlds
-
-| Method | Path | Description |
-|--------|------|-------------|
 | GET | `/world-info?world=name` | Get world info with ban status |
 
 #### Backoffice Endpoints (signedFetch + ALLOWED_USERS)
