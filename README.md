@@ -1,6 +1,6 @@
 # Mobile Backend-for-Frontend
 
-Backend-for-frontend service for Decentraland mobile applications. Handles account deletion requests and scene groups management.
+Backend-for-frontend service for Decentraland mobile applications. Handles account deletion requests, scene groups management, and content moderation (bans).
 
 ## Architecture
 
@@ -96,9 +96,14 @@ Scene groups allow organizing parcels into named collections for the mobile app.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/scene-groups` | List all scene groups |
-| GET | `/scene-groups?parcel=0,1` | Get scene group containing a specific parcel |
-| GET | `/scene-groups/:id` | Get a scene group by ID |
+| GET | `/scene-info?parcel=x,y` | Get scene/group info with ban status for a parcel |
+| GET | `/bans` | List all bans (scenes, groups, and worlds) |
+
+### Worlds
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/world-info?world=name` | Get world info with ban status |
 
 #### Backoffice Endpoints (signedFetch + ALLOWED_USERS)
 
@@ -110,6 +115,44 @@ These endpoints require signed requests and the wallet address must be in the `A
 | POST | `/backoffice/scene-groups` | Create a new scene group |
 | PUT | `/backoffice/scene-groups/:id` | Update a scene group |
 | DELETE | `/backoffice/scene-groups/:id` | Delete a scene group |
+
+### Bans (Backoffice)
+
+Content moderation endpoints for banning scenes, scene groups, and worlds.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/backoffice/bans` | List all bans |
+| POST | `/backoffice/bans` | Create a ban (group, scene, or world) |
+| DELETE | `/backoffice/bans/:id` | Remove a ban |
+
+#### Create Ban Request Body
+
+**Group Ban:**
+```json
+{
+  "groupId": "uuid",
+  "reason": "Optional reason"
+}
+```
+
+**Scene Ban (by parcels):**
+```json
+{
+  "parcels": [{ "x": 0, "y": 0 }, { "x": 1, "y": 0 }],
+  "sceneId": "optional-entity-id",
+  "reason": "Optional reason"
+}
+```
+
+**World Ban:**
+```json
+{
+  "worldName": "world-name.dcl.eth",
+  "sceneId": "optional-entity-id",
+  "reason": "Optional reason"
+}
+```
 
 #### Scene Group Schema
 
@@ -125,6 +168,62 @@ These endpoints require signed requests and the wallet address must be in the `A
   "updatedAt": "2024-01-01T00:00:00.000Z"
 }
 ```
+
+#### Scene Info Response
+
+For parcels in a scene group:
+```json
+{
+  "ok": true,
+  "data": {
+    "type": "group",
+    "group": { "id": "uuid", "name": "...", "parcels": [...] },
+    "isBanned": false,
+    "sceneId": null
+  }
+}
+```
+
+For isolated scenes (not in a group):
+```json
+{
+  "ok": true,
+  "data": {
+    "type": "scene",
+    "parcel": { "x": 0, "y": 0 },
+    "parcels": [{ "x": 0, "y": 0 }, { "x": 1, "y": 0 }],
+    "isBanned": true,
+    "sceneId": "bafk..."
+  }
+}
+```
+
+Note: For isolated scenes, `parcels` contains all parcels of the banned scene (from the ban record). If not banned, it defaults to the queried parcel.
+
+#### Bans Response
+
+```json
+{
+  "ok": true,
+  "data": [
+    {
+      "id": "uuid",
+      "groupId": null,
+      "worldName": null,
+      "parcels": [{ "x": 0, "y": 0 }, { "x": 1, "y": 0 }],
+      "sceneId": "bafk...",
+      "reason": "Optional reason",
+      "createdBy": "0x...",
+      "createdAt": 1704067200000
+    }
+  ]
+}
+```
+
+Ban types:
+- **Scene ban**: `groupId` and `worldName` are null, `parcels` contains the banned parcels
+- **Group ban**: `groupId` is set, `parcels` is empty
+- **World ban**: `worldName` is set, `parcels` is empty
 
 ### Account Deletion
 
@@ -161,6 +260,8 @@ Uses PostgreSQL with the following tables:
 - `scene_groups` - Scene group metadata
 - `scene_group_parcels` - Parcel coordinates (PK on x,y ensures one parcel per group)
 - `deletion_requests` - Account deletion requests
+- `bans` - Ban records (for groups, scenes, or worlds)
+- `ban_parcels` - Parcel coordinates for scene bans
 
 Run migrations with:
 ```bash
