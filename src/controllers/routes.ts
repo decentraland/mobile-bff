@@ -50,9 +50,8 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
 
   // Public read-only endpoints (for mobile app)
   router.get("/scene-info", getSceneInfoHandler)
-  router.get("/bans", getBansHandler)
-  // Worlds API (public)
   router.get("/worlds/:worldName", getWorldInfoHandler)
+  router.get("/bans", getBansHandler)
 
   // ============== BACKOFFICE ==============
   // require signed fetch + ALLOWED_USERS
