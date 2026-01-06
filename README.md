@@ -96,9 +96,6 @@ Scene groups allow organizing parcels into named collections for the mobile app.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/scene-groups` | List all scene groups |
-| GET | `/scene-groups?parcel=0,1` | Get scene group containing a specific parcel |
-| GET | `/scene-groups/:id` | Get a scene group by ID |
 | GET | `/scene-info?parcel=x,y` | Get scene/group info with ban status for a parcel |
 | GET | `/bans` | List all bans (scenes, groups, and worlds) |
 

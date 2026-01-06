@@ -7,8 +7,6 @@ import { getDeletionStatusHandler } from "./handlers/get-deletion-status-handler
 import { cancelDeletionHandler } from "./handlers/cancel-deletion-handler"
 
 // Scene Groups handlers (public)
-import { getSceneGroupsHandler } from "./handlers/scene-groups/get-scene-groups-handler"
-import { getSceneGroupHandler } from "./handlers/scene-groups/get-scene-group-handler"
 import { getSceneInfoHandler } from "./handlers/scene-groups/get-scene-info-handler"
 
 // Scene Groups handlers (backoffice)
@@ -50,27 +48,24 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
   router.get("/deletion", signedFetch, getDeletionStatusHandler)
   router.delete("/deletion", signedFetch, cancelDeletionHandler)
 
-  // === Scene Groups API ===
-
   // Public read-only endpoints (for mobile app)
-  router.get("/scene-groups", getSceneGroupsHandler)
-  router.get("/scene-groups/:id", getSceneGroupHandler)
   router.get("/scene-info", getSceneInfoHandler)
   router.get("/bans", getBansHandler)
+  // Worlds API (public)
+  router.get("/worlds/:worldName", getWorldInfoHandler)
 
-  // Backoffice endpoints (require signed fetch + ALLOWED_USERS)
+  // ============== BACKOFFICE ==============
+  // require signed fetch + ALLOWED_USERS
+
   router.get("/backoffice/scene-groups", signedFetch, getBackofficeSceneGroupsHandler)
   router.post("/backoffice/scene-groups", signedFetch, createSceneGroupHandler)
   router.put("/backoffice/scene-groups/:id", signedFetch, updateSceneGroupHandler)
   router.delete("/backoffice/scene-groups/:id", signedFetch, deleteSceneGroupHandler)
-
-  // Bans management (backoffice)
+  // Bans management
   router.get("/backoffice/bans", signedFetch, getBackofficeBansHandler)
   router.post("/backoffice/bans", signedFetch, createBanHandler)
   router.delete("/backoffice/bans/:id", signedFetch, deleteBanHandler)
 
-  // Worlds API (public)
-  router.get("/worlds/:worldName", getWorldInfoHandler)
 
   return router
 }
