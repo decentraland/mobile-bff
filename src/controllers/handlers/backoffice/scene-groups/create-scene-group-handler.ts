@@ -47,10 +47,21 @@ export async function createSceneGroupHandler(
       }
     }
 
-    if (!body.parcels || !Array.isArray(body.parcels)) {
+    // Either parcels or worldName must be provided, not both
+    const hasParcels = body.parcels && Array.isArray(body.parcels) && body.parcels.length > 0
+    const hasWorldName = body.worldName && typeof body.worldName === 'string'
+
+    if (!hasParcels && !hasWorldName) {
       return {
         status: 400,
-        body: { ok: false, error: 'Missing or invalid required field: parcels' }
+        body: { ok: false, error: 'Either parcels or worldName must be provided' }
+      }
+    }
+
+    if (hasParcels && hasWorldName) {
+      return {
+        status: 400,
+        body: { ok: false, error: 'Cannot provide both parcels and worldName' }
       }
     }
 
@@ -62,12 +73,14 @@ export async function createSceneGroupHandler(
       }
     }
 
-    // Validate parcels structure
-    for (const parcel of body.parcels) {
-      if (typeof parcel.x !== 'number' || typeof parcel.y !== 'number') {
-        return {
-          status: 400,
-          body: { ok: false, error: 'Invalid parcels format. Expected array of {x: number, y: number}' }
+    // Validate parcels structure if provided
+    if (hasParcels) {
+      for (const parcel of body.parcels!) {
+        if (typeof parcel.x !== 'number' || typeof parcel.y !== 'number') {
+          return {
+            status: 400,
+            body: { ok: false, error: 'Invalid parcels format. Expected array of {x: number, y: number}' }
+          }
         }
       }
     }

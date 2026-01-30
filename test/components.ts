@@ -24,11 +24,10 @@ async function initComponents(): Promise<TestComponents> {
   // Use test database
   process.env.PG_COMPONENT_PSQL_DATABASE = 'mobile_test'
 
-  const config = await createDotEnvConfigComponent({ path: [".env.default", ".env"] })
   const components = await originalInitComponents()
 
   return {
     ...components,
-    localFetch: await createLocalFetchCompoment(config),
+    localFetch: await createLocalFetchCompoment(components.config),
   }
 }

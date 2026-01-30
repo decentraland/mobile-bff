@@ -8,6 +8,13 @@ import { cancelDeletionHandler } from "./handlers/cancel-deletion-handler"
 
 // Scene Groups handlers (public)
 import { getSceneInfoHandler } from "./handlers/scene-groups/get-scene-info-handler"
+import { getSceneGroupsHandler } from "./handlers/scene-groups/get-scene-groups-handler"
+
+// Places handler (public)
+import { getPlacesHandler } from "./handlers/places/get-places-handler"
+
+// Tags handlers (public)
+import { getAllTagsHandler } from "./handlers/tags/get-all-tags-handler"
 
 // Scene Groups handlers (backoffice)
 import { createSceneGroupHandler } from "./handlers/backoffice/scene-groups/create-scene-group-handler"
@@ -23,6 +30,10 @@ import { getBansHandler as getBackofficeBansHandler } from "./handlers/backoffic
 import { createBanHandler } from "./handlers/backoffice/bans/create-ban-handler"
 import { deleteBanHandler } from "./handlers/backoffice/bans/delete-ban-handler"
 
+// Tags handlers (backoffice)
+import { createTagHandler } from "./handlers/backoffice/tags/create-tag-handler"
+import { deleteTagHandler } from "./handlers/backoffice/tags/delete-tag-handler"
+
 // Worlds handlers (public)
 import { getWorldInfoHandler } from "./handlers/worlds/get-world-info-handler"
 
@@ -34,7 +45,7 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
 
   const signedFetch = signedFetchMiddleware({
     fetcher: fetch,
-    optional: false,
+    optional: true,
     onError: (err: any) => ({
       error: err.message,
       message: 'This endpoint requires a signed fetch request. See ADR-44.'
@@ -49,7 +60,9 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
   router.delete("/deletion", signedFetch, cancelDeletionHandler)
 
   // Public read-only endpoints (for mobile app)
-  router.get("/scene-info", getSceneInfoHandler)
+  router.get("/places", getPlacesHandler)
+  router.get("/scene-groups", getSceneGroupsHandler)
+  router.get("/tags", getAllTagsHandler)
   router.get("/worlds/:worldName", getWorldInfoHandler)
   router.get("/bans", getBansHandler)
 
@@ -64,6 +77,10 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
   router.get("/backoffice/bans", signedFetch, getBackofficeBansHandler)
   router.post("/backoffice/bans", signedFetch, createBanHandler)
   router.delete("/backoffice/bans/:id", signedFetch, deleteBanHandler)
+
+  // Tags management
+  router.post("/backoffice/tags", signedFetch, createTagHandler)
+  router.delete("/backoffice/tags/:id", signedFetch, deleteTagHandler)
 
 
   return router
