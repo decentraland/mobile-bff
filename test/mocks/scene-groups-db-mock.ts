@@ -8,13 +8,15 @@ export function createSceneGroupsDbJestMockComponent(
     getAllSceneGroups: jest.fn().mockResolvedValue([]),
     getSceneGroupById: jest.fn().mockResolvedValue(null),
     getSceneGroupByParcel: jest.fn().mockResolvedValue(null),
+    getSceneGroupByWorldName: jest.fn().mockResolvedValue(null),
     createSceneGroup: jest.fn().mockImplementation((input: CreateSceneGroupInput) =>
       Promise.resolve(createTestSceneGroup({
         name: input.name,
         description: input.description || '',
         color: input.color,
         tags: input.tags || [],
-        parcels: input.parcels
+        parcels: input.parcels,
+        worldName: input.worldName || null
       }))
     ),
     updateSceneGroup: jest.fn().mockResolvedValue(null),
@@ -28,6 +30,7 @@ export function createSceneGroupsDbMockComponent(): ISceneGroupsDbComponent & {
   _setGetAllSceneGroupsResult: (result: SceneGroup[]) => void
   _setGetSceneGroupByIdResult: (result: SceneGroup | null) => void
   _setGetSceneGroupByParcelResult: (result: SceneGroup | null) => void
+  _setGetSceneGroupByWorldNameResult: (result: SceneGroup | null) => void
   _setCreateSceneGroupResult: (result: SceneGroup) => void
   _setUpdateSceneGroupResult: (result: SceneGroup | null) => void
   _setDeleteSceneGroupResult: (result: boolean) => void
@@ -35,6 +38,7 @@ export function createSceneGroupsDbMockComponent(): ISceneGroupsDbComponent & {
   let getAllSceneGroupsResult: SceneGroup[] = []
   let getSceneGroupByIdResult: SceneGroup | null = null
   let getSceneGroupByParcelResult: SceneGroup | null = null
+  let getSceneGroupByWorldNameResult: SceneGroup | null = null
   let createSceneGroupResult: SceneGroup | null = null
   let updateSceneGroupResult: SceneGroup | null = null
   let deleteSceneGroupResult: boolean = false
@@ -43,6 +47,7 @@ export function createSceneGroupsDbMockComponent(): ISceneGroupsDbComponent & {
     getAllSceneGroups: async () => getAllSceneGroupsResult,
     getSceneGroupById: async () => getSceneGroupByIdResult,
     getSceneGroupByParcel: async () => getSceneGroupByParcelResult,
+    getSceneGroupByWorldName: async () => getSceneGroupByWorldNameResult,
     createSceneGroup: async (input: CreateSceneGroupInput) => {
       if (createSceneGroupResult) return createSceneGroupResult
       return createTestSceneGroup({
@@ -50,7 +55,8 @@ export function createSceneGroupsDbMockComponent(): ISceneGroupsDbComponent & {
         description: input.description || '',
         color: input.color,
         tags: input.tags || [],
-        parcels: input.parcels
+        parcels: input.parcels,
+        worldName: input.worldName || null
       })
     },
     updateSceneGroup: async () => updateSceneGroupResult,
@@ -58,6 +64,7 @@ export function createSceneGroupsDbMockComponent(): ISceneGroupsDbComponent & {
     _setGetAllSceneGroupsResult: (result) => { getAllSceneGroupsResult = result },
     _setGetSceneGroupByIdResult: (result) => { getSceneGroupByIdResult = result },
     _setGetSceneGroupByParcelResult: (result) => { getSceneGroupByParcelResult = result },
+    _setGetSceneGroupByWorldNameResult: (result) => { getSceneGroupByWorldNameResult = result },
     _setCreateSceneGroupResult: (result) => { createSceneGroupResult = result },
     _setUpdateSceneGroupResult: (result) => { updateSceneGroupResult = result },
     _setDeleteSceneGroupResult: (result) => { deleteSceneGroupResult = result }
@@ -72,6 +79,7 @@ export function createTestSceneGroup(overrides: Partial<SceneGroup> = {}): Scene
     color: '#FF6B6B',
     tags: ['test', 'example'],
     parcels: [{ x: 0, y: 0 }, { x: 1, y: 0 }],
+    worldName: null,
     createdAt: Date.now(),
     updatedAt: Date.now(),
     ...overrides

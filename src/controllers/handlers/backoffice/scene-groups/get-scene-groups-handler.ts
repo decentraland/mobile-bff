@@ -28,7 +28,25 @@ export async function getBackofficeSceneGroupsHandler(
   }
 
   try {
-    const groups = await sceneGroupsDb.getAllSceneGroups()
+    // Support ?tag=... and ?worldName=... query parameters for filtering
+    const url = new URL(context.request.url, 'http://localhost')
+    const tagParam = url.searchParams.get('tag')
+    const tagFilters = tagParam ? tagParam.split(',').map(t => t.trim()).filter(Boolean) : undefined
+    const worldNameFilter = url.searchParams.get('worldName') || undefined
+
+    if (worldNameFilter) {
+      // Return single group by world name (or null)
+      const group = await sceneGroupsDb.getSceneGroupByWorldName(worldNameFilter)
+      return {
+        status: 200,
+        body: {
+          ok: true,
+          data: group
+        }
+      }
+    }
+
+    const groups = await sceneGroupsDb.getAllSceneGroups(tagFilters)
 
     return {
       status: 200,

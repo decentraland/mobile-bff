@@ -61,6 +61,14 @@ export async function updateSceneGroupHandler(
       }
     }
 
+    // Validate worldName if provided (can be null to clear it)
+    if (body.worldName !== undefined && body.worldName !== null && typeof body.worldName !== 'string') {
+      return {
+        status: 400,
+        body: { ok: false, error: 'Invalid worldName format. Expected string or null' }
+      }
+    }
+
     const group = await sceneGroupsDb.updateSceneGroup(id, body)
 
     if (!group) {

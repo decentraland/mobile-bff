@@ -49,8 +49,8 @@ describe('deletion controller integration tests', () => {
           const response = await localFetch.fetch('/deletion', { method: 'POST' })
           const body = await response.json()
 
-          expect(response.status).toBe(400)
-          expect(body.message).toContain('signed fetch')
+          expect(response.status).toBe(401)
+          expect(body.error).toBe('Unauthorized')
         })
       })
     })
@@ -89,8 +89,8 @@ describe('deletion controller integration tests', () => {
           const response = await localFetch.fetch('/deletion', { method: 'GET' })
           const body = await response.json()
 
-          expect(response.status).toBe(400)
-          expect(body.message).toContain('signed fetch')
+          expect(response.status).toBe(401)
+          expect(body.error).toBe('Unauthorized')
         })
       })
     })
@@ -129,8 +129,8 @@ describe('deletion controller integration tests', () => {
           const response = await localFetch.fetch('/deletion', { method: 'DELETE' })
           const body = await response.json()
 
-          expect(response.status).toBe(400)
-          expect(body.message).toContain('signed fetch')
+          expect(response.status).toBe(401)
+          expect(body.error).toBe('Unauthorized')
         })
       })
     })

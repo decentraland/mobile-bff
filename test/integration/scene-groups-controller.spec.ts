@@ -43,10 +43,10 @@ describe('scene-groups controller integration tests', () => {
     }
 
     describe('GET /backoffice/scene-groups', () => {
-      it('should return 400 when not signed', async () => {
+      it('should return 401 when not signed', async () => {
         const { localFetch } = components
         const response = await localFetch.fetch('/backoffice/scene-groups')
-        expect(response.status).toBe(400)
+        expect(response.status).toBe(401)
       })
 
       it('should return 200 with scene groups when signed by allowed user', async () => {
@@ -72,14 +72,14 @@ describe('scene-groups controller integration tests', () => {
     })
 
     describe('POST /backoffice/scene-groups', () => {
-      it('should return 400 when not signed', async () => {
+      it('should return 401 when not signed', async () => {
         const { localFetch } = components
         const response = await localFetch.fetch('/backoffice/scene-groups', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name: 'Test', color: '#FF0000', parcels: [] })
         })
-        expect(response.status).toBe(400)
+        expect(response.status).toBe(401)
       })
 
       it('should return 201 when creating a valid scene group', async () => {
@@ -99,7 +99,7 @@ describe('scene-groups controller integration tests', () => {
         const response = await makeSignedRequest('POST', '/backoffice/scene-groups', {
           name: 'Bad Color',
           color: 'red',
-          parcels: []
+          parcels: [{ x: 99, y: 99 }]
         })
         const body = await response.json()
 

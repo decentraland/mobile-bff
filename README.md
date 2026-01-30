@@ -12,9 +12,12 @@ Scene groups allow organizing parcels into named collections for the mobile app.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/scene-info?parcel=x,y` | Get scene/group info with ban status for a parcel |
+| GET | `/places?world=name` | Get world group info with ban status |
+| GET | `/places?tag=tag1,tag2` | Get groups matching ALL specified tags (AND logic) |
+| GET | `/places?parcel=x,y` | Get scene/group info with ban status for a parcel |
 | GET | `/bans` | List all bans (scenes, groups, and worlds) |
 | GET | `/world-info?world=name` | Get world info with ban status |
+| GET | `/scene-info?parcel=x,y` | *Deprecated: use `/places?parcel=x,y`* |
 
 #### Backoffice Endpoints (signedFetch + ALLOWED_USERS)
 
@@ -23,9 +26,20 @@ These endpoints require signed requests and the wallet address must be in the `A
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/backoffice/scene-groups` | List all scene groups |
+| GET | `/backoffice/scene-groups?tag=featured` | Filter by tag |
+| GET | `/backoffice/scene-groups?worldName=name` | Get group by world name |
 | POST | `/backoffice/scene-groups` | Create a new scene group |
 | PUT | `/backoffice/scene-groups/:id` | Update a scene group |
 | DELETE | `/backoffice/scene-groups/:id` | Delete a scene group |
+| GET | `/backoffice/tags` | List all tags |
+| POST | `/backoffice/tags` | Create a new tag |
+| DELETE | `/backoffice/tags/:id` | Delete a tag |
+
+#### Public Tags Endpoint
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/tags` | List all tags (name, color, description) |
 
 ### Bans (Backoffice)
 
@@ -80,7 +94,45 @@ Content moderation endpoints for banning scenes, scene groups, and worlds.
 }
 ```
 
-#### Scene Info Response
+#### Places Endpoint Responses
+
+**World Query (`?world=name`):**
+```json
+{
+  "ok": true,
+  "data": {
+    "type": "world",
+    "group": { "id": "uuid", "name": "world.dcl.eth", "worldName": "world.dcl.eth", "tags": [...] },
+    "isBanned": false,
+    "banSceneId": null
+  }
+}
+```
+
+**Tag Query (`?tag=featured,allowed_ios`):**
+
+Returns groups matching ALL specified tags (AND logic):
+```json
+{
+  "ok": true,
+  "data": [
+    {
+      "type": "group",
+      "group": { "id": "uuid", "name": "...", "parcels": [...], "tags": ["featured", "allowed_ios"] },
+      "isBanned": false,
+      "banSceneId": null
+    },
+    {
+      "type": "world",
+      "group": { "id": "uuid", "name": "world.dcl.eth", "worldName": "world.dcl.eth", "tags": [...] },
+      "isBanned": false,
+      "banSceneId": null
+    }
+  ]
+}
+```
+
+**Parcel Query (`?parcel=x,y`):**
 
 For parcels in a scene group:
 ```json
@@ -90,7 +142,7 @@ For parcels in a scene group:
     "type": "group",
     "group": { "id": "uuid", "name": "...", "parcels": [...] },
     "isBanned": false,
-    "sceneId": null
+    "banSceneId": null
   }
 }
 ```
@@ -104,7 +156,7 @@ For isolated scenes (not in a group):
     "parcel": { "x": 0, "y": 0 },
     "parcels": [{ "x": 0, "y": 0 }, { "x": 1, "y": 0 }],
     "isBanned": true,
-    "sceneId": "bafk..."
+    "banSceneId": "bafk..."
   }
 }
 ```
@@ -168,8 +220,10 @@ This installs the built static files that are served at `/hub/`.
 
 Uses PostgreSQL with the following tables:
 
-- `scene_groups` - Scene group metadata
+- `scene_groups` - Scene group metadata (name, description, color, worldName)
 - `scene_group_parcels` - Parcel coordinates (PK on x,y ensures one parcel per group)
+- `tags` - Normalized tags (name, color, description)
+- `scene_group_tags` - Many-to-many relationship between scene groups and tags
 - `deletion_requests` - Account deletion requests
 - `bans` - Ban records (for groups, scenes, or worlds)
 - `ban_parcels` - Parcel coordinates for scene bans

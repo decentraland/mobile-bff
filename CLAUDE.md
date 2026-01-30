@@ -35,6 +35,7 @@ This project uses **hexagonal architecture** (ports and adapters) with `@well-kn
 
 ### API Endpoints
 
+#### Account Deletion
 All deletion endpoints require **signed fetch** (ADR-44) for authentication:
 
 - `POST /deletion` - Request account deletion
@@ -42,6 +43,41 @@ All deletion endpoints require **signed fetch** (ADR-44) for authentication:
 - `DELETE /deletion` - Cancel pending deletion request
 
 The user's Ethereum address is extracted from the signed request via `verification.auth`.
+
+#### Places (Public)
+
+The `/places` endpoint provides unified access to scene groups, worlds, and parcels:
+
+- `GET /places?world=name` - Get world group info with ban status
+- `GET /places?tag=tag1,tag2` - Get groups matching ALL tags (AND logic, comma-separated)
+- `GET /places?parcel=x,y` - Get scene/group info with ban status
+
+#### Content Moderation (Backoffice)
+
+Backoffice endpoints require signed fetch + wallet address in `ALLOWED_USERS` env var:
+
+- `GET/POST/PUT/DELETE /backoffice/scene-groups` - Manage scene groups
+- `GET/POST/DELETE /backoffice/bans` - Manage bans (groups, scenes, worlds)
+- `GET/POST/DELETE /backoffice/tags` - Manage tags
+
+#### Multi-Tag Filtering
+
+The database layer supports filtering by multiple tags with AND logic:
+
+```typescript
+// Returns groups that have ALL specified tags
+await sceneGroupsDb.getAllSceneGroups(['featured', 'allowed_ios'])
+```
+
+SQL implementation uses COUNT + ANY to ensure all tags match:
+```sql
+WHERE (
+  SELECT COUNT(DISTINCT t.name)
+  FROM scene_group_tags sgt
+  JOIN tags t ON t.id = sgt.tag_id
+  WHERE sgt.group_id = sg.id AND t.name = ANY($1)
+) = array_length($1, 1)
+```
 
 ### Handler Pattern with Signed Fetch
 
@@ -75,3 +111,23 @@ Deletion requests and cancellations are reported via Slack Webhook. Configure `S
 ### Adding New Metrics
 
 Define metrics in `src/metrics.ts` using `IMetricsComponent.CounterType`, `GaugeType`, or `HistogramType`.
+
+### Scripts
+
+#### Import Curated Scenes
+
+`scripts/import-curated-scenes.ts` - Imports curated scenes and worlds from a Google Sheet:
+
+```bash
+# Preview only (dry run)
+DRY_RUN=true npx ts-node scripts/import-curated-scenes.ts
+
+# Actually create scene groups
+API_BASE=http://localhost:3000 npx ts-node scripts/import-curated-scenes.ts
+```
+
+The script:
+1. Fetches CSV from the configured Google Sheet URL
+2. Parses rows where `Curated=Yes`
+3. Extracts tags from `Allowed iOS` and `Featured` columns
+4. Creates scene groups via the backoffice API with signed requests
