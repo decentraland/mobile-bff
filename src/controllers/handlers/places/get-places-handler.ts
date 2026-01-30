@@ -22,13 +22,27 @@ export async function getPlacesHandler(
     const tagParam = searchParams.get('tag')
     const parcelParam = searchParams.get('parcel')
 
-    // Validate that at least one filter is provided
+    // If no query parameters provided, return all places
     if (!hasWorld && !hasTag && !hasParcel) {
+      const groups = await sceneGroupsDb.getAllSceneGroups()
+
+      const results = await Promise.all(
+        groups.map(async (group) => {
+          const ban = await bansDb.getBanByGroupId(group.id)
+          return {
+            type: group.worldName ? 'world' : 'group',
+            group,
+            isBanned: ban !== null,
+            banSceneId: ban?.sceneId || null
+          }
+        })
+      )
+
       return {
-        status: 400,
+        status: 200,
         body: {
-          ok: false,
-          error: 'Missing query parameter. Use world=name, tag=tag1,tag2, or parcel=x,y'
+          ok: true,
+          data: results
         }
       }
     }

@@ -26,15 +26,55 @@ describe('get-places-handler', () => {
   }
 
   describe('when no query parameter is provided', () => {
-    it('should return 400 Bad Request', async () => {
+    const testGroups = [
+      createTestSceneGroup({ id: 'group-1', name: 'Group 1', tags: ['featured'] }),
+      createTestSceneGroup({ id: 'group-2', name: 'World 1', worldName: 'world.dcl.eth', tags: ['featured'] })
+    ]
+
+    it('should return all places', async () => {
+      mockSceneGroupsDb.getAllSceneGroups.mockResolvedValue(testGroups)
+      mockBansDb.getBanByGroupId.mockResolvedValue(null)
+
       const context = createContext('')
       const response = await getPlacesHandler(context as any)
 
-      expect(response.status).toBe(400)
+      expect(response.status).toBe(200)
+      expect(response.body.ok).toBe(true)
+      expect(response.body.data).toHaveLength(2)
+      expect(response.body.data[0].type).toBe('group')
+      expect(response.body.data[1].type).toBe('world')
+    })
+
+    it('should call getAllSceneGroups without filters', async () => {
+      mockSceneGroupsDb.getAllSceneGroups.mockResolvedValue([])
+
+      const context = createContext('')
+      await getPlacesHandler(context as any)
+
+      expect(mockSceneGroupsDb.getAllSceneGroups).toHaveBeenCalledWith()
+    })
+
+    it('should return empty array when no places exist', async () => {
+      mockSceneGroupsDb.getAllSceneGroups.mockResolvedValue([])
+
+      const context = createContext('')
+      const response = await getPlacesHandler(context as any)
+
+      expect(response.status).toBe(200)
       expect(response.body).toEqual({
-        ok: false,
-        error: 'Missing query parameter. Use world=name, tag=tag1,tag2, or parcel=x,y'
+        ok: true,
+        data: []
       })
+    })
+
+    it('should include ban status for each place', async () => {
+      mockSceneGroupsDb.getAllSceneGroups.mockResolvedValue([testGroups[0]])
+      mockBansDb.getBanByGroupId.mockResolvedValue(createTestGroupBan('group-1'))
+
+      const context = createContext('')
+      const response = await getPlacesHandler(context as any)
+
+      expect(response.body.data[0].isBanned).toBe(true)
     })
   })
 
