@@ -38,9 +38,9 @@ describe('get-bans-handler (public)', () => {
 
   describe('when there are bans', () => {
     it('should return all bans', async () => {
-      const sceneBan = createTestSceneBan([{ x: 10, y: 20 }], { id: 'ban-1' })
+      const sceneBan = createTestSceneBan(['10,20'], { id: 'ban-1' })
       const groupBan = createTestGroupBan('group-123', { id: 'ban-2' })
-      const worldBan = createTestBan({ id: 'ban-3', worldName: 'cool-world.dcl.eth', parcels: [] })
+      const worldBan = createTestBan({ id: 'ban-3', worldName: 'cool-world.dcl.eth', positions: [] })
 
       mockBansDb.getAllBans.mockResolvedValue([sceneBan, groupBan, worldBan])
 
@@ -56,9 +56,9 @@ describe('get-bans-handler (public)', () => {
 
     it('should include all ban types', async () => {
       const bans = [
-        createTestSceneBan([{ x: 0, y: 0 }, { x: 1, y: 0 }], { id: 'scene-ban', sceneId: 'bafk123' }),
+        createTestSceneBan(['0,0', '1,0'], { id: 'scene-ban', sceneId: 'bafk123' }),
         createTestGroupBan('group-456', { id: 'group-ban', reason: 'Inappropriate content' }),
-        createTestBan({ id: 'world-ban', worldName: 'my-world.dcl.eth', parcels: [], sceneId: 'world-scene-123' })
+        createTestBan({ id: 'world-ban', worldName: 'my-world.dcl.eth', positions: [], sceneId: 'world-scene-123' })
       ]
 
       mockBansDb.getAllBans.mockResolvedValue(bans)
@@ -68,7 +68,7 @@ describe('get-bans-handler (public)', () => {
 
       expect(response.status).toBe(200)
       expect(response.body.data).toHaveLength(3)
-      expect(response.body.data[0].parcels).toEqual([{ x: 0, y: 0 }, { x: 1, y: 0 }])
+      expect(response.body.data[0].positions).toEqual(['0,0', '1,0'])
       expect(response.body.data[1].groupId).toBe('group-456')
       expect(response.body.data[2].worldName).toBe('my-world.dcl.eth')
     })

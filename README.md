@@ -1,57 +1,231 @@
 # Mobile Backend-for-Frontend
 
-Backend-for-frontend service for Decentraland mobile applications. Handles account deletion requests, scene groups management, and content moderation (bans).
+Backend-for-frontend service for Decentraland mobile applications. Handles account deletion requests, places management, and content moderation (bans).
 
 ## API Endpoints
 
-### Scene Groups
+### Places
 
-Scene groups allow organizing parcels into named collections for the mobile app.
+Places allow organizing scenes and worlds into named collections for the mobile app.
 
 #### Public Endpoints (no auth required)
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/places?world=name` | Get world group info with ban status |
-| GET | `/places?tag=tag1,tag2` | Get groups matching ALL specified tags (AND logic) |
-| GET | `/places?parcel=x,y` | Get scene/group info with ban status for a parcel |
-| GET | `/bans` | List all bans (scenes, groups, and worlds) |
-| GET | `/world-info?world=name` | Get world info with ban status |
-| GET | `/scene-info?parcel=x,y` | *Deprecated: use `/places?parcel=x,y`* |
+| GET | `/places?world=name` | Get world place info with ban status |
+| GET | `/places?tag=tag1,tag2` | Get places matching ALL specified tags (AND logic) |
+| GET | `/places?parcel=x,y` | Get scene/place info with ban status for a parcel |
+| GET | `/bans` | List all bans (scenes, places, and worlds) |
+| GET | `/tags` | List all tags (name, color, description) |
 
 #### Backoffice Endpoints (signedFetch + ALLOWED_USERS)
 
 These endpoints require signed requests and the wallet address must be in the `ALLOWED_USERS` environment variable.
 
+##### Place Groups
+
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/backoffice/scene-groups` | List all scene groups |
-| GET | `/backoffice/scene-groups?tag=featured` | Filter by tag |
-| GET | `/backoffice/scene-groups?worldName=name` | Get group by world name |
-| POST | `/backoffice/scene-groups` | Create a new scene group |
-| PUT | `/backoffice/scene-groups/:id` | Update a scene group |
-| DELETE | `/backoffice/scene-groups/:id` | Delete a scene group |
+| GET | `/backoffice/place-groups` | List all place groups |
+| GET | `/backoffice/place-groups?tag=featured` | Filter by tag |
+| POST | `/backoffice/place-groups` | Create a new place group |
+| PUT | `/backoffice/place-groups/:id` | Update a place group |
+| DELETE | `/backoffice/place-groups/:id` | Delete a place group |
+
+##### Places
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/backoffice/places` | List all places |
+| GET | `/backoffice/places?groupId=uuid` | Filter places by group |
+| POST | `/backoffice/places` | Create a new place |
+| PUT | `/backoffice/places/:id` | Update a place |
+| DELETE | `/backoffice/places/:id` | Delete a place |
+
+##### Tags
+
+| Method | Path | Description |
+|--------|------|-------------|
 | GET | `/backoffice/tags` | List all tags |
 | POST | `/backoffice/tags` | Create a new tag |
 | DELETE | `/backoffice/tags/:id` | Delete a tag |
 
-#### Public Tags Endpoint
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/tags` | List all tags (name, color, description) |
-
-### Bans (Backoffice)
-
-Content moderation endpoints for banning scenes, scene groups, and worlds.
+##### Bans
 
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/backoffice/bans` | List all bans |
-| POST | `/backoffice/bans` | Create a ban (group, scene, or world) |
+| POST | `/backoffice/bans` | Create a ban (place, group, or world) |
 | DELETE | `/backoffice/bans/:id` | Remove a ban |
 
-#### Create Ban Request Body
+### Request/Response Schemas
+
+#### Place Group Schema
+
+```json
+{
+  "id": "uuid",
+  "name": "Group Name",
+  "description": "Optional description",
+  "color": "#FF6B6B",
+  "createdAt": "2024-01-01T00:00:00.000Z",
+  "updatedAt": "2024-01-01T00:00:00.000Z"
+}
+```
+
+#### Place Schema
+
+```json
+{
+  "id": "uuid",
+  "type": "scene",
+  "name": "Place Name",
+  "basePosition": "0,0",
+  "positions": ["0,0", "1,0", "0,1"],
+  "worldName": null,
+  "sceneId": "bafk...",
+  "groupId": "uuid",
+  "tags": ["featured", "allowed_ios"],
+  "createdAt": "2024-01-01T00:00:00.000Z",
+  "updatedAt": "2024-01-01T00:00:00.000Z"
+}
+```
+
+For worlds:
+```json
+{
+  "id": "uuid",
+  "type": "world",
+  "name": "World Name",
+  "basePosition": null,
+  "positions": [],
+  "worldName": "world.dcl.eth",
+  "sceneId": null,
+  "groupId": "uuid",
+  "tags": ["featured"],
+  "createdAt": "2024-01-01T00:00:00.000Z",
+  "updatedAt": "2024-01-01T00:00:00.000Z"
+}
+```
+
+#### Create Place Request
+
+**Scene:**
+```json
+{
+  "type": "scene",
+  "name": "My Scene",
+  "basePosition": "0,0",
+  "positions": ["0,0", "1,0"],
+  "sceneId": "bafk...",
+  "groupId": "uuid",
+  "tags": ["featured"]
+}
+```
+
+**World:**
+```json
+{
+  "type": "world",
+  "name": "My World",
+  "worldName": "world.dcl.eth",
+  "groupId": "uuid",
+  "tags": ["featured"]
+}
+```
+
+#### Places Endpoint Responses
+
+**World Query (`?world=name`):**
+```json
+{
+  "ok": true,
+  "data": {
+    "id": "uuid",
+    "type": "world",
+    "name": "World Name",
+    "worldName": "world.dcl.eth",
+    "tags": ["featured"],
+    "isBanned": false,
+    "banSceneId": null
+  }
+}
+```
+
+**Tag Query (`?tag=featured,allowed_ios`):**
+
+Returns places matching ALL specified tags (AND logic):
+```json
+{
+  "ok": true,
+  "data": [
+    {
+      "id": "uuid",
+      "type": "scene",
+      "name": "Scene Name",
+      "basePosition": "0,0",
+      "positions": ["0,0", "1,0"],
+      "tags": ["featured", "allowed_ios"],
+      "isBanned": false,
+      "banSceneId": null
+    },
+    {
+      "id": "uuid",
+      "type": "world",
+      "name": "World Name",
+      "worldName": "world.dcl.eth",
+      "tags": ["featured", "allowed_ios"],
+      "isBanned": false,
+      "banSceneId": null
+    }
+  ]
+}
+```
+
+**Parcel Query (`?parcel=x,y`):**
+
+For parcels in a registered place:
+```json
+{
+  "ok": true,
+  "data": {
+    "id": "uuid",
+    "type": "scene",
+    "name": "Scene Name",
+    "basePosition": "0,0",
+    "positions": ["0,0", "1,0"],
+    "tags": ["featured"],
+    "isBanned": false,
+    "banSceneId": null
+  }
+}
+```
+
+For isolated scenes (not registered as a place):
+```json
+{
+  "ok": true,
+  "data": {
+    "type": "scene",
+    "position": "0,0",
+    "positions": ["0,0", "1,0"],
+    "isBanned": true,
+    "banSceneId": "bafk..."
+  }
+}
+```
+
+Note: For isolated scenes, `positions` contains all positions of the banned scene (from the ban record). If not banned, it defaults to the queried position.
+
+#### Create Ban Request
+
+**Place Ban:**
+```json
+{
+  "placeId": "uuid",
+  "reason": "Optional reason"
+}
+```
 
 **Group Ban:**
 ```json
@@ -61,10 +235,10 @@ Content moderation endpoints for banning scenes, scene groups, and worlds.
 }
 ```
 
-**Scene Ban (by parcels):**
+**Scene Ban (by positions):**
 ```json
 {
-  "parcels": [{ "x": 0, "y": 0 }, { "x": 1, "y": 0 }],
+  "positions": ["0,0", "1,0"],
   "sceneId": "optional-entity-id",
   "reason": "Optional reason"
 }
@@ -79,90 +253,6 @@ Content moderation endpoints for banning scenes, scene groups, and worlds.
 }
 ```
 
-#### Scene Group Schema
-
-```json
-{
-  "id": "uuid",
-  "name": "Group Name",
-  "description": "Optional description",
-  "color": "#FF6B6B",
-  "tags": ["tag1", "tag2"],
-  "parcels": [{ "x": 0, "y": 0 }, { "x": 1, "y": 0 }],
-  "createdAt": "2024-01-01T00:00:00.000Z",
-  "updatedAt": "2024-01-01T00:00:00.000Z"
-}
-```
-
-#### Places Endpoint Responses
-
-**World Query (`?world=name`):**
-```json
-{
-  "ok": true,
-  "data": {
-    "type": "world",
-    "group": { "id": "uuid", "name": "world.dcl.eth", "worldName": "world.dcl.eth", "tags": [...] },
-    "isBanned": false,
-    "banSceneId": null
-  }
-}
-```
-
-**Tag Query (`?tag=featured,allowed_ios`):**
-
-Returns groups matching ALL specified tags (AND logic):
-```json
-{
-  "ok": true,
-  "data": [
-    {
-      "type": "group",
-      "group": { "id": "uuid", "name": "...", "parcels": [...], "tags": ["featured", "allowed_ios"] },
-      "isBanned": false,
-      "banSceneId": null
-    },
-    {
-      "type": "world",
-      "group": { "id": "uuid", "name": "world.dcl.eth", "worldName": "world.dcl.eth", "tags": [...] },
-      "isBanned": false,
-      "banSceneId": null
-    }
-  ]
-}
-```
-
-**Parcel Query (`?parcel=x,y`):**
-
-For parcels in a scene group:
-```json
-{
-  "ok": true,
-  "data": {
-    "type": "group",
-    "group": { "id": "uuid", "name": "...", "parcels": [...] },
-    "isBanned": false,
-    "banSceneId": null
-  }
-}
-```
-
-For isolated scenes (not in a group):
-```json
-{
-  "ok": true,
-  "data": {
-    "type": "scene",
-    "parcel": { "x": 0, "y": 0 },
-    "parcels": [{ "x": 0, "y": 0 }, { "x": 1, "y": 0 }],
-    "isBanned": true,
-    "banSceneId": "bafk..."
-  }
-}
-```
-
-Note: For isolated scenes, `parcels` contains all parcels of the banned scene (from the ban record). If not banned, it defaults to the queried parcel.
-
 #### Bans Response
 
 ```json
@@ -172,8 +262,9 @@ Note: For isolated scenes, `parcels` contains all parcels of the banned scene (f
     {
       "id": "uuid",
       "groupId": null,
+      "placeId": null,
       "worldName": null,
-      "parcels": [{ "x": 0, "y": 0 }, { "x": 1, "y": 0 }],
+      "positions": ["0,0", "1,0"],
       "sceneId": "bafk...",
       "reason": "Optional reason",
       "createdBy": "0x...",
@@ -184,9 +275,10 @@ Note: For isolated scenes, `parcels` contains all parcels of the banned scene (f
 ```
 
 Ban types:
-- **Scene ban**: `groupId` and `worldName` are null, `parcels` contains the banned parcels
-- **Group ban**: `groupId` is set, `parcels` is empty
-- **World ban**: `worldName` is set, `parcels` is empty
+- **Scene ban**: `groupId`, `placeId`, and `worldName` are null, `positions` contains the banned positions
+- **Place ban**: `placeId` is set, `positions` is empty
+- **Group ban**: `groupId` is set, `positions` is empty
+- **World ban**: `worldName` is set, `positions` is empty
 
 ### Account Deletion
 
@@ -204,31 +296,92 @@ Ban types:
 | `ALLOWED_USERS` | Comma-separated wallet addresses allowed to use backoffice endpoints |
 | `SLACK_WEBHOOK_URL` | Webhook for deletion request notifications |
 
-## Dependencies
-
-### Hub Frontend
-
-The hub frontend is served from the npm package:
-
-```bash
-npm install @dcl-regenesislabs/mobile-hub
-```
-
-This installs the built static files that are served at `/hub/`.
-
 ## Database
 
-Uses PostgreSQL with the following tables:
-
-- `scene_groups` - Scene group metadata (name, description, color, worldName)
-- `scene_group_parcels` - Parcel coordinates (PK on x,y ensures one parcel per group)
-- `tags` - Normalized tags (name, color, description)
-- `scene_group_tags` - Many-to-many relationship between scene groups and tags
-- `deletion_requests` - Account deletion requests
-- `bans` - Ban records (for groups, scenes, or worlds)
-- `ban_parcels` - Parcel coordinates for scene bans
-
-Run migrations with:
+Uses PostgreSQL. Run migrations with:
 ```bash
 npm run migrate
 ```
+
+### Schema Diagram
+
+```
+┌─────────────────────┐
+│    place_groups     │
+├─────────────────────┤
+│ id          (PK)    │
+│ name        varchar │
+│ description text    │
+│ color       varchar │
+│ created_at          │
+│ updated_at          │
+└─────────────────────┘
+         │
+         │ 1:N (group_id)
+         ▼
+┌─────────────────────┐       ┌─────────────────────┐
+│       places        │       │        tags         │
+├─────────────────────┤       ├─────────────────────┤
+│ id          (PK)    │       │ id          (PK)    │
+│ type   scene/world  │       │ name        varchar │
+│ name        varchar │       │ description text    │
+│ base_position "x,y" │       │ created_at          │
+│ world_name  varchar │       └─────────────────────┘
+│ scene_id    varchar │                │
+│ group_id    (FK) ───┼────────────────┤
+│ created_at          │                │
+│ updated_at          │                │
+└─────────────────────┘                │
+    │           │                      │
+    │ 1:N       │ M:N                  │
+    │           ▼                      │
+    │   ┌─────────────────────┐       │
+    │   │    place_tags       │◄──────┘
+    │   ├─────────────────────┤
+    │   │ place_id   (FK, PK) │
+    │   │ tag_id     (FK, PK) │
+    │   │ created_at          │
+    │   └─────────────────────┘
+    │
+    ▼
+┌─────────────────────┐
+│  place_positions    │
+├─────────────────────┤
+│ place_id    (FK)    │
+│ position (PK) "x,y" │
+└─────────────────────┘
+
+
+┌─────────────────────┐       ┌─────────────────────┐
+│        bans         │       │   ban_positions     │
+├─────────────────────┤       ├─────────────────────┤
+│ id          (PK)    │──1:N─▶│ ban_id   (FK, PK)   │
+│ group_id    (FK)────┼──▶ place_groups            │
+│ place_id    (FK)────┼──▶ places    │ position (PK) "x,y" │
+│ world_name  varchar │       └─────────────────────┘
+│ scene_id    varchar │
+│ reason      text    │
+│ created_by  varchar │
+│ created_at          │
+└─────────────────────┘
+
+
+┌─────────────────────┐
+│ deletion_requests   │
+├─────────────────────┤
+│ address      (PK)   │
+│ requested_at        │
+│ status              │
+└─────────────────────┘
+```
+
+### Tables
+
+- `place_groups` - Group metadata (name, description, color)
+- `places` - Individual places (scenes or worlds) with optional group assignment
+- `place_positions` - Parcel coordinates for scene places (PK on position ensures one place per parcel)
+- `tags` - Normalized tags (name, color, description)
+- `place_tags` - Many-to-many relationship between places and tags
+- `bans` - Ban records (for places, groups, scenes, or worlds)
+- `ban_positions` - Parcel coordinates for scene bans
+- `deletion_requests` - Account deletion requests

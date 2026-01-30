@@ -65,7 +65,7 @@ describe('get-bans-handler', () => {
       it('should return 200 with all bans', async () => {
         const bans = [
           createTestGroupBan('group-1', { id: 'ban-1' }),
-          createTestSceneBan([{ x: 0, y: 0 }], { id: 'ban-2' }),
+          createTestSceneBan(['0,0'], { id: 'ban-2' }),
           createTestGroupBan('group-2', { id: 'ban-3' })
         ]
         mockBansDb.getAllBans.mockResolvedValue(bans)
@@ -80,7 +80,7 @@ describe('get-bans-handler', () => {
 
       it('should include both group and scene bans', async () => {
         const groupBan = createTestGroupBan('group-1', { id: 'group-ban' })
-        const sceneBan = createTestSceneBan([{ x: 10, y: 20 }], { id: 'scene-ban' })
+        const sceneBan = createTestSceneBan(['10,20'], { id: 'scene-ban' })
         mockBansDb.getAllBans.mockResolvedValue([groupBan, sceneBan])
 
         const context = createContext(ALLOWED_ADDRESS)

@@ -6,7 +6,7 @@ describe('bans controller integration tests', () => {
   test('public bans endpoint', function ({ components }) {
     beforeEach(async () => {
       // Clean up database before each test (order matters due to FK constraints)
-      await components.pg.query('DELETE FROM ban_parcels')
+      await components.pg.query('DELETE FROM ban_positions')
       await components.pg.query('DELETE FROM bans')
       await components.pg.query('DELETE FROM scene_group_parcels')
       await components.pg.query('DELETE FROM scene_groups')
@@ -26,7 +26,7 @@ describe('bans controller integration tests', () => {
       it('should return scene bans', async () => {
         // Create a scene ban directly in the database
         await components.bansDb.createSceneBan(
-          { parcels: [{ x: 10, y: 20 }, { x: 11, y: 20 }], reason: 'Inappropriate content' },
+          { positions: ["10,20", "11,20"], reason: 'Inappropriate content' },
           '0x1234567890123456789012345678901234567890'
         )
 
@@ -37,9 +37,9 @@ describe('bans controller integration tests', () => {
         expect(response.status).toBe(200)
         expect(body.ok).toBe(true)
         expect(body.data).toHaveLength(1)
-        expect(body.data[0].parcels).toHaveLength(2)
-        expect(body.data[0].parcels).toContainEqual({ x: 10, y: 20 })
-        expect(body.data[0].parcels).toContainEqual({ x: 11, y: 20 })
+        expect(body.data[0].positions).toHaveLength(2)
+        expect(body.data[0].positions).toContain("10,20")
+        expect(body.data[0].positions).toContain("11,20")
         expect(body.data[0].reason).toBe('Inappropriate content')
         expect(body.data[0].groupId).toBeNull()
         expect(body.data[0].worldName).toBeNull()
@@ -68,7 +68,7 @@ describe('bans controller integration tests', () => {
         expect(body.data).toHaveLength(1)
         expect(body.data[0].groupId).toBe(group.id)
         expect(body.data[0].reason).toBe('Group violation')
-        expect(body.data[0].parcels).toEqual([])
+        expect(body.data[0].positions).toEqual([])
       })
 
       it('should return world bans', async () => {
@@ -87,7 +87,7 @@ describe('bans controller integration tests', () => {
         expect(body.data[0].worldName).toBe('bad-world.dcl.eth')
         expect(body.data[0].reason).toBe('World policy violation')
         expect(body.data[0].groupId).toBeNull()
-        expect(body.data[0].parcels).toEqual([])
+        expect(body.data[0].positions).toEqual([])
       })
 
       it('should return all types of bans together', async () => {
@@ -100,7 +100,7 @@ describe('bans controller integration tests', () => {
 
         // Create all three types of bans
         await components.bansDb.createSceneBan(
-          { parcels: [{ x: 0, y: 0 }], reason: 'Scene ban' },
+          { positions: ["0,0"], reason: 'Scene ban' },
           '0x1111111111111111111111111111111111111111'
         )
         await components.bansDb.createGroupBan(
@@ -126,7 +126,7 @@ describe('bans controller integration tests', () => {
         const worldBan = body.data.find((b: any) => b.worldName !== null)
 
         expect(sceneBan).toBeDefined()
-        expect(sceneBan.parcels).toEqual([{ x: 0, y: 0 }])
+        expect(sceneBan.positions).toEqual(["0,0"])
 
         expect(groupBan).toBeDefined()
         expect(groupBan.groupId).toBe(group.id)
@@ -137,7 +137,7 @@ describe('bans controller integration tests', () => {
 
       it('should include sceneId when present', async () => {
         await components.bansDb.createSceneBan(
-          { parcels: [{ x: 5, y: 5 }], sceneId: 'bafkreiabcdef123456789', reason: 'With scene ID' },
+          { positions: ["5,5"], sceneId: 'bafkreiabcdef123456789', reason: 'With scene ID' },
           '0x1234567890123456789012345678901234567890'
         )
 
@@ -152,7 +152,7 @@ describe('bans controller integration tests', () => {
       it('should include createdAt and createdBy', async () => {
         const createdBy = '0xABCDEF1234567890123456789012345678901234'
         await components.bansDb.createSceneBan(
-          { parcels: [{ x: 1, y: 1 }] },
+          { positions: ["1,1"] },
           createdBy
         )
 
@@ -169,15 +169,15 @@ describe('bans controller integration tests', () => {
       it('should return bans ordered by createdAt descending', async () => {
         // Create bans with slight delay to ensure different timestamps
         await components.bansDb.createSceneBan(
-          { parcels: [{ x: 1, y: 1 }], reason: 'First' },
+          { positions: ["1,1"], reason: 'First' },
           '0x1234567890123456789012345678901234567890'
         )
         await components.bansDb.createSceneBan(
-          { parcels: [{ x: 2, y: 2 }], reason: 'Second' },
+          { positions: ["2,2"], reason: 'Second' },
           '0x1234567890123456789012345678901234567890'
         )
         await components.bansDb.createSceneBan(
-          { parcels: [{ x: 3, y: 3 }], reason: 'Third' },
+          { positions: ["3,3"], reason: 'Third' },
           '0x1234567890123456789012345678901234567890'
         )
 
@@ -216,7 +216,7 @@ describe('bans controller integration tests', () => {
 
     beforeEach(async () => {
       // Clean up database before each test
-      await components.pg.query('DELETE FROM ban_parcels')
+      await components.pg.query('DELETE FROM ban_positions')
       await components.pg.query('DELETE FROM bans')
       await components.pg.query('DELETE FROM scene_group_parcels')
       await components.pg.query('DELETE FROM scene_groups')
@@ -255,7 +255,7 @@ describe('bans controller integration tests', () => {
 
       it('should return 200 with bans when signed by allowed user', async () => {
         await components.bansDb.createSceneBan(
-          { parcels: [{ x: 0, y: 0 }] },
+          { positions: ["0,0"] },
           '0x1234567890123456789012345678901234567890'
         )
 
@@ -284,14 +284,14 @@ describe('bans controller integration tests', () => {
     describe('POST /backoffice/bans', () => {
       it('should create a scene ban', async () => {
         const response = await makeSignedRequest('POST', '/backoffice/bans', {
-          parcels: [{ x: 10, y: 10 }],
+          positions: ["10,10"],
           reason: 'Test scene ban'
         })
         const body = await response.json()
 
         expect(response.status).toBe(201)
         expect(body.ok).toBe(true)
-        expect(body.data.parcels).toEqual([{ x: 10, y: 10 }])
+        expect(body.data.positions).toEqual(["10,10"])
         expect(body.data.reason).toBe('Test scene ban')
       })
 
@@ -330,7 +330,7 @@ describe('bans controller integration tests', () => {
     describe('DELETE /backoffice/bans/:id', () => {
       it('should delete a ban', async () => {
         const ban = await components.bansDb.createSceneBan(
-          { parcels: [{ x: 30, y: 30 }] },
+          { positions: ["30,30"] },
           '0x1234567890123456789012345678901234567890'
         )
 

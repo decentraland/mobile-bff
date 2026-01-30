@@ -13,6 +13,8 @@ import { ISlackComponent } from './adapters/slack'
 import { ISceneGroupsDbComponent } from './adapters/scene-groups-db'
 import { IBansDbComponent } from './adapters/bans-db'
 import { ITagsDbComponent } from './adapters/tags-db'
+import { IPlacesDbComponent } from './adapters/places-db'
+import { IPlaceGroupsDbComponent } from './adapters/place-groups-db'
 
 export type GlobalContext = {
   components: BaseComponents
@@ -31,6 +33,8 @@ export type BaseComponents = {
   sceneGroupsDb: ISceneGroupsDbComponent
   bansDb: IBansDbComponent
   tagsDb: ITagsDbComponent
+  placesDb: IPlacesDbComponent
+  placeGroupsDb: IPlaceGroupsDbComponent
 }
 
 // components used in runtime

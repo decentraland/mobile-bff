@@ -15,6 +15,8 @@ import { createSlackComponent } from './adapters/slack'
 import { createSceneGroupsDbComponent } from './adapters/scene-groups-db'
 import { createBansDbComponent } from './adapters/bans-db'
 import { createTagsDbComponent } from './adapters/tags-db'
+import { createPlacesDbComponent } from './adapters/places-db'
+import { createPlaceGroupsDbComponent } from './adapters/place-groups-db'
 
 // Initialize all the components of the app
 export async function initComponents(): Promise<AppComponents> {
@@ -46,6 +48,8 @@ export async function initComponents(): Promise<AppComponents> {
   const sceneGroupsDb = await createSceneGroupsDbComponent({ pg })
   const bansDb = await createBansDbComponent({ pg })
   const tagsDb = await createTagsDbComponent({ pg })
+  const placesDb = await createPlacesDbComponent({ pg })
+  const placeGroupsDb = await createPlaceGroupsDbComponent({ pg })
 
   await instrumentHttpServerWithPromClientRegistry({ metrics, server, config, registry: metrics.registry! })
 
@@ -61,7 +65,9 @@ export async function initComponents(): Promise<AppComponents> {
     slack,
     sceneGroupsDb,
     bansDb,
-    tagsDb
+    tagsDb,
+    placesDb,
+    placeGroupsDb
   }
 }
 

@@ -6,21 +6,8 @@ import { requestDeletionHandler } from "./handlers/request-deletion-handler"
 import { getDeletionStatusHandler } from "./handlers/get-deletion-status-handler"
 import { cancelDeletionHandler } from "./handlers/cancel-deletion-handler"
 
-// Scene Groups handlers (public)
-import { getSceneInfoHandler } from "./handlers/scene-groups/get-scene-info-handler"
-import { getSceneGroupsHandler } from "./handlers/scene-groups/get-scene-groups-handler"
-
-// Places handler (public)
-import { getPlacesHandler } from "./handlers/places/get-places-handler"
-
 // Tags handlers (public)
 import { getAllTagsHandler } from "./handlers/tags/get-all-tags-handler"
-
-// Scene Groups handlers (backoffice)
-import { createSceneGroupHandler } from "./handlers/backoffice/scene-groups/create-scene-group-handler"
-import { getBackofficeSceneGroupsHandler } from "./handlers/backoffice/scene-groups/get-scene-groups-handler"
-import { updateSceneGroupHandler } from "./handlers/backoffice/scene-groups/update-scene-group-handler"
-import { deleteSceneGroupHandler } from "./handlers/backoffice/scene-groups/delete-scene-group-handler"
 
 // Bans handlers (public)
 import { getBansHandler } from "./handlers/bans/get-bans-handler"
@@ -34,8 +21,22 @@ import { deleteBanHandler } from "./handlers/backoffice/bans/delete-ban-handler"
 import { createTagHandler } from "./handlers/backoffice/tags/create-tag-handler"
 import { deleteTagHandler } from "./handlers/backoffice/tags/delete-tag-handler"
 
-// Worlds handlers (public)
-import { getWorldInfoHandler } from "./handlers/worlds/get-world-info-handler"
+// Places handlers (public) - new places model
+import { getPlacesHandler } from "./handlers/places-v2/get-places-handler"
+import { getPlaceGroupsHandler } from "./handlers/places-v2/get-place-groups-handler"
+
+// Places handlers (backoffice) - new places model
+import { getBackofficePlacesHandler } from "./handlers/backoffice/places/get-places-handler"
+import { createPlaceHandler } from "./handlers/backoffice/places/create-place-handler"
+import { updatePlaceHandler } from "./handlers/backoffice/places/update-place-handler"
+import { deletePlaceHandler } from "./handlers/backoffice/places/delete-place-handler"
+import { setPlaceGroupHandler, removePlaceGroupHandler } from "./handlers/backoffice/places/set-place-group-handler"
+
+// Place Groups handlers (backoffice)
+import { getBackofficePlaceGroupsHandler } from "./handlers/backoffice/place-groups/get-place-groups-handler"
+import { createPlaceGroupHandler } from "./handlers/backoffice/place-groups/create-place-group-handler"
+import { updatePlaceGroupHandler } from "./handlers/backoffice/place-groups/update-place-group-handler"
+import { deletePlaceGroupHandler } from "./handlers/backoffice/place-groups/delete-place-group-handler"
 
 // We return the entire router because it will be easier to test than a whole server
 export async function setupRouter(globalContext: GlobalContext): Promise<Router<GlobalContext>> {
@@ -59,20 +60,33 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
   router.get("/deletion", signedFetch, getDeletionStatusHandler)
   router.delete("/deletion", signedFetch, cancelDeletionHandler)
 
-  // Public read-only endpoints (for mobile app)
+  // ============== PUBLIC READ-ONLY ENDPOINTS ==============
+
+  // Places API
   router.get("/places", getPlacesHandler)
-  router.get("/scene-groups", getSceneGroupsHandler)
+  router.get("/place-groups", getPlaceGroupsHandler)
+
+  // Tags and Bans
   router.get("/tags", getAllTagsHandler)
-  router.get("/worlds/:worldName", getWorldInfoHandler)
   router.get("/bans", getBansHandler)
 
-  // ============== BACKOFFICE ==============
+  // ============== BACKOFFICE ENDPOINTS ==============
   // require signed fetch + ALLOWED_USERS
 
-  router.get("/backoffice/scene-groups", signedFetch, getBackofficeSceneGroupsHandler)
-  router.post("/backoffice/scene-groups", signedFetch, createSceneGroupHandler)
-  router.put("/backoffice/scene-groups/:id", signedFetch, updateSceneGroupHandler)
-  router.delete("/backoffice/scene-groups/:id", signedFetch, deleteSceneGroupHandler)
+  // Places management
+  router.get("/backoffice/places", signedFetch, getBackofficePlacesHandler)
+  router.post("/backoffice/places", signedFetch, createPlaceHandler)
+  router.put("/backoffice/places/:id", signedFetch, updatePlaceHandler)
+  router.delete("/backoffice/places/:id", signedFetch, deletePlaceHandler)
+  router.post("/backoffice/places/:id/group", signedFetch, setPlaceGroupHandler)
+  router.delete("/backoffice/places/:id/group", signedFetch, removePlaceGroupHandler)
+
+  // Place Groups management
+  router.get("/backoffice/place-groups", signedFetch, getBackofficePlaceGroupsHandler)
+  router.post("/backoffice/place-groups", signedFetch, createPlaceGroupHandler)
+  router.put("/backoffice/place-groups/:id", signedFetch, updatePlaceGroupHandler)
+  router.delete("/backoffice/place-groups/:id", signedFetch, deletePlaceGroupHandler)
+
   // Bans management
   router.get("/backoffice/bans", signedFetch, getBackofficeBansHandler)
   router.post("/backoffice/bans", signedFetch, createBanHandler)
@@ -81,7 +95,6 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
   // Tags management
   router.post("/backoffice/tags", signedFetch, createTagHandler)
   router.delete("/backoffice/tags/:id", signedFetch, deleteTagHandler)
-
 
   return router
 }

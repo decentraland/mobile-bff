@@ -5,7 +5,7 @@ import { Ban } from '../../../../adapters/bans-db'
 
 type CreateBanBody = {
   groupId?: string
-  parcels?: { x: number; y: number }[]
+  positions?: string[]  // ["x,y", "x,y"] format for scene bans
   worldName?: string
   sceneId?: string  // Entity ID of the scene/world at ban time (for detecting redeploys)
   reason?: string
@@ -40,24 +40,24 @@ export async function createBanHandler(
   try {
     const body = await request.json() as CreateBanBody
 
-    // Must have exactly one of: groupId, parcels, or worldName
+    // Must have exactly one of: groupId, positions, or worldName
     const hasGroupId = body.groupId !== undefined && body.groupId !== null
-    const hasParcels = body.parcels !== undefined && Array.isArray(body.parcels) && body.parcels.length > 0
+    const hasPositions = body.positions !== undefined && Array.isArray(body.positions) && body.positions.length > 0
     const hasWorldName = body.worldName !== undefined && body.worldName !== null && body.worldName.trim() !== ''
 
-    const optionCount = [hasGroupId, hasParcels, hasWorldName].filter(Boolean).length
+    const optionCount = [hasGroupId, hasPositions, hasWorldName].filter(Boolean).length
 
     if (optionCount === 0) {
       return {
         status: 400,
-        body: { ok: false, error: 'Must specify one of: groupId (group ban), parcels (scene ban), or worldName (world ban)' }
+        body: { ok: false, error: 'Must specify one of: groupId (group ban), positions (scene ban), or worldName (world ban)' }
       }
     }
 
     if (optionCount > 1) {
       return {
         status: 400,
-        body: { ok: false, error: 'Cannot specify multiple ban types. Use only one of: groupId, parcels, or worldName.' }
+        body: { ok: false, error: 'Cannot specify multiple ban types. Use only one of: groupId, positions, or worldName.' }
       }
     }
 
@@ -76,22 +76,22 @@ export async function createBanHandler(
       }, userAddress)
       logger.info('World ban created', { id: ban.id, worldName: body.worldName!, sceneId: body.sceneId || '', createdBy: userAddress })
     } else {
-      // Scene ban - validate parcels structure
-      for (const parcel of body.parcels!) {
-        if (typeof parcel.x !== 'number' || typeof parcel.y !== 'number') {
+      // Scene ban - validate positions format (should be "x,y" strings)
+      for (const position of body.positions!) {
+        if (typeof position !== 'string' || !position.match(/^-?\d+,-?\d+$/)) {
           return {
             status: 400,
-            body: { ok: false, error: 'Invalid parcels format. Expected array of {x: number, y: number}' }
+            body: { ok: false, error: 'Invalid positions format. Expected array of "x,y" strings' }
           }
         }
       }
 
       ban = await bansDb.createSceneBan({
-        parcels: body.parcels!,
+        positions: body.positions!,
         sceneId: body.sceneId,
         reason: body.reason
       }, userAddress)
-      logger.info('Scene ban created', { id: ban.id, parcelCount: body.parcels!.length, sceneId: body.sceneId || '', createdBy: userAddress })
+      logger.info('Scene ban created', { id: ban.id, positionCount: body.positions!.length, sceneId: body.sceneId || '', createdBy: userAddress })
     }
 
     return {
