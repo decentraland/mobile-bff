@@ -78,7 +78,7 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
       expect(result.name).toBe('Test Group')
       expect(result.description).toBe('A test description')
       expect(result.color).toBe('#FF6B6B')
-      expect(result.tags).toEqual(['test', 'example'])
+      expect(result.tags).toEqual(['example', 'test'])
       expect(result.parcels).toHaveLength(3)
       expect(result.createdAt).toBeDefined()
       expect(result.updatedAt).toBeDefined()

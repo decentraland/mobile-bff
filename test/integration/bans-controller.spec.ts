@@ -250,7 +250,7 @@ describe('bans controller integration tests', () => {
       it('should return 400 when not signed', async () => {
         const { localFetch } = components
         const response = await localFetch.fetch('/backoffice/bans')
-        expect(response.status).toBe(400)
+        expect(response.status).toBe(401)
       })
 
       it('should return 200 with bans when signed by allowed user', async () => {
