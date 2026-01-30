@@ -49,7 +49,7 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
 
   beforeEach(async () => {
     // Clean up tables before each test (order matters due to FK constraints)
-    await pg.query('DELETE FROM ban_parcels')
+    await pg.query('DELETE FROM ban_positions')
     await pg.query('DELETE FROM bans')
     await pg.query('DELETE FROM scene_group_parcels')
     await pg.query('DELETE FROM scene_groups')
@@ -85,7 +85,7 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
 
       expect(result.id).toBeDefined()
       expect(result.groupId).toBe(testGroupId)
-      expect(result.parcels).toEqual([])
+      expect(result.positions).toEqual([])
       expect(result.reason).toBe('Test reason')
       expect(result.createdBy).toBe('0x1234567890123456789012345678901234567890')
       expect(result.createdAt).toBeDefined()
@@ -126,52 +126,52 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
   })
 
   describe('createSceneBan', () => {
-    it('should create a scene ban with parcels', async () => {
-      const parcels = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 1 }]
+    it('should create a scene ban with positions', async () => {
+      const positions = ['0,0', '1,0', '0,1']
       const result = await bansDb.createSceneBan(
-        { parcels, reason: 'Scene ban reason' },
+        { positions, reason: 'Scene ban reason' },
         '0xABCDEF1234567890123456789012345678901234'
       )
 
       expect(result.id).toBeDefined()
       expect(result.groupId).toBeNull()
-      expect(result.parcels).toHaveLength(3)
-      expect(result.parcels).toContainEqual({ x: 0, y: 0 })
-      expect(result.parcels).toContainEqual({ x: 1, y: 0 })
-      expect(result.parcels).toContainEqual({ x: 0, y: 1 })
+      expect(result.positions).toHaveLength(3)
+      expect(result.positions).toContain('0,0')
+      expect(result.positions).toContain('1,0')
+      expect(result.positions).toContain('0,1')
       expect(result.reason).toBe('Scene ban reason')
       expect(result.createdBy).toBe('0xABCDEF1234567890123456789012345678901234')
     })
 
     it('should create a scene ban without reason', async () => {
       const result = await bansDb.createSceneBan(
-        { parcels: [{ x: 50, y: 50 }] },
+        { positions: ['50,50'] },
         '0x1234567890123456789012345678901234567890'
       )
 
-      expect(result.parcels).toEqual([{ x: 50, y: 50 }])
+      expect(result.positions).toEqual(['50,50'])
       expect(result.reason).toBeUndefined()
     })
 
     it('should handle negative parcel coordinates', async () => {
-      const parcels = [{ x: -10, y: -20 }, { x: -11, y: -20 }]
+      const positions = ['-10,-20', '-11,-20']
       const result = await bansDb.createSceneBan(
-        { parcels },
+        { positions },
         '0x1234567890123456789012345678901234567890'
       )
 
-      expect(result.parcels).toHaveLength(2)
-      expect(result.parcels).toContainEqual({ x: -10, y: -20 })
-      expect(result.parcels).toContainEqual({ x: -11, y: -20 })
+      expect(result.positions).toHaveLength(2)
+      expect(result.positions).toContain('-10,-20')
+      expect(result.positions).toContain('-11,-20')
     })
 
-    it('should fail when parcels array is empty', async () => {
+    it('should fail when positions array is empty', async () => {
       await expect(
         bansDb.createSceneBan(
-          { parcels: [] },
+          { positions: [] },
           '0x1234567890123456789012345678901234567890'
         )
-      ).rejects.toThrow('Scene ban requires at least one parcel')
+      ).rejects.toThrow('Scene ban requires at least one position')
     })
   })
 
@@ -187,7 +187,7 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
         '0x1111111111111111111111111111111111111111'
       )
       await bansDb.createSceneBan(
-        { parcels: [{ x: 0, y: 0 }], reason: 'Scene ban' },
+        { positions: ['0,0'], reason: 'Scene ban' },
         '0x2222222222222222222222222222222222222222'
       )
 
@@ -204,7 +204,7 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
 
       expect(sceneBan).toBeDefined()
       expect(sceneBan!.groupId).toBeNull()
-      expect(sceneBan!.parcels).toEqual([{ x: 0, y: 0 }])
+      expect(sceneBan!.positions).toEqual(['0,0'])
       expect(sceneBan!.reason).toBe('Scene ban')
     })
   })
@@ -215,9 +215,9 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
       expect(result).toBeNull()
     })
 
-    it('should return the ban with parcels for scene ban', async () => {
+    it('should return the ban with positions for scene ban', async () => {
       const created = await bansDb.createSceneBan(
-        { parcels: [{ x: 20, y: 30 }, { x: 21, y: 30 }] },
+        { positions: ['20,30', '21,30'] },
         '0x1234567890123456789012345678901234567890'
       )
 
@@ -225,10 +225,10 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
 
       expect(result).not.toBeNull()
       expect(result!.id).toBe(created.id)
-      expect(result!.parcels).toHaveLength(2)
+      expect(result!.positions).toHaveLength(2)
     })
 
-    it('should return empty parcels for group ban', async () => {
+    it('should return empty positions for group ban', async () => {
       const created = await bansDb.createGroupBan(
         { groupId: testGroupId },
         '0x1234567890123456789012345678901234567890'
@@ -239,7 +239,7 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
       expect(result).not.toBeNull()
       expect(result!.id).toBe(created.id)
       expect(result!.groupId).toBe(testGroupId)
-      expect(result!.parcels).toEqual([])
+      expect(result!.positions).toEqual([])
     })
   })
 
@@ -263,45 +263,45 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
     })
   })
 
-  describe('getBanByParcel', () => {
-    it('should return null when parcel is not in any ban', async () => {
-      const result = await bansDb.getBanByParcel({ x: 999, y: 999 })
+  describe('getBanByPosition', () => {
+    it('should return null when position is not in any ban', async () => {
+      const result = await bansDb.getBanByPosition('999,999')
       expect(result).toBeNull()
     })
 
-    it('should return the ban when parcel matches', async () => {
+    it('should return the ban when position matches', async () => {
       const ban = await bansDb.createSceneBan(
-        { parcels: [{ x: 10, y: 20 }] },
+        { positions: ['10,20'] },
         '0x1234567890123456789012345678901234567890'
       )
 
-      const result = await bansDb.getBanByParcel({ x: 10, y: 20 })
+      const result = await bansDb.getBanByPosition('10,20')
 
       expect(result).not.toBeNull()
       expect(result!.id).toBe(ban.id)
     })
 
-    it('should find ban when querying a parcel that is part of multi-parcel ban', async () => {
+    it('should find ban when querying a position that is part of multi-position ban', async () => {
       const ban = await bansDb.createSceneBan(
-        { parcels: [{ x: 10, y: 20 }, { x: 11, y: 20 }] },
+        { positions: ['10,20', '11,20'] },
         '0x1234567890123456789012345678901234567890'
       )
 
-      const result = await bansDb.getBanByParcel({ x: 10, y: 20 })
+      const result = await bansDb.getBanByPosition('10,20')
 
       expect(result).not.toBeNull()
       expect(result!.id).toBe(ban.id)
-      // Should include all parcels from the ban
-      expect(result!.parcels).toHaveLength(2)
+      // Should include all positions from the ban
+      expect(result!.positions).toHaveLength(2)
     })
 
     it('should handle negative coordinates', async () => {
       const ban = await bansDb.createSceneBan(
-        { parcels: [{ x: -10, y: -20 }] },
+        { positions: ['-10,-20'] },
         '0x1234567890123456789012345678901234567890'
       )
 
-      const result = await bansDb.getBanByParcel({ x: -10, y: -20 })
+      const result = await bansDb.getBanByPosition('-10,-20')
 
       expect(result).not.toBeNull()
       expect(result!.id).toBe(ban.id)
@@ -327,10 +327,10 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
       expect(await bansDb.getBanByGroupId(testGroupId)).toBeNull()
     })
 
-    it('should delete a scene ban and its parcels', async () => {
-      const parcels = [{ x: 500, y: 500 }, { x: 501, y: 500 }]
+    it('should delete a scene ban and its positions', async () => {
+      const positions = ['500,500', '501,500']
       const created = await bansDb.createSceneBan(
-        { parcels },
+        { positions },
         '0x1234567890123456789012345678901234567890'
       )
 
@@ -338,8 +338,8 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
 
       expect(result).toBe(true)
       expect(await bansDb.getBanById(created.id)).toBeNull()
-      // Check that neither parcel can be found anymore
-      expect(await bansDb.getBanByParcel(parcels[0])).toBeNull()
+      // Check that neither position can be found anymore
+      expect(await bansDb.getBanByPosition(positions[0])).toBeNull()
     })
   })
 

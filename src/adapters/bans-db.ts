@@ -1,16 +1,12 @@
 import SQL from 'sql-template-strings'
 import { AppComponents } from '../types'
 
-export type ParcelCoord = {
-  x: number
-  y: number
-}
-
 export type Ban = {
   id: string
   groupId: string | null  // If set, it's a group ban
   worldName: string | null  // If set, it's a world ban
-  parcels: ParcelCoord[]  // For scene bans, the parcels that identify the scene
+  placeId: string | null  // If set, it's a place ban
+  positions: string[]  // For scene bans, the positions that identify the scene ("x,y" format)
   sceneId: string | null  // Entity/scene ID at ban time (for detecting redeploys)
   reason?: string
   createdBy: string
@@ -23,7 +19,7 @@ export type CreateGroupBanInput = {
 }
 
 export type CreateSceneBanInput = {
-  parcels: ParcelCoord[]
+  positions: string[]  // ["x,y", "x,y"] format
   sceneId?: string  // Entity ID of the scene at ban time
   reason?: string
 }
@@ -34,15 +30,23 @@ export type CreateWorldBanInput = {
   reason?: string
 }
 
+export type CreatePlaceBanInput = {
+  placeId: string
+  sceneId?: string  // Entity ID at ban time
+  reason?: string
+}
+
 export type IBansDbComponent = {
   getAllBans(): Promise<Ban[]>
   getBanById(id: string): Promise<Ban | null>
   getBanByGroupId(groupId: string): Promise<Ban | null>
-  getBanByParcel(parcel: ParcelCoord): Promise<Ban | null>
+  getBanByPosition(position: string): Promise<Ban | null>
   getBanByWorldName(worldName: string): Promise<Ban | null>
+  getBanByPlaceId(placeId: string): Promise<Ban | null>
   createGroupBan(input: CreateGroupBanInput, createdBy: string): Promise<Ban>
   createSceneBan(input: CreateSceneBanInput, createdBy: string): Promise<Ban>
   createWorldBan(input: CreateWorldBanInput, createdBy: string): Promise<Ban>
+  createPlaceBan(input: CreatePlaceBanInput, createdBy: string): Promise<Ban>
   deleteBan(id: string): Promise<boolean>
 }
 
@@ -50,7 +54,8 @@ type BanRow = {
   id: string
   groupId: string | null
   worldName: string | null
-  parcels: ParcelCoord[] | null
+  placeId: string | null
+  positions: string[] | null
   sceneId: string | null
   reason: string | null
   createdBy: string
@@ -64,7 +69,8 @@ export async function createBansDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
       id: row.id,
       groupId: row.groupId,
       worldName: row.worldName,
-      parcels: row.parcels || [],
+      placeId: row.placeId,
+      positions: row.positions || [],
       sceneId: row.sceneId,
       reason: row.reason || undefined,
       createdBy: row.createdBy,
@@ -78,13 +84,14 @@ export async function createBansDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
         b.id,
         b.group_id as "groupId",
         b.world_name as "worldName",
+        b.place_id as "placeId",
         b.scene_id as "sceneId",
         b.reason,
         b.created_by as "createdBy",
         b.created_at as "createdAt",
-        COALESCE(json_agg(json_build_object('x', bp.x, 'y', bp.y)) FILTER (WHERE bp.x IS NOT NULL), '[]') as parcels
+        COALESCE(array_agg(bp.position) FILTER (WHERE bp.position IS NOT NULL), '{}') as positions
       FROM bans b
-      LEFT JOIN ban_parcels bp ON b.id = bp.ban_id
+      LEFT JOIN ban_positions bp ON b.id = bp.ban_id
       GROUP BY b.id
       ORDER BY b.created_at DESC
     `
@@ -98,13 +105,14 @@ export async function createBansDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
         b.id,
         b.group_id as "groupId",
         b.world_name as "worldName",
+        b.place_id as "placeId",
         b.scene_id as "sceneId",
         b.reason,
         b.created_by as "createdBy",
         b.created_at as "createdAt",
-        COALESCE(json_agg(json_build_object('x', bp.x, 'y', bp.y)) FILTER (WHERE bp.x IS NOT NULL), '[]') as parcels
+        COALESCE(array_agg(bp.position) FILTER (WHERE bp.position IS NOT NULL), '{}') as positions
       FROM bans b
-      LEFT JOIN ban_parcels bp ON b.id = bp.ban_id
+      LEFT JOIN ban_positions bp ON b.id = bp.ban_id
       WHERE b.id = ${id}
       GROUP BY b.id
     `
@@ -118,11 +126,12 @@ export async function createBansDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
         b.id,
         b.group_id as "groupId",
         b.world_name as "worldName",
+        b.place_id as "placeId",
         b.scene_id as "sceneId",
         b.reason,
         b.created_by as "createdBy",
         b.created_at as "createdAt",
-        '[]'::json as parcels
+        '{}' as positions
       FROM bans b
       WHERE b.group_id = ${groupId}
     `
@@ -136,11 +145,12 @@ export async function createBansDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
         b.id,
         b.group_id as "groupId",
         b.world_name as "worldName",
+        b.place_id as "placeId",
         b.scene_id as "sceneId",
         b.reason,
         b.created_by as "createdBy",
         b.created_at as "createdAt",
-        '[]'::json as parcels
+        '{}' as positions
       FROM bans b
       WHERE b.world_name = ${worldName}
     `
@@ -148,27 +158,46 @@ export async function createBansDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
     return result.rows.length > 0 ? toBan(result.rows[0]) : null
   }
 
-  async function getBanByParcel(parcel: ParcelCoord): Promise<Ban | null> {
-    const { x, y } = parcel
+  async function getBanByPosition(position: string): Promise<Ban | null> {
     const query = SQL`
       SELECT
         b.id,
         b.group_id as "groupId",
         b.world_name as "worldName",
+        b.place_id as "placeId",
         b.scene_id as "sceneId",
         b.reason,
         b.created_by as "createdBy",
         b.created_at as "createdAt",
         COALESCE(
-          (SELECT json_agg(json_build_object('x', bp2.x, 'y', bp2.y))
-           FROM ban_parcels bp2 WHERE bp2.ban_id = b.id),
-          '[]'
-        ) as parcels
-      FROM ban_parcels bp
+          (SELECT array_agg(bp2.position)
+           FROM ban_positions bp2 WHERE bp2.ban_id = b.id),
+          '{}'
+        ) as positions
+      FROM ban_positions bp
       JOIN bans b ON bp.ban_id = b.id
-      WHERE bp.x = ${x} AND bp.y = ${y}
-        AND b.group_id IS NULL AND b.world_name IS NULL
+      WHERE bp.position = ${position}
+        AND b.group_id IS NULL AND b.world_name IS NULL AND b.place_id IS NULL
       LIMIT 1
+    `
+    const result = await pg.query<BanRow>(query)
+    return result.rows.length > 0 ? toBan(result.rows[0]) : null
+  }
+
+  async function getBanByPlaceId(placeId: string): Promise<Ban | null> {
+    const query = SQL`
+      SELECT
+        b.id,
+        b.group_id as "groupId",
+        b.world_name as "worldName",
+        b.place_id as "placeId",
+        b.scene_id as "sceneId",
+        b.reason,
+        b.created_by as "createdBy",
+        b.created_at as "createdAt",
+        '{}' as positions
+      FROM bans b
+      WHERE b.place_id = ${placeId}
     `
     const result = await pg.query<BanRow>(query)
     return result.rows.length > 0 ? toBan(result.rows[0]) : null
@@ -187,8 +216,8 @@ export async function createBansDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
   }
 
   async function createSceneBan(input: CreateSceneBanInput, createdBy: string): Promise<Ban> {
-    if (input.parcels.length === 0) {
-      throw new Error('Scene ban requires at least one parcel')
+    if (input.positions.length === 0) {
+      throw new Error('Scene ban requires at least one position')
     }
 
     // Use a transaction to ensure atomicity
@@ -203,11 +232,11 @@ export async function createBansDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
       const banResult = await pg.query<{ id: string }>(insertBanQuery)
       const banId = banResult.rows[0].id
 
-      // Insert parcels
-      for (const parcel of input.parcels) {
+      // Insert positions
+      for (const position of input.positions) {
         await pg.query(SQL`
-          INSERT INTO ban_parcels (ban_id, x, y)
-          VALUES (${banId}, ${parcel.x}, ${parcel.y})
+          INSERT INTO ban_positions (ban_id, position)
+          VALUES (${banId}, ${position})
         `)
       }
 
@@ -232,6 +261,18 @@ export async function createBansDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
     return (await getBanById(banId))!
   }
 
+  async function createPlaceBan(input: CreatePlaceBanInput, createdBy: string): Promise<Ban> {
+    const insertBanQuery = SQL`
+      INSERT INTO bans (place_id, scene_id, reason, created_by)
+      VALUES (${input.placeId}, ${input.sceneId || null}, ${input.reason || null}, ${createdBy})
+      RETURNING id
+    `
+    const banResult = await pg.query<{ id: string }>(insertBanQuery)
+    const banId = banResult.rows[0].id
+
+    return (await getBanById(banId))!
+  }
+
   async function deleteBan(id: string): Promise<boolean> {
     const query = SQL`DELETE FROM bans WHERE id = ${id}`
     const result = await pg.query(query)
@@ -242,11 +283,13 @@ export async function createBansDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
     getAllBans,
     getBanById,
     getBanByGroupId,
-    getBanByParcel,
+    getBanByPosition,
     getBanByWorldName,
+    getBanByPlaceId,
     createGroupBan,
     createSceneBan,
     createWorldBan,
+    createPlaceBan,
     deleteBan
   }
 }

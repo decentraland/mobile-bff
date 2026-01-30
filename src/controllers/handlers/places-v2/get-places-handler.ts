@@ -1,10 +1,29 @@
 import { HandlerContextWithPath } from '../../../types'
+import { Place } from '../../../adapters/places-db'
+
+// Flattened place response with ban status
+type PlaceResponse = Place & {
+  isBanned: boolean
+  banSceneId: string | null
+}
+
+async function addBanStatus(
+  place: Place,
+  bansDb: { getBanByPlaceId: (id: string) => Promise<{ sceneId: string | null } | null> }
+): Promise<PlaceResponse> {
+  const ban = await bansDb.getBanByPlaceId(place.id)
+  return {
+    ...place,
+    isBanned: ban !== null,
+    banSceneId: ban?.sceneId || null
+  }
+}
 
 export async function getPlacesHandler(
-  context: HandlerContextWithPath<'sceneGroupsDb' | 'bansDb' | 'logs', '/places'>
+  context: HandlerContextWithPath<'placesDb' | 'bansDb' | 'logs', '/places'>
 ) {
   const {
-    components: { sceneGroupsDb, bansDb, logs },
+    components: { placesDb, bansDb, logs },
     url
   } = context
 
@@ -13,7 +32,6 @@ export async function getPlacesHandler(
   try {
     const searchParams = new URL(url.toString()).searchParams
 
-    // Check if parameters exist (even if empty) vs have values
     const hasWorld = searchParams.has('world')
     const hasTag = searchParams.has('tag')
     const hasParcel = searchParams.has('parcel')
@@ -24,19 +42,8 @@ export async function getPlacesHandler(
 
     // If no query parameters provided, return all places
     if (!hasWorld && !hasTag && !hasParcel) {
-      const groups = await sceneGroupsDb.getAllSceneGroups()
-
-      const results = await Promise.all(
-        groups.map(async (group) => {
-          const ban = await bansDb.getBanByGroupId(group.id)
-          return {
-            type: group.worldName ? 'world' : 'group',
-            group,
-            isBanned: ban !== null,
-            banSceneId: ban?.sceneId || null
-          }
-        })
-      )
+      const places = await placesDb.getAllPlaces()
+      const results = await Promise.all(places.map(p => addBanStatus(p, bansDb)))
 
       return {
         status: 200,
@@ -47,7 +54,7 @@ export async function getPlacesHandler(
       }
     }
 
-    // Handle world query: GET /places?world=boedo
+    // Handle world query: GET /places?world=boedo.dcl.eth
     if (hasWorld) {
       if (!worldParam) {
         return {
@@ -55,30 +62,20 @@ export async function getPlacesHandler(
           body: { ok: false, error: 'Invalid world parameter: empty value' }
         }
       }
-      const group = await sceneGroupsDb.getSceneGroupByWorldName(worldParam)
+      const place = await placesDb.getPlaceByWorldName(worldParam)
 
-      if (!group) {
+      if (!place) {
         return {
           status: 200,
-          body: {
-            ok: true,
-            data: null
-          }
+          body: { ok: true, data: null }
         }
       }
-
-      const ban = await bansDb.getBanByGroupId(group.id)
 
       return {
         status: 200,
         body: {
           ok: true,
-          data: {
-            type: 'world',
-            group,
-            isBanned: ban !== null,
-            banSceneId: ban?.sceneId || null
-          }
+          data: await addBanStatus(place, bansDb)
         }
       }
     }
@@ -94,20 +91,8 @@ export async function getPlacesHandler(
         }
       }
 
-      const groups = await sceneGroupsDb.getAllSceneGroups(tagFilters)
-
-      // Get ban status for each group
-      const results = await Promise.all(
-        groups.map(async (group) => {
-          const ban = await bansDb.getBanByGroupId(group.id)
-          return {
-            type: group.worldName ? 'world' : 'group',
-            group,
-            isBanned: ban !== null,
-            banSceneId: ban?.sceneId || null
-          }
-        })
-      )
+      const places = await placesDb.getAllPlaces(tagFilters)
+      const results = await Promise.all(places.map(p => addBanStatus(p, bansDb)))
 
       return {
         status: 200,
@@ -144,48 +129,32 @@ export async function getPlacesHandler(
         }
       }
 
-      const parcel = { x, y }
+      const position = `${x},${y}`
 
-      // Check if parcel belongs to a scene group
-      const group = await sceneGroupsDb.getSceneGroupByParcel(x, y)
+      // First try to find by any position (place_positions)
+      let place = await placesDb.getPlaceByPosition(position)
 
-      if (group) {
-        // Parcel belongs to a group - check if group is banned
-        const ban = await bansDb.getBanByGroupId(group.id)
+      // If not found, try by base position
+      if (!place) {
+        place = await placesDb.getPlaceByBasePosition(position)
+      }
 
+      if (place) {
         return {
           status: 200,
           body: {
             ok: true,
-            data: {
-              type: 'group',
-              group,
-              isBanned: ban !== null,
-              banSceneId: ban?.sceneId || null
-            }
+            data: await addBanStatus(place, bansDb)
           }
         }
       }
-
-      // Isolated scene - check if this parcel is banned
-      const ban = await bansDb.getBanByParcel(parcel)
 
       return {
         status: 200,
-        body: {
-          ok: true,
-          data: {
-            type: 'scene',
-            parcel,
-            parcels: ban?.parcels || [parcel],
-            isBanned: ban !== null,
-            banSceneId: ban?.sceneId || null
-          }
-        }
+        body: { ok: true, data: null }
       }
     }
 
-    // Should not reach here
     return {
       status: 400,
       body: { ok: false, error: 'Invalid request' }

@@ -61,10 +61,10 @@ describe('create-ban-handler', () => {
         expect(response.body.error).toContain('groupId')
       })
 
-      it('should return 400 when both groupId and parcels are provided', async () => {
+      it('should return 400 when both groupId and positions are provided', async () => {
         const context = createContext(ALLOWED_ADDRESS, {
           groupId: 'some-group-id',
-          parcels: [{ x: 0, y: 0 }]
+          positions: ['0,0']
         })
         const response = await createBanHandler(context as any)
 
@@ -72,19 +72,19 @@ describe('create-ban-handler', () => {
         expect(response.body.error).toContain('Cannot specify multiple')
       })
 
-      it('should return 400 when parcels have invalid structure', async () => {
+      it('should return 400 when positions have invalid format', async () => {
         const context = createContext(ALLOWED_ADDRESS, {
-          parcels: [{ x: 'invalid', y: 0 }]
+          positions: ['invalid']
         })
         const response = await createBanHandler(context as any)
 
         expect(response.status).toBe(400)
-        expect(response.body.error).toContain('parcels format')
+        expect(response.body.error).toContain('positions format')
       })
 
-      it('should return 400 when parcels array is empty', async () => {
+      it('should return 400 when positions array is empty', async () => {
         const context = createContext(ALLOWED_ADDRESS, {
-          parcels: []
+          positions: []
         })
         const response = await createBanHandler(context as any)
 
@@ -140,12 +140,12 @@ describe('create-ban-handler', () => {
 
     describe('and creating a scene ban', () => {
       const validSceneBanInput = {
-        parcels: [{ x: 0, y: 0 }, { x: 1, y: 0 }],
+        positions: ['0,0', '1,0'],
         reason: 'Test scene ban reason'
       }
 
       it('should return 201 with the created ban', async () => {
-        const createdBan = createTestSceneBan(validSceneBanInput.parcels, {
+        const createdBan = createTestSceneBan(validSceneBanInput.positions, {
           reason: validSceneBanInput.reason,
           createdBy: ALLOWED_ADDRESS
         })
@@ -163,13 +163,13 @@ describe('create-ban-handler', () => {
         await createBanHandler(context as any)
 
         expect(mockBansDb.createSceneBan).toHaveBeenCalledWith(
-          { parcels: validSceneBanInput.parcels, reason: validSceneBanInput.reason },
+          { positions: validSceneBanInput.positions, reason: validSceneBanInput.reason },
           ALLOWED_ADDRESS
         )
       })
 
       it('should log the creation', async () => {
-        const createdBan = createTestSceneBan(validSceneBanInput.parcels)
+        const createdBan = createTestSceneBan(validSceneBanInput.positions)
         mockBansDb.createSceneBan.mockResolvedValue(createdBan)
 
         const context = createContext(ALLOWED_ADDRESS, validSceneBanInput)
