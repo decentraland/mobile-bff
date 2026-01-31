@@ -15,6 +15,8 @@ import { IBansDbComponent } from './adapters/bans-db'
 import { ITagsDbComponent } from './adapters/tags-db'
 import { IPlacesDbComponent } from './adapters/places-db'
 import { IPlaceGroupsDbComponent } from './adapters/place-groups-db'
+import { ICacheComponent } from './adapters/cache'
+import { IDestinationsApiComponent } from './adapters/destinations-api'
 
 export type GlobalContext = {
   components: BaseComponents
@@ -35,6 +37,8 @@ export type BaseComponents = {
   tagsDb: ITagsDbComponent
   placesDb: IPlacesDbComponent
   placeGroupsDb: IPlaceGroupsDbComponent
+  cache: ICacheComponent
+  destinationsApi: IDestinationsApiComponent
 }
 
 // components used in runtime

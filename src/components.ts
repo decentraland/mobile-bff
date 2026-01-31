@@ -17,6 +17,8 @@ import { createBansDbComponent } from './adapters/bans-db'
 import { createTagsDbComponent } from './adapters/tags-db'
 import { createPlacesDbComponent } from './adapters/places-db'
 import { createPlaceGroupsDbComponent } from './adapters/place-groups-db'
+import { createCacheComponent } from './adapters/cache'
+import { createDestinationsApiComponent } from './adapters/destinations-api'
 
 // Initialize all the components of the app
 export async function initComponents(): Promise<AppComponents> {
@@ -50,6 +52,8 @@ export async function initComponents(): Promise<AppComponents> {
   const tagsDb = await createTagsDbComponent({ pg })
   const placesDb = await createPlacesDbComponent({ pg })
   const placeGroupsDb = await createPlaceGroupsDbComponent({ pg })
+  const cache = await createCacheComponent({ config })
+  const destinationsApi = await createDestinationsApiComponent({ fetch, config, cache, logs })
 
   await instrumentHttpServerWithPromClientRegistry({ metrics, server, config, registry: metrics.registry! })
 
@@ -67,7 +71,9 @@ export async function initComponents(): Promise<AppComponents> {
     bansDb,
     tagsDb,
     placesDb,
-    placeGroupsDb
+    placeGroupsDb,
+    cache,
+    destinationsApi
   }
 }
 

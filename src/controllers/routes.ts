@@ -25,6 +25,9 @@ import { deleteTagHandler } from "./handlers/backoffice/tags/delete-tag-handler"
 import { getPlacesHandler } from "./handlers/places-v2/get-places-handler"
 import { getPlaceGroupsHandler } from "./handlers/places-v2/get-place-groups-handler"
 
+// Destinations handler (public)
+import { getDestinationsHandler } from "./handlers/destinations/get-destinations-handler"
+
 // Places handlers (backoffice) - new places model
 import { getBackofficePlacesHandler } from "./handlers/backoffice/places/get-places-handler"
 import { createPlaceHandler } from "./handlers/backoffice/places/create-place-handler"
@@ -65,6 +68,9 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
   // Places API
   router.get("/places", getPlacesHandler)
   router.get("/place-groups", getPlaceGroupsHandler)
+
+  // Destinations API (proxy with caching)
+  router.get("/destinations", getDestinationsHandler)
 
   // Tags and Bans
   router.get("/tags", getAllTagsHandler)
