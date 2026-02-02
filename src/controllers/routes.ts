@@ -28,6 +28,9 @@ import { getPlaceGroupsHandler } from "./handlers/places-v2/get-place-groups-han
 // Destinations handler (public)
 import { getDestinationsHandler } from "./handlers/destinations/get-destinations-handler"
 
+// Events handler (public)
+import { getEventsHandler } from "./handlers/events/get-events-handler"
+
 // Places handlers (backoffice) - new places model
 import { getBackofficePlacesHandler } from "./handlers/backoffice/places/get-places-handler"
 import { createPlaceHandler } from "./handlers/backoffice/places/create-place-handler"
@@ -71,6 +74,9 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
 
   // Destinations API (proxy with caching)
   router.get("/destinations", getDestinationsHandler)
+
+  // Events API (proxy with caching)
+  router.get("/events", getEventsHandler)
 
   // Tags and Bans
   router.get("/tags", getAllTagsHandler)
