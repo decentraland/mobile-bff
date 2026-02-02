@@ -193,49 +193,67 @@ export async function createDestinationsApiComponent(
     let worldsMs = 0
 
     try {
-      if (positions.length > 0) {
-        const placesParams = new URLSearchParams(queryString)
-        placesParams.set('only_places', 'true')
-        // Remove any existing pointer params and add our filtered ones
-        placesParams.delete('pointer')
-        for (const pos of positions) {
-          placesParams.append('pointer', pos)
-        }
+      // Build fetch promises for parallel execution
+      const placesPromise = positions.length > 0
+        ? (async () => {
+            const placesParams = new URLSearchParams(queryString)
+            placesParams.set('only_places', 'true')
+            // Remove any existing pointer params and add our filtered ones
+            placesParams.delete('pointer')
+            for (const pos of positions) {
+              placesParams.append('pointer', pos)
+            }
 
-        const startPlaces = Date.now()
-        const placesResponse = await fetch.fetch(`${apiUrl}?${placesParams}`)
-        placesMs = Date.now() - startPlaces
+            const start = Date.now()
+            const response = await fetch.fetch(`${apiUrl}?${placesParams}`)
+            const ms = Date.now() - start
+            return { response, ms }
+          })()
+        : null
 
-        if (placesResponse.ok) {
-          const placesData = await placesResponse.json() as DestinationsResponse
+      const worldsPromise = worlds.length > 0
+        ? (async () => {
+            const worldsParams = new URLSearchParams(queryString)
+            worldsParams.set('only_worlds', 'true')
+            // Remove any existing world_names params and add our filtered ones
+            worldsParams.delete('world_names')
+            for (const world of worlds) {
+              worldsParams.append('world_names', world)
+            }
+
+            const start = Date.now()
+            const response = await fetch.fetch(`${apiUrl}?${worldsParams}`)
+            const ms = Date.now() - start
+            return { response, ms }
+          })()
+        : null
+
+      // Execute both fetches in parallel
+      const [placesResult, worldsResult] = await Promise.all([placesPromise, worldsPromise])
+
+      // Process places result
+      if (placesResult) {
+        placesMs = placesResult.ms
+        if (placesResult.response.ok) {
+          const placesData = await placesResult.response.json() as DestinationsResponse
           if (placesData.data) {
             allDestinations.push(...deduplicateDestinations(placesData.data))
           }
         } else {
-          logger.warn('Places API error', { status: placesResponse.status })
+          logger.warn('Places API error', { status: placesResult.response.status })
         }
       }
 
-      if (worlds.length > 0) {
-        const worldsParams = new URLSearchParams(queryString)
-        worldsParams.set('only_worlds', 'true')
-        // Remove any existing world_names params and add our filtered ones
-        worldsParams.delete('world_names')
-        for (const world of worlds) {
-          worldsParams.append('world_names', world)
-        }
-
-        const startWorlds = Date.now()
-        const worldsResponse = await fetch.fetch(`${apiUrl}?${worldsParams}`)
-        worldsMs = Date.now() - startWorlds
-
-        if (worldsResponse.ok) {
-          const worldsData = await worldsResponse.json() as DestinationsResponse
+      // Process worlds result
+      if (worldsResult) {
+        worldsMs = worldsResult.ms
+        if (worldsResult.response.ok) {
+          const worldsData = await worldsResult.response.json() as DestinationsResponse
           if (worldsData.data) {
             allDestinations.push(...deduplicateDestinations(worldsData.data))
           }
         } else {
-          logger.warn('Worlds API error', { status: worldsResponse.status })
+          logger.warn('Worlds API error', { status: worldsResult.response.status })
         }
       }
 
