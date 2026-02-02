@@ -131,12 +131,12 @@ export async function getPlacesHandler(
 
       const position = `${x},${y}`
 
-      // First try to find by any position (place_positions)
-      let place = await placesDb.getPlaceByPosition(position)
+      // First try to find by base position
+      let place = await placesDb.getPlaceByBasePosition(position)
 
-      // If not found, try by base position
+      // If not found, try by any position (place_positions)
       if (!place) {
-        place = await placesDb.getPlaceByBasePosition(position)
+        place = await placesDb.getPlaceByPosition(position)
       }
 
       if (place) {
