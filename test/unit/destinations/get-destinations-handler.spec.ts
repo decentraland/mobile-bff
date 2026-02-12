@@ -14,14 +14,22 @@ describe('get-destinations-handler', () => {
     mockLogs = createLogsMockComponent()
   })
 
-  function createContext(url: string) {
+  function createContext(url: string, headers: Record<string, string> = {}) {
+    const headersMap = new Map(Object.entries(headers))
     return {
       components: {
         placesDb: mockPlacesDb,
         destinationsApi: mockDestinationsApi,
         logs: mockLogs
       },
-      url: new URL(url)
+      url: new URL(url),
+      request: {
+        headers: {
+          forEach: (callback: (value: string, key: string) => void) => {
+            headersMap.forEach((value, key) => callback(value, key))
+          }
+        }
+      }
     }
   }
 
@@ -46,7 +54,7 @@ describe('get-destinations-handler', () => {
         expect(response.status).toBe(200)
         expect(response.body).toEqual({ ok: true, data: destinations, total: destinations.length })
         expect(mockPlacesDb.getAllPlaces).toHaveBeenCalledWith(['allowed_ios'])
-        expect(mockDestinationsApi.getForPlaces).toHaveBeenCalledWith(places, '')
+        expect(mockDestinationsApi.getForPlaces).toHaveBeenCalledWith(places, '', {})
       })
 
       it('should handle multiple comma-separated tags', async () => {
@@ -110,7 +118,7 @@ describe('get-destinations-handler', () => {
 
         expect(response.status).toBe(200)
         expect(mockPlacesDb.getAllPlaces).toHaveBeenCalledWith(['allowed_ios'])
-        expect(mockDestinationsApi.getForPlaces).toHaveBeenCalledWith(places, 'search=museum&limit=10')
+        expect(mockDestinationsApi.getForPlaces).toHaveBeenCalledWith(places, 'search=museum&limit=10', {})
       })
 
       it('should pass order_by and other filters with tag', async () => {
@@ -123,7 +131,7 @@ describe('get-destinations-handler', () => {
         const response = await getDestinationsHandler(context as any)
 
         expect(response.status).toBe(200)
-        expect(mockDestinationsApi.getForPlaces).toHaveBeenCalledWith(places, 'order_by=most_active&limit=5&offset=10')
+        expect(mockDestinationsApi.getForPlaces).toHaveBeenCalledWith(places, 'order_by=most_active&limit=5&offset=10', {})
       })
     })
 
@@ -135,7 +143,7 @@ describe('get-destinations-handler', () => {
         const response = await getDestinationsHandler(context as any)
 
         expect(response.status).toBe(200)
-        expect(mockDestinationsApi.proxyQuery).toHaveBeenCalledWith('')
+        expect(mockDestinationsApi.proxyQuery).toHaveBeenCalledWith('', {})
       })
 
       it('should return 400 for whitespace-only tag parameter', async () => {
@@ -161,7 +169,7 @@ describe('get-destinations-handler', () => {
 
       expect(response.status).toBe(200)
       expect(response.body).toEqual({ ok: true, data: destinations, total: 2 })
-      expect(mockDestinationsApi.proxyQuery).toHaveBeenCalledWith('limit=10&order_by=most_active')
+      expect(mockDestinationsApi.proxyQuery).toHaveBeenCalledWith('limit=10&order_by=most_active', {})
     })
 
     it('should call proxyQuery with empty string when no query params', async () => {
@@ -171,7 +179,7 @@ describe('get-destinations-handler', () => {
       const response = await getDestinationsHandler(context as any)
 
       expect(response.status).toBe(200)
-      expect(mockDestinationsApi.proxyQuery).toHaveBeenCalledWith('')
+      expect(mockDestinationsApi.proxyQuery).toHaveBeenCalledWith('', {})
     })
 
     it('should handle API returning ok: false', async () => {
@@ -182,6 +190,63 @@ describe('get-destinations-handler', () => {
 
       expect(response.status).toBe(200)
       expect(response.body).toEqual({ ok: false, data: [], total: 0 })
+    })
+  })
+
+  describe('signed fetch header forwarding', () => {
+    it('should forward x-identity-* headers to getForPlaces', async () => {
+      const places = [createTestPlace({ id: 'p1', basePosition: '0,0' })]
+      mockPlacesDb.getAllPlaces.mockResolvedValue(places)
+      mockDestinationsApi.getForPlaces.mockResolvedValue(createDestinationsResponse([]))
+
+      const context = createContext('http://localhost/destinations?tag=featured', {
+        'x-identity-auth-chain-0': 'auth-chain-value-0',
+        'x-identity-auth-chain-1': 'auth-chain-value-1',
+        'x-identity-timestamp': '1234567890',
+        'x-identity-metadata': 'metadata-value',
+        'content-type': 'application/json' // should be ignored
+      })
+      await getDestinationsHandler(context as any)
+
+      expect(mockDestinationsApi.getForPlaces).toHaveBeenCalledWith(
+        places,
+        '',
+        {
+          'x-identity-auth-chain-0': 'auth-chain-value-0',
+          'x-identity-auth-chain-1': 'auth-chain-value-1',
+          'x-identity-timestamp': '1234567890',
+          'x-identity-metadata': 'metadata-value'
+        }
+      )
+    })
+
+    it('should forward x-identity-* headers to proxyQuery', async () => {
+      mockDestinationsApi.proxyQuery.mockResolvedValue(createDestinationsResponse([]))
+
+      const context = createContext('http://localhost/destinations', {
+        'x-identity-auth-chain-0': 'auth-value',
+        'authorization': 'Bearer token' // should be ignored
+      })
+      await getDestinationsHandler(context as any)
+
+      expect(mockDestinationsApi.proxyQuery).toHaveBeenCalledWith(
+        '',
+        { 'x-identity-auth-chain-0': 'auth-value' }
+      )
+    })
+
+    it('should normalize header names to lowercase', async () => {
+      mockDestinationsApi.proxyQuery.mockResolvedValue(createDestinationsResponse([]))
+
+      const context = createContext('http://localhost/destinations', {
+        'X-Identity-Auth-Chain-0': 'auth-value'
+      })
+      await getDestinationsHandler(context as any)
+
+      expect(mockDestinationsApi.proxyQuery).toHaveBeenCalledWith(
+        '',
+        { 'x-identity-auth-chain-0': 'auth-value' }
+      )
     })
   })
 

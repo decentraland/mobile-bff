@@ -3,8 +3,16 @@ import { HandlerContextWithPath } from '../../../types'
 export async function getDestinationsHandler(
   context: HandlerContextWithPath<'placesDb' | 'destinationsApi' | 'logs', '/destinations'>
 ) {
-  const { components: { placesDb, destinationsApi, logs }, url } = context
+  const { components: { placesDb, destinationsApi, logs }, url, request } = context
   const logger = logs.getLogger('get-destinations')
+
+  // Extract signed fetch headers to forward to upstream API
+  const headersToForward: Record<string, string> = {}
+  request.headers.forEach((value, key) => {
+    if (key.toLowerCase().startsWith('x-identity-')) {
+      headersToForward[key.toLowerCase()] = value
+    }
+  })
 
   try {
     const searchParams = new URL(url.toString()).searchParams
@@ -20,13 +28,13 @@ export async function getDestinationsHandler(
 
       // Remove 'tag' from params, pass the rest to API
       searchParams.delete('tag')
-      const response = await destinationsApi.getForPlaces(places, searchParams.toString())
+      const response = await destinationsApi.getForPlaces(places, searchParams.toString(), headersToForward)
 
       return { status: 200, body: response }
     }
 
     searchParams.delete('tag')
-    const response = await destinationsApi.proxyQuery(searchParams.toString())
+    const response = await destinationsApi.proxyQuery(searchParams.toString(), headersToForward)
     return { status: 200, body: response }
 
   } catch (error) {

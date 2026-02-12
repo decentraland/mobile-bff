@@ -17,8 +17,8 @@ export type DestinationsResponse = {
 }
 
 export interface IDestinationsApiComponent {
-  getForPlaces(places: Place[], queryString?: string): Promise<DestinationsResponse>
-  proxyQuery(queryString: string): Promise<DestinationsResponse>
+  getForPlaces(places: Place[], queryString?: string, headers?: Record<string, string>): Promise<DestinationsResponse>
+  proxyQuery(queryString: string, headers?: Record<string, string>): Promise<DestinationsResponse>
 }
 
 type Components = {
@@ -105,16 +105,16 @@ export async function createDestinationsApiComponent(
     ?? 'https://places.decentraland.org/api/destinations'
   const ttl = parseInt(await config.getString('DESTINATIONS_CACHE_TTL_MS') ?? '7200000')
 
-  async function getForPlaces(places: Place[], queryString?: string): Promise<DestinationsResponse> {
+  async function getForPlaces(places: Place[], queryString?: string, headers?: Record<string, string>): Promise<DestinationsResponse> {
     if (places.length === 0) {
       return { ok: true, data: [], total: 0 }
     }
 
     // Use fetchFromApi for all queries - it has caching that preserves API order
-    return fetchFromApi(places, queryString || '')
+    return fetchFromApi(places, queryString || '', headers)
   }
 
-  async function fetchFromApi(places: Place[], queryString: string): Promise<DestinationsResponse> {
+  async function fetchFromApi(places: Place[], queryString: string, headers?: Record<string, string>): Promise<DestinationsResponse> {
     const startTotal = Date.now()
 
     // Parse queryString to check for user-provided filters
@@ -205,7 +205,7 @@ export async function createDestinationsApiComponent(
             }
 
             const start = Date.now()
-            const response = await fetch.fetch(`${apiUrl}?${placesParams}`)
+            const response = await fetch.fetch(`${apiUrl}?${placesParams}`, { headers })
             const ms = Date.now() - start
             return { response, ms }
           })()
@@ -222,7 +222,7 @@ export async function createDestinationsApiComponent(
             }
 
             const start = Date.now()
-            const response = await fetch.fetch(`${apiUrl}?${worldsParams}`)
+            const response = await fetch.fetch(`${apiUrl}?${worldsParams}`, { headers })
             const ms = Date.now() - start
             return { response, ms }
           })()
@@ -289,7 +289,7 @@ export async function createDestinationsApiComponent(
     }
   }
 
-  async function proxyQuery(queryString: string): Promise<DestinationsResponse> {
+  async function proxyQuery(queryString: string, headers?: Record<string, string>): Promise<DestinationsResponse> {
     const startTotal = Date.now()
     const queryKey = `query:${queryString}`
 
@@ -313,7 +313,7 @@ export async function createDestinationsApiComponent(
       const url = queryString ? `${apiUrl}?${queryString}` : apiUrl
 
       const startFetch = Date.now()
-      const response = await fetch.fetch(url)
+      const response = await fetch.fetch(url, { headers })
       const fetchMs = Date.now() - startFetch
 
       const startParse = Date.now()

@@ -55,7 +55,8 @@ describe('destinations-api adapter', () => {
 
       expect(result).toEqual({ ok: true, data: [apiDest], total: 1 })
       expect(mockFetch.fetch).toHaveBeenCalledWith(
-        'https://api.test.com/destinations?only_places=true&pointer=10%2C20'
+        'https://api.test.com/destinations?only_places=true&pointer=10%2C20',
+        { headers: undefined }
       )
     })
 
@@ -102,7 +103,8 @@ describe('destinations-api adapter', () => {
       expect(result.data).toContainEqual(dest1)
       expect(result.data).toContainEqual(dest2)
       expect(mockFetch.fetch).toHaveBeenCalledWith(
-        'https://api.test.com/destinations?only_places=true&pointer=0%2C0&pointer=10%2C20'
+        'https://api.test.com/destinations?only_places=true&pointer=0%2C0&pointer=10%2C20',
+        { headers: undefined }
       )
     })
 
@@ -125,7 +127,8 @@ describe('destinations-api adapter', () => {
 
       expect(result).toEqual({ ok: true, data: [worldDest], total: 1 })
       expect(mockFetch.fetch).toHaveBeenCalledWith(
-        'https://api.test.com/destinations?only_worlds=true&world_names=cool.dcl.eth'
+        'https://api.test.com/destinations?only_worlds=true&world_names=cool.dcl.eth',
+        { headers: undefined }
       )
       expect(mockCache.set).toHaveBeenCalledWith('dest:id:d1', worldDest, 3600000)
       expect(mockCache.set).toHaveBeenCalledWith('query:places::cool.dcl.eth:', ['dest:id:d1'], 3600000)
@@ -152,10 +155,12 @@ describe('destinations-api adapter', () => {
 
       expect(mockFetch.fetch).toHaveBeenCalledTimes(2)
       expect(mockFetch.fetch).toHaveBeenNthCalledWith(1,
-        'https://api.test.com/destinations?only_places=true&pointer=5%2C5'
+        'https://api.test.com/destinations?only_places=true&pointer=5%2C5',
+        { headers: undefined }
       )
       expect(mockFetch.fetch).toHaveBeenNthCalledWith(2,
-        'https://api.test.com/destinations?only_worlds=true&world_names=my.dcl.eth'
+        'https://api.test.com/destinations?only_worlds=true&world_names=my.dcl.eth',
+        { headers: undefined }
       )
       expect(result.data).toContainEqual(sceneDest)
       expect(result.data).toContainEqual(worldDest)
@@ -215,10 +220,12 @@ describe('destinations-api adapter', () => {
 
       expect(mockFetch.fetch).toHaveBeenCalledTimes(2)
       expect(mockFetch.fetch).toHaveBeenNthCalledWith(1,
-        'https://api.test.com/destinations?search=museum&limit=10&only_places=true&pointer=5%2C5'
+        'https://api.test.com/destinations?search=museum&limit=10&only_places=true&pointer=5%2C5',
+        { headers: undefined }
       )
       expect(mockFetch.fetch).toHaveBeenNthCalledWith(2,
-        'https://api.test.com/destinations?search=museum&limit=10&only_worlds=true&world_names=my.dcl.eth'
+        'https://api.test.com/destinations?search=museum&limit=10&only_worlds=true&world_names=my.dcl.eth',
+        { headers: undefined }
       )
     })
 
@@ -239,7 +246,8 @@ describe('destinations-api adapter', () => {
       await api.getForPlaces([place], 'order_by=most_active&limit=5&offset=10')
 
       expect(mockFetch.fetch).toHaveBeenCalledWith(
-        'https://api.test.com/destinations?order_by=most_active&limit=5&offset=10&only_places=true&pointer=0%2C0'
+        'https://api.test.com/destinations?order_by=most_active&limit=5&offset=10&only_places=true&pointer=0%2C0',
+        { headers: undefined }
       )
     })
 
@@ -260,7 +268,8 @@ describe('destinations-api adapter', () => {
       await api.getForPlaces([place], '')
 
       expect(mockFetch.fetch).toHaveBeenCalledWith(
-        'https://api.test.com/destinations?only_places=true&pointer=0%2C0'
+        'https://api.test.com/destinations?only_places=true&pointer=0%2C0',
+        { headers: undefined }
       )
     })
 
@@ -288,7 +297,8 @@ describe('destinations-api adapter', () => {
       expect(result).toEqual({ ok: true, data: [apiDest], total: 1 })
       // Should only request the filtered position, not all three
       expect(mockFetch.fetch).toHaveBeenCalledWith(
-        'https://api.test.com/destinations?only_places=true&pointer=10%2C20'
+        'https://api.test.com/destinations?only_places=true&pointer=10%2C20',
+        { headers: undefined }
       )
     })
 
@@ -313,7 +323,8 @@ describe('destinations-api adapter', () => {
       // Should only make one request for scenes, not for worlds
       expect(mockFetch.fetch).toHaveBeenCalledTimes(1)
       expect(mockFetch.fetch).toHaveBeenCalledWith(
-        'https://api.test.com/destinations?only_places=true&pointer=5%2C5'
+        'https://api.test.com/destinations?only_places=true&pointer=5%2C5',
+        { headers: undefined }
       )
     })
 
@@ -362,7 +373,8 @@ describe('destinations-api adapter', () => {
       expect(mockCache.get).toHaveBeenCalledWith('query:places:0,0::search=museum')
       // Should fetch from API on cache miss
       expect(mockFetch.fetch).toHaveBeenCalledWith(
-        'https://api.test.com/destinations?search=museum&only_places=true&pointer=0%2C0'
+        'https://api.test.com/destinations?search=museum&only_places=true&pointer=0%2C0',
+        { headers: undefined }
       )
       // Should cache the result
       expect(mockCache.set).toHaveBeenCalledWith('dest:id:d1', apiDest, 3600000)
@@ -632,7 +644,8 @@ describe('destinations-api adapter', () => {
 
       expect(result.data).toEqual([apiDest])
       expect(mockFetch.fetch).toHaveBeenCalledWith(
-        'https://api.test.com/destinations?limit=5&order_by=most_active'
+        'https://api.test.com/destinations?limit=5&order_by=most_active',
+        { headers: undefined }
       )
     })
 
@@ -700,7 +713,7 @@ describe('destinations-api adapter', () => {
 
       await api.proxyQuery('')
 
-      expect(mockFetch.fetch).toHaveBeenCalledWith('https://api.test.com/destinations')
+      expect(mockFetch.fetch).toHaveBeenCalledWith('https://api.test.com/destinations', { headers: undefined })
     })
 
     it('should return error response on fetch failure', async () => {
@@ -737,7 +750,8 @@ describe('destinations-api adapter', () => {
       await api.proxyQuery('test=1')
 
       expect(mockFetch.fetch).toHaveBeenCalledWith(
-        'https://places.decentraland.org/api/destinations?test=1'
+        'https://places.decentraland.org/api/destinations?test=1',
+        { headers: undefined }
       )
     })
   })
