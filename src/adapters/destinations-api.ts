@@ -310,7 +310,7 @@ export async function createDestinationsApiComponent(
     const cacheReadMs = Date.now() - startCacheRead
 
     try {
-      const url = queryString ? `${apiUrl}?${queryString}` : apiUrl
+      const url = queryString ? `${apiUrl}/?${queryString}` : apiUrl
 
       const startFetch = Date.now()
       const response = await fetch.fetch(url, { headers })
