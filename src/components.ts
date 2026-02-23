@@ -19,6 +19,8 @@ import { createPlacesDbComponent } from './adapters/places-db'
 import { createPlaceGroupsDbComponent } from './adapters/place-groups-db'
 import { createCacheComponent } from './adapters/cache'
 import { createDestinationsApiComponent } from './adapters/destinations-api'
+import { createGitHubApiComponent } from './adapters/github-api'
+import { createAppStoreConnectComponent } from './adapters/app-store-connect'
 
 // Initialize all the components of the app
 export async function initComponents(): Promise<AppComponents> {
@@ -54,6 +56,8 @@ export async function initComponents(): Promise<AppComponents> {
   const placeGroupsDb = await createPlaceGroupsDbComponent({ pg })
   const cache = await createCacheComponent({ config })
   const destinationsApi = await createDestinationsApiComponent({ fetch, config, cache, logs })
+  const githubApi = await createGitHubApiComponent({ config, fetch, logs })
+  const appStoreConnect = await createAppStoreConnectComponent({ config, fetch, logs })
 
   await instrumentHttpServerWithPromClientRegistry({ metrics, server, config, registry: metrics.registry! })
 
@@ -73,7 +77,9 @@ export async function initComponents(): Promise<AppComponents> {
     placesDb,
     placeGroupsDb,
     cache,
-    destinationsApi
+    destinationsApi,
+    githubApi,
+    appStoreConnect
   }
 }
 

@@ -38,6 +38,9 @@ import { updatePlaceHandler } from "./handlers/backoffice/places/update-place-ha
 import { deletePlaceHandler } from "./handlers/backoffice/places/delete-place-handler"
 import { setPlaceGroupHandler, removePlaceGroupHandler } from "./handlers/backoffice/places/set-place-group-handler"
 
+// Webhook handlers
+import { xcodeCloudWebhookHandler } from "./handlers/webhook/xcode-cloud-handler"
+
 // Place Groups handlers (backoffice)
 import { getBackofficePlaceGroupsHandler } from "./handlers/backoffice/place-groups/get-place-groups-handler"
 import { createPlaceGroupHandler } from "./handlers/backoffice/place-groups/create-place-group-handler"
@@ -107,6 +110,10 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
   // Tags management
   router.post("/backoffice/tags", signedFetch, createTagHandler)
   router.delete("/backoffice/tags/:id", signedFetch, deleteTagHandler)
+
+  // ============== WEBHOOK ENDPOINTS ==============
+  // No auth required (Xcode Cloud webhooks don't support custom auth headers)
+  router.post("/webhook/xcode-cloud", xcodeCloudWebhookHandler)
 
   return router
 }
