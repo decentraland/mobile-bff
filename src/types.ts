@@ -17,6 +17,8 @@ import { IPlacesDbComponent } from './adapters/places-db'
 import { IPlaceGroupsDbComponent } from './adapters/place-groups-db'
 import { ICacheComponent } from './adapters/cache'
 import { IDestinationsApiComponent } from './adapters/destinations-api'
+import { IGitHubApiComponent } from './adapters/github-api'
+import { IAppStoreConnectComponent } from './adapters/app-store-connect'
 
 export type GlobalContext = {
   components: BaseComponents
@@ -39,6 +41,8 @@ export type BaseComponents = {
   placeGroupsDb: IPlaceGroupsDbComponent
   cache: ICacheComponent
   destinationsApi: IDestinationsApiComponent
+  githubApi: IGitHubApiComponent
+  appStoreConnect: IAppStoreConnectComponent
 }
 
 // components used in runtime
