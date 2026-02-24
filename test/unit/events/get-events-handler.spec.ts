@@ -58,14 +58,15 @@ describe('get-events-handler', () => {
 
   describe('tag mode (with ?tag=)', () => {
     describe('when tag parameter is valid', () => {
-      it('should query places by tag and return events', async () => {
+      it('should query places by tag and return matching events', async () => {
         const places = [
-          createTestPlace({ id: 'p1', basePosition: '0,0' }),
-          createTestPlace({ id: 'p2', basePosition: '10,20' })
+          createTestPlace({ id: 'p1', basePosition: '0,0', positions: ['0,0', '0,1'] }),
+          createTestPlace({ id: 'p2', basePosition: '10,20', positions: ['10,20'] })
         ]
         const events = [
-          createTestEvent({ id: 'e1', name: 'Event 1' }),
-          createTestEvent({ id: 'e2', name: 'Event 2' })
+          createTestEvent({ id: 'e1', name: 'Event at 0,0', position: [0, 0] }),
+          createTestEvent({ id: 'e2', name: 'Event at 10,20', position: [10, 20] }),
+          createTestEvent({ id: 'e3', name: 'Event elsewhere', position: [99, 99] })
         ]
 
         mockPlacesDb.getAllPlaces.mockResolvedValue(places)
@@ -75,8 +76,30 @@ describe('get-events-handler', () => {
         const response = await getEventsHandler(context as any)
 
         expect(response.status).toBe(200)
-        expect(response.body).toEqual({ ok: true, data: events, total: events.length })
+        const body = response.body as EventsResponse
+        expect(body.data).toHaveLength(2)
+        expect(body.data.map(e => e.id)).toEqual(['e1', 'e2'])
         expect(mockPlacesDb.getAllPlaces).toHaveBeenCalledWith(['allowed_ios'])
+      })
+
+      it('should match events on any parcel of a place, not just basePosition', async () => {
+        const places = [
+          createTestPlace({ id: 'p1', basePosition: '0,0', positions: ['0,0', '1,0', '0,1'] })
+        ]
+        const events = [
+          createTestEvent({ id: 'e1', name: 'Event on adjacent parcel', position: [1, 0] }),
+          createTestEvent({ id: 'e2', name: 'Event elsewhere', position: [50, 50] })
+        ]
+
+        mockPlacesDb.getAllPlaces.mockResolvedValue(places)
+        mockFetch.fetch.mockResolvedValue(createMockResponse(createEventsResponse(events)))
+
+        const context = createContext('http://localhost/events?tag=allowed_ios')
+        const response = await getEventsHandler(context as any)
+
+        const body = response.body as EventsResponse
+        expect(body.data).toHaveLength(1)
+        expect(body.data[0].id).toBe('e1')
       })
 
       it('should handle multiple comma-separated tags', async () => {
@@ -109,9 +132,13 @@ describe('get-events-handler', () => {
         expect(response.body).toEqual({ ok: true, data: [], total: 0 })
       })
 
-      it('should handle world places with world_names[] parameter', async () => {
+      it('should match world events by server name', async () => {
         const places = [createTestWorldPlace({ worldName: 'cool-world.dcl.eth' })]
-        const events = [createTestEvent({ id: 'e1', name: 'World Event', world: true })]
+        const events = [
+          createTestEvent({ id: 'e1', name: 'World Event', world: true, server: 'cool-world.dcl.eth' }),
+          createTestEvent({ id: 'e2', name: 'Other World', world: true, server: 'other.dcl.eth' }),
+          createTestEvent({ id: 'e3', name: 'Scene Event', position: [5, 5] })
+        ]
 
         mockPlacesDb.getAllPlaces.mockResolvedValue(places)
         mockFetch.fetch.mockResolvedValue(createMockResponse(createEventsResponse(events)))
@@ -119,42 +146,35 @@ describe('get-events-handler', () => {
         const context = createContext('http://localhost/events?tag=featured')
         const response = await getEventsHandler(context as any)
 
-        expect(response.status).toBe(200)
         const body = response.body as EventsResponse
         expect(body.data).toHaveLength(1)
-        expect(body.data[0].world).toBe(true)
-
-        // Verify it used world_names[] parameter
-        expect(mockFetch.fetch).toHaveBeenCalledWith(
-          expect.stringContaining('world_names%5B%5D=cool-world.dcl.eth')
-        )
+        expect(body.data[0].id).toBe('e1')
       })
 
-      it('should fetch events in parallel for scenes and worlds', async () => {
+      it('should fetch all events with a single API call', async () => {
         const places = [
-          createTestPlace({ id: 'p1', basePosition: '0,0' }),
+          createTestPlace({ id: 'p1', basePosition: '0,0', positions: ['0,0'] }),
           createTestWorldPlace({ id: 'p2', worldName: 'test-world.dcl.eth' })
         ]
-        const sceneEvents = [createTestEvent({ id: 'e1', name: 'Scene Event' })]
-        const worldEvents = [createTestEvent({ id: 'e2', name: 'World Event', world: true })]
+        const events = [
+          createTestEvent({ id: 'e1', name: 'Scene Event', position: [0, 0] }),
+          createTestEvent({ id: 'e2', name: 'World Event', world: true, server: 'test-world.dcl.eth' })
+        ]
 
         mockPlacesDb.getAllPlaces.mockResolvedValue(places)
-        mockFetch.fetch
-          .mockResolvedValueOnce(createMockResponse(createEventsResponse(sceneEvents)))
-          .mockResolvedValueOnce(createMockResponse(createEventsResponse(worldEvents)))
+        mockFetch.fetch.mockResolvedValue(createMockResponse(createEventsResponse(events)))
 
         const context = createContext('http://localhost/events?tag=allowed_ios')
         const response = await getEventsHandler(context as any)
 
-        expect(response.status).toBe(200)
         const body = response.body as EventsResponse
         expect(body.data).toHaveLength(2)
-        expect(mockFetch.fetch).toHaveBeenCalledTimes(2)
+        expect(mockFetch.fetch).toHaveBeenCalledTimes(1)
       })
 
       it('should pass search parameter along with tag filtering', async () => {
-        const places = [createTestPlace({ id: 'p1', basePosition: '5,5' })]
-        const events = [createTestEvent({ id: 'e1', name: 'Music Party' })]
+        const places = [createTestPlace({ id: 'p1', basePosition: '5,5', positions: ['5,5'] })]
+        const events = [createTestEvent({ id: 'e1', name: 'Music Party', position: [5, 5] })]
 
         mockPlacesDb.getAllPlaces.mockResolvedValue(places)
         mockFetch.fetch.mockResolvedValue(createMockResponse(createEventsResponse(events)))
@@ -168,26 +188,22 @@ describe('get-events-handler', () => {
         )
       })
 
-      it('should deduplicate events by ID', async () => {
-        const places = [
-          createTestPlace({ id: 'p1', basePosition: '0,0' }),
-          createTestWorldPlace({ id: 'p2', worldName: 'test-world.dcl.eth' })
+      it('should filter out events without position or world', async () => {
+        const places = [createTestPlace({ id: 'p1', basePosition: '0,0', positions: ['0,0'] })]
+        const events = [
+          createTestEvent({ id: 'e1', name: 'Has position', position: [0, 0] }),
+          createTestEvent({ id: 'e2', name: 'No position' })
         ]
-        // Same event returned from both queries
-        const duplicateEvent = createTestEvent({ id: 'same-event', name: 'Duplicate' })
 
         mockPlacesDb.getAllPlaces.mockResolvedValue(places)
-        mockFetch.fetch
-          .mockResolvedValueOnce(createMockResponse(createEventsResponse([duplicateEvent])))
-          .mockResolvedValueOnce(createMockResponse(createEventsResponse([duplicateEvent])))
+        mockFetch.fetch.mockResolvedValue(createMockResponse(createEventsResponse(events)))
 
         const context = createContext('http://localhost/events?tag=allowed_ios')
         const response = await getEventsHandler(context as any)
 
-        expect(response.status).toBe(200)
         const body = response.body as EventsResponse
         expect(body.data).toHaveLength(1)
-        expect(body.data[0].id).toBe('same-event')
+        expect(body.data[0].id).toBe('e1')
       })
     })
 
@@ -288,7 +304,7 @@ describe('get-events-handler', () => {
     })
 
     it('should return cached results when available in tag mode', async () => {
-      const places = [createTestPlace({ id: 'p1', basePosition: '5,5' })]
+      const places = [createTestPlace({ id: 'p1', basePosition: '5,5', positions: ['5,5'] })]
       const cachedEvents = [createTestEvent({ id: 'cached-tag-event' })]
 
       mockPlacesDb.getAllPlaces.mockResolvedValue(places)
@@ -342,27 +358,19 @@ describe('get-events-handler', () => {
       expect(logger.error).toHaveBeenCalledWith('Proxy error', { error: 'Connection timeout' })
     })
 
-    it('should handle partial failures gracefully', async () => {
-      const places = [
-        createTestPlace({ id: 'p1', basePosition: '0,0' }),
-        createTestWorldPlace({ id: 'p2', worldName: 'test-world.dcl.eth' })
-      ]
-      const sceneEvents = [createTestEvent({ id: 'e1', name: 'Scene Event' })]
+    it('should handle API error in tag mode', async () => {
+      const places = [createTestPlace({ id: 'p1', basePosition: '0,0', positions: ['0,0'] })]
 
       mockPlacesDb.getAllPlaces.mockResolvedValue(places)
-      // First call (positions) succeeds, second call (worlds) fails
-      mockFetch.fetch
-        .mockResolvedValueOnce(createMockResponse(createEventsResponse(sceneEvents)))
-        .mockResolvedValueOnce(createMockResponse({}, false, 500))
+      mockFetch.fetch.mockResolvedValue(createMockResponse({}, false, 500))
 
       const context = createContext('http://localhost/events?tag=allowed_ios')
       const response = await getEventsHandler(context as any)
 
-      // Should still return the successful results
       expect(response.status).toBe(200)
       const body = response.body as EventsResponse
-      expect(body.data).toHaveLength(1)
-      expect(body.data[0].id).toBe('e1')
+      expect(body.ok).toBe(false)
+      expect(body.data).toEqual([])
     })
   })
 
