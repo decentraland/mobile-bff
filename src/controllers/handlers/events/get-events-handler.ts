@@ -1,7 +1,7 @@
 import { HandlerContextWithPath } from '../../../types'
 import { Place } from '../../../adapters/places-db'
 import { ICacheComponent } from '../../../adapters/cache'
-import { IFetchComponent, IConfigComponent, ILoggerComponent } from '@well-known-components/interfaces'
+import { IFetchComponent, ILoggerComponent } from '@well-known-components/interfaces'
 import { IPlacesDbComponent } from '../../../adapters/places-db'
 
 export type Event = {
@@ -23,20 +23,23 @@ function eventIdCacheKey(id: string): string {
   return `events:id:${id}`
 }
 
-function deduplicateEvents(events: Event[]): Event[] {
-  const seen = new Map<string, Event>()
-  for (const event of events) {
-    if (!seen.has(event.id)) {
-      seen.set(event.id, event)
-    }
-  }
-  return Array.from(seen.values())
-}
-
 type FetchComponents = {
   fetch: IFetchComponent
   cache: ICacheComponent
   logs: ILoggerComponent
+}
+
+function eventMatchesPlaces(event: Event, positionSet: Set<string>, worldSet: Set<string>): boolean {
+  if (event.world) {
+    return !!event.server && worldSet.has(event.server.toLowerCase())
+  }
+
+  if (event.position && event.position.length === 2) {
+    const key = `${event.position[0]},${event.position[1]}`
+    return positionSet.has(key)
+  }
+
+  return false
 }
 
 async function fetchEventsForPlaces(
@@ -54,18 +57,24 @@ async function fetchEventsForPlaces(
     return { ok: true, data: [], total: 0 }
   }
 
-  const positions = places
-    .filter(p => p.type === 'scene' && p.basePosition)
-    .map(p => p.basePosition!)
-    .sort()
+  // Build lookup sets for matching events against places
+  const positionSet = new Set<string>()
+  const worldSet = new Set<string>()
+  for (const place of places) {
+    if (place.type === 'scene') {
+      for (const pos of place.positions) {
+        positionSet.add(pos)
+      }
+    } else if (place.type === 'world' && place.worldName) {
+      worldSet.add(place.worldName.toLowerCase())
+    }
+  }
 
-  const worlds = places
-    .filter(p => p.type === 'world' && p.worldName)
-    .map(p => p.worldName!)
-    .sort()
+  const positionsSorted = Array.from(positionSet).sort()
+  const worldsSorted = Array.from(worldSet).sort()
 
-  // Create cache key from positions + worlds + search
-  const cacheKey = `events:query:places:${positions.join(',')}:${worlds.join(',')}:${search || ''}`
+  // Create cache key from all positions + worlds + search
+  const cacheKey = `events:query:places:${positionsSorted.join(',')}:${worldsSorted.join(',')}:${search || ''}`
 
   // Check cache first
   const startCacheRead = Date.now()
@@ -80,8 +89,8 @@ async function fetchEventsForPlaces(
       const cacheReadMs = Date.now() - startCacheRead
       const totalMs = Date.now() - startTotal
       logger.info('fetchEventsForPlaces (cache hit)', {
-        positions: positions.length,
-        worlds: worlds.length,
+        positions: positionSet.size,
+        worlds: worldSet.size,
         results: valid.length,
         cacheReadMs,
         totalMs
@@ -91,81 +100,32 @@ async function fetchEventsForPlaces(
   }
   const cacheReadMs = Date.now() - startCacheRead
 
-  const allEvents: Event[] = []
-  let positionsMs = 0
-  let worldsMs = 0
-
   try {
-    // Build fetch promises for parallel execution
-    const positionsPromise = positions.length > 0
-      ? (async () => {
-          const params = new URLSearchParams()
-          for (const pos of positions) {
-            params.append('positions[]', pos)
-          }
-          if (search) {
-            params.set('search', search)
-          }
+    // Fetch all events, then filter client-side by place membership
+    const params = new URLSearchParams()
+    if (search) {
+      params.set('search', search)
+    }
+    const url = params.toString() ? `${apiUrl}?${params}` : apiUrl
 
-          const start = Date.now()
-          const response = await fetch.fetch(`${apiUrl}?${params}`)
-          const ms = Date.now() - start
-          return { response, ms }
-        })()
-      : null
+    const startFetch = Date.now()
+    const response = await fetch.fetch(url)
+    const fetchMs = Date.now() - startFetch
 
-    const worldsPromise = worlds.length > 0
-      ? (async () => {
-          const params = new URLSearchParams()
-          for (const world of worlds) {
-            params.append('world_names[]', world)
-          }
-          if (search) {
-            params.set('search', search)
-          }
-
-          const start = Date.now()
-          const response = await fetch.fetch(`${apiUrl}?${params}`)
-          const ms = Date.now() - start
-          return { response, ms }
-        })()
-      : null
-
-    // Execute both fetches in parallel
-    const [positionsResult, worldsResult] = await Promise.all([positionsPromise, worldsPromise])
-
-    // Process positions result
-    if (positionsResult) {
-      positionsMs = positionsResult.ms
-      if (positionsResult.response.ok) {
-        const positionsData = await positionsResult.response.json() as EventsResponse
-        if (positionsData.data) {
-          allEvents.push(...positionsData.data)
-        }
-      } else {
-        logger.warn('Positions API error', { status: positionsResult.response.status })
-      }
+    if (!response.ok) {
+      logger.warn('Events API error', { status: response.status })
+      return { ok: false, data: [], total: 0 }
     }
 
-    // Process worlds result
-    if (worldsResult) {
-      worldsMs = worldsResult.ms
-      if (worldsResult.response.ok) {
-        const worldsData = await worldsResult.response.json() as EventsResponse
-        if (worldsData.data) {
-          allEvents.push(...worldsData.data)
-        }
-      } else {
-        logger.warn('Worlds API error', { status: worldsResult.response.status })
-      }
-    }
+    const data = await response.json() as EventsResponse
+    const allEvents = data.data ?? []
 
-    // Deduplicate by ID
-    const dedupedEvents = deduplicateEvents(allEvents)
+    // Filter to events that match any of our places
+    const filtered = allEvents.filter(e => eventMatchesPlaces(e, positionSet, worldSet))
 
-    // Cache results by ID, then store the list of IDs for this query
+    // Cache results
     const startCacheWrite = Date.now()
-    const keys = await Promise.all(dedupedEvents.map(async event => {
+    const keys = await Promise.all(filtered.map(async event => {
       const key = eventIdCacheKey(event.id)
       await cache.set(key, event, ttl)
       return key
@@ -175,17 +135,17 @@ async function fetchEventsForPlaces(
 
     const totalMs = Date.now() - startTotal
     logger.info('fetchEventsForPlaces (fetched)', {
-      positions: positions.length,
-      worlds: worlds.length,
-      results: dedupedEvents.length,
+      positions: positionSet.size,
+      worlds: worldSet.size,
+      totalEvents: allEvents.length,
+      filteredEvents: filtered.length,
       cacheReadMs,
-      positionsMs,
-      worldsMs,
+      fetchMs,
       cacheWriteMs,
       totalMs
     })
 
-    return { ok: true, data: dedupedEvents, total: dedupedEvents.length }
+    return { ok: true, data: filtered, total: filtered.length }
   } catch (error) {
     logger.error('Fetch error', { error: (error as Error).message })
     return { ok: false, data: [], total: 0 }

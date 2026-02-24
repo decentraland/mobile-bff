@@ -644,7 +644,7 @@ describe('destinations-api adapter', () => {
 
       expect(result.data).toEqual([apiDest])
       expect(mockFetch.fetch).toHaveBeenCalledWith(
-        'https://api.test.com/destinations?limit=5&order_by=most_active',
+        'https://api.test.com/destinations/?limit=5&order_by=most_active',
         { headers: undefined }
       )
     })
@@ -750,7 +750,7 @@ describe('destinations-api adapter', () => {
       await api.proxyQuery('test=1')
 
       expect(mockFetch.fetch).toHaveBeenCalledWith(
-        'https://places.decentraland.org/api/destinations?test=1',
+        'https://places.decentraland.org/api/destinations/?test=1',
         { headers: undefined }
       )
     })
