@@ -38,6 +38,10 @@ import { updatePlaceHandler } from "./handlers/backoffice/places/update-place-ha
 import { deletePlaceHandler } from "./handlers/backoffice/places/delete-place-handler"
 import { setPlaceGroupHandler, removePlaceGroupHandler } from "./handlers/backoffice/places/set-place-group-handler"
 
+// Test auth handlers (Apple review testing)
+import { testAuthSendCodeHandler } from "./handlers/test-auth/send-code-handler"
+import { testAuthVerifyCodeHandler } from "./handlers/test-auth/verify-code-handler"
+
 // Place Groups handlers (backoffice)
 import { getBackofficePlaceGroupsHandler } from "./handlers/backoffice/place-groups/get-place-groups-handler"
 import { createPlaceGroupHandler } from "./handlers/backoffice/place-groups/create-place-group-handler"
@@ -81,6 +85,12 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
   // Tags and Bans
   router.get("/tags", getAllTagsHandler)
   router.get("/bans", getBansHandler)
+
+  // ============== TEST AUTH ENDPOINTS ==============
+  // Used by Apple App Store reviewers to test login with a controlled OTP code.
+  // Only active when TEST_AUTH_EMAIL is configured.
+  router.post("/test-auth/send-code", testAuthSendCodeHandler)
+  router.post("/test-auth/verify-code", testAuthVerifyCodeHandler)
 
   // ============== BACKOFFICE ENDPOINTS ==============
   // require signed fetch + ALLOWED_USERS
