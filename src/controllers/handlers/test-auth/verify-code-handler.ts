@@ -1,5 +1,5 @@
-import crypto from 'crypto'
 import { Authenticator, AuthIdentity } from '@dcl/crypto'
+import { createUnsafeIdentity, recoverAddressFromEthSignature } from '@dcl/crypto/dist/crypto'
 import { HandlerContextWithPath } from '../../../types'
 
 type VerifyCodeBody = {
@@ -28,18 +28,25 @@ function isRateLimited(ip: string): boolean {
   return entry.count > RATE_LIMIT_MAX_ATTEMPTS
 }
 
-async function generateTestIdentity(mainPrivateKey: string, mainAddress: string): Promise<{ identity: AuthIdentity; address: string }> {
-  const ephPrivateKey = '0x' + crypto.randomBytes(32).toString('hex')
+function deriveAddress(privateKey: string): string {
+  const sig = Authenticator.createSignature(
+    { privateKey, publicKey: '', address: '' },
+    'derive-address'
+  )
+  return recoverAddressFromEthSignature(sig, 'derive-address')
+}
+
+async function generateTestIdentity(mainPrivateKey: string): Promise<{ identity: AuthIdentity; address: string }> {
+  const mainAddress = deriveAddress(mainPrivateKey)
+  const ephemeral = createUnsafeIdentity()
 
   const signerIdentity = { privateKey: mainPrivateKey, publicKey: mainAddress, address: mainAddress }
   const signer = (message: string) =>
     Promise.resolve(Authenticator.createSignature(signerIdentity, message))
 
-  // Use mainAddress as ephemeral address placeholder — initializeAuthChain
-  // generates the real ephemeral identity internally.
   const identity = await Authenticator.initializeAuthChain(
     mainAddress,
-    { address: mainAddress, publicKey: mainAddress, privateKey: ephPrivateKey },
+    ephemeral,
     THREE_MONTHS_IN_MINUTES,
     signer
   )
@@ -64,9 +71,8 @@ export async function testAuthVerifyCodeHandler(
   const testEmail = await config.getString('TEST_AUTH_EMAIL')
   const testCode = await config.getString('TEST_AUTH_OTP_CODE')
   const testPrivateKey = await config.getString('TEST_AUTH_PRIVATE_KEY')
-  const testAddress = await config.getString('TEST_AUTH_ADDRESS')
 
-  if (!testEmail || !testCode || !testPrivateKey || !testAddress) {
+  if (!testEmail || !testCode || !testPrivateKey) {
     logger.warn('Test auth env vars not fully configured')
     return { status: 404, body: { ok: false, error: 'Not found' } }
   }
@@ -102,7 +108,7 @@ export async function testAuthVerifyCodeHandler(
   }
 
   try {
-    const { identity, address } = await generateTestIdentity(testPrivateKey, testAddress)
+    const { identity, address } = await generateTestIdentity(testPrivateKey)
     logger.info('Test auth identity generated', { email: body.email, address })
 
     return {
