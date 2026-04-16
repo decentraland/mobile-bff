@@ -2,6 +2,7 @@
 
 Backend-for-frontend service for Decentraland mobile applications. Handles account deletion requests, places management, and content moderation (bans).
 
+
 ## API Endpoints
 
 ### Places
