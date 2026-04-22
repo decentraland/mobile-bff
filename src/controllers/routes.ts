@@ -48,6 +48,10 @@ import { createPlaceGroupHandler } from "./handlers/backoffice/place-groups/crea
 import { updatePlaceGroupHandler } from "./handlers/backoffice/place-groups/update-place-group-handler"
 import { deletePlaceGroupHandler } from "./handlers/backoffice/place-groups/delete-place-group-handler"
 
+// App Versions handlers
+import { getAppVersionsHandler } from "./handlers/app-versions/get-app-versions-handler"
+import { updateAppVersionsHandler } from "./handlers/backoffice/app-versions/update-app-versions-handler"
+
 // We return the entire router because it will be easier to test than a whole server
 export async function setupRouter(globalContext: GlobalContext): Promise<Router<GlobalContext>> {
   const router = new Router<GlobalContext>()
@@ -86,6 +90,9 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
   router.get("/tags", getAllTagsHandler)
   router.get("/bans", getBansHandler)
 
+  // App Versions (mobile clients use this to enforce minimum/recommended app versions)
+  router.get("/app-versions", getAppVersionsHandler)
+
   // ============== TEST AUTH ENDPOINTS ==============
   // Used by Apple App Store reviewers to test login with a controlled OTP code.
   // Only active when TEST_AUTH_EMAIL is configured.
@@ -117,6 +124,9 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
   // Tags management
   router.post("/backoffice/tags", signedFetch, createTagHandler)
   router.delete("/backoffice/tags/:id", signedFetch, deleteTagHandler)
+
+  // App Versions management
+  router.put("/backoffice/app-versions", signedFetch, updateAppVersionsHandler)
 
   return router
 }
