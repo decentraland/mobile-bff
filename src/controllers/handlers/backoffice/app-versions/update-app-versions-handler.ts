@@ -1,7 +1,7 @@
 import { DecentralandSignatureContext } from '@dcl/platform-crypto-middleware'
 import { HandlerContextWithPath } from '../../../../types'
 import { isAllowedUser } from '../../../../logic/allowed-users'
-import { AppVersionsUpdate, PlatformVersions } from '../../../../adapters/app-versions-db'
+import { AppVersions, PlatformVersions } from '../../../../adapters/app-versions-db'
 
 type PlatformBody = {
   minimalRequiredVersionNumber?: unknown
@@ -68,12 +68,12 @@ export async function updateAppVersionsHandler(
       return { status: 400, body: { ok: false, error: android } }
     }
 
-    const update: AppVersionsUpdate = { ios, android }
+    const update: AppVersions = { ios, android }
     const data = await appVersionsDb.update(update, userAddress)
 
     logger.info('App versions updated', { updatedBy: userAddress })
 
-    return { status: 200, body: data }
+    return { status: 200, body: { ok: true, data } }
   } catch (error) {
     logger.error('Error updating app versions', {
       error: (error as Error).message,

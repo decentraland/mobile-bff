@@ -13,7 +13,7 @@ export async function getAppVersionsHandler(
     const data = await appVersionsDb.get()
     return {
       status: 200,
-      body: data
+      body: { ok: true, data }
     }
   } catch (error) {
     logger.error('Error fetching app versions', { error: (error as Error).message })

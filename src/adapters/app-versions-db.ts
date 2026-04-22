@@ -11,14 +11,9 @@ export type AppVersions = {
   android: PlatformVersions
 }
 
-export type AppVersionsUpdate = {
-  ios: PlatformVersions
-  android: PlatformVersions
-}
-
 export type IAppVersionsDbComponent = {
   get(): Promise<AppVersions>
-  update(values: AppVersionsUpdate, updatedBy: string): Promise<AppVersions>
+  update(values: AppVersions, updatedBy: string): Promise<AppVersions>
 }
 
 type AppVersionsRow = {
@@ -54,10 +49,13 @@ export async function createAppVersionsDbComponent({ pg }: Pick<AppComponents, '
       WHERE id = 1
     `
     const result = await pg.query<AppVersionsRow>(query)
+    if (result.rows.length === 0) {
+      throw new Error('app_versions singleton row not found — DB seed missing or row was deleted')
+    }
     return toAppVersions(result.rows[0])
   }
 
-  async function update(values: AppVersionsUpdate, updatedBy: string): Promise<AppVersions> {
+  async function update(values: AppVersions, updatedBy: string): Promise<AppVersions> {
     const query = SQL`
       UPDATE app_versions
       SET
@@ -75,6 +73,9 @@ export async function createAppVersionsDbComponent({ pg }: Pick<AppComponents, '
         android_recommended_version
     `
     const result = await pg.query<AppVersionsRow>(query)
+    if (result.rows.length === 0) {
+      throw new Error('app_versions singleton row not found — DB seed missing or row was deleted')
+    }
     return toAppVersions(result.rows[0])
   }
 
