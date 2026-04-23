@@ -17,6 +17,7 @@ import { IPlacesDbComponent } from './adapters/places-db'
 import { IPlaceGroupsDbComponent } from './adapters/place-groups-db'
 import { ICacheComponent } from './adapters/cache'
 import { IDestinationsApiComponent } from './adapters/destinations-api'
+import { IAppVersionsDbComponent } from './adapters/app-versions-db'
 
 export type GlobalContext = {
   components: BaseComponents
@@ -39,6 +40,7 @@ export type BaseComponents = {
   placeGroupsDb: IPlaceGroupsDbComponent
   cache: ICacheComponent
   destinationsApi: IDestinationsApiComponent
+  appVersionsDb: IAppVersionsDbComponent
 }
 
 // components used in runtime
