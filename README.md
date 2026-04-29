@@ -18,6 +18,7 @@ Places allow organizing scenes and worlds into named collections for the mobile 
 | GET | `/places?parcel=x,y` | Get scene/place info with ban status for a parcel |
 | GET | `/bans` | List all bans (scenes, places, and worlds) |
 | GET | `/tags` | List all tags (name, color, description) |
+| GET | `/discover-featured/scenes` | Hardcoded list of featured scenes shown on the initial discover screen |
 
 #### Backoffice Endpoints (signedFetch + ALLOWED_USERS)
 
