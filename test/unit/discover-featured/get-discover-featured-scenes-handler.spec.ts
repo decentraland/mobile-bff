@@ -19,6 +19,11 @@ describe("get-discover-featured-scenes-handler", () => {
       if (scene.base_position !== undefined) {
         expect(scene.base_position).toMatch(/^-?\d+,-?\d+$/)
       }
+
+      if (scene.contact_name !== undefined) {
+        expect(typeof scene.contact_name).toBe("string")
+        expect(scene.contact_name.length).toBeGreaterThan(0)
+      }
     }
   })
 })
