@@ -52,9 +52,6 @@ import { deletePlaceGroupHandler } from "./handlers/backoffice/place-groups/dele
 import { getAppVersionsHandler } from "./handlers/app-versions/get-app-versions-handler"
 import { updateAppVersionsHandler } from "./handlers/backoffice/app-versions/update-app-versions-handler"
 
-// Discover featured handler
-import { getDiscoverFeaturedScenesHandler } from "./handlers/discover-featured/get-discover-featured-scenes-handler"
-
 // We return the entire router because it will be easier to test than a whole server
 export async function setupRouter(globalContext: GlobalContext): Promise<Router<GlobalContext>> {
   const router = new Router<GlobalContext>()
@@ -95,9 +92,6 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
 
   // App Versions (mobile clients use this to enforce minimum/recommended app versions)
   router.get("/app-versions", getAppVersionsHandler)
-
-  // Discover featured scenes (hardcoded list shown on the discover/featured screen)
-  router.get("/discover-featured/scenes", getDiscoverFeaturedScenesHandler)
 
   // ============== TEST AUTH ENDPOINTS ==============
   // Used by Apple App Store reviewers to test login with a controlled OTP code.
