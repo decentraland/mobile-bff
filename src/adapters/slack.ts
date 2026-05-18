@@ -1,9 +1,14 @@
 import { IFetchComponent } from '@well-known-components/interfaces'
 import { AuthChain } from '@dcl/crypto'
 import { AppComponents } from '../types'
+import { MagicDeletionResult } from './magic'
 
 export type ISlackComponent = {
-  sendDeletionRequestNotification(userAddress: string, authChain: AuthChain): Promise<void>
+  sendDeletionRequestNotification(
+    userAddress: string,
+    authChain: AuthChain,
+    magicResult?: MagicDeletionResult
+  ): Promise<void>
   sendCancellationNotification(userAddress: string, authChain: AuthChain): Promise<void>
 }
 
@@ -41,15 +46,33 @@ export async function createSlackComponent({
     return '```' + JSON.stringify(authChain, null, 2) + '```'
   }
 
-  async function sendDeletionRequestNotification(userAddress: string, authChain: AuthChain): Promise<void> {
-    const message = [
+  function formatMagicResult(result: MagicDeletionResult): string {
+    const emailLine = result.email ? `\nEmail: \`${result.email}\`` : ''
+    switch (result.status) {
+      case 'processed':
+        return `:magic_wand: *Magic deletion processed automatically*${emailLine}`
+      case 'not_found':
+        return `:information_source: *Address not found at Magic* — likely uses a different provider; manual review may be needed.`
+      case 'error':
+        return `:rotating_light: *Magic deletion failed*: ${result.error ?? 'unknown error'}${emailLine}\nManual deletion required.`
+    }
+  }
+
+  async function sendDeletionRequestNotification(
+    userAddress: string,
+    authChain: AuthChain,
+    magicResult?: MagicDeletionResult
+  ): Promise<void> {
+    const lines = [
       `:wastebasket: *Account deletion requested*`,
-      `Address: \`${userAddress}\``,
-      ``,
-      `:white_check_mark: *Authchain validated*`,
-      formatAuthChain(authChain)
-    ].join('\n')
-    await sendMessage(message)
+      `Address: \`${userAddress}\``
+    ]
+    // Non-Magic users (status: not_found) fall back to the original manual-cleanup flow with no Magic line.
+    if (magicResult && magicResult.status !== 'not_found') {
+      lines.push('', formatMagicResult(magicResult))
+    }
+    lines.push('', `:white_check_mark: *Authchain validated*`, formatAuthChain(authChain))
+    await sendMessage(lines.join('\n'))
   }
 
   async function sendCancellationNotification(userAddress: string, authChain: AuthChain): Promise<void> {

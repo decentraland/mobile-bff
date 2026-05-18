@@ -1,6 +1,7 @@
 import { requestDeletionHandler } from '../../src/controllers/handlers/request-deletion-handler'
 import { createDbJestMockComponent, createTestDeletionRequest } from '../mocks/db-mock'
 import { createSlackJestMockComponent } from '../mocks/slack-mock'
+import { createMagicJestMockComponent } from '../mocks/magic-mock'
 import { createLogsMockComponent } from '../mocks/logs-mock'
 
 describe('request-deletion-handler', () => {
@@ -12,11 +13,13 @@ describe('request-deletion-handler', () => {
 
   let mockDb: ReturnType<typeof createDbJestMockComponent>
   let mockSlack: ReturnType<typeof createSlackJestMockComponent>
+  let mockMagic: ReturnType<typeof createMagicJestMockComponent>
   let mockLogs: ReturnType<typeof createLogsMockComponent>
 
   beforeEach(() => {
     mockDb = createDbJestMockComponent()
     mockSlack = createSlackJestMockComponent()
+    mockMagic = createMagicJestMockComponent()
     mockLogs = createLogsMockComponent()
   })
 
@@ -35,6 +38,7 @@ describe('request-deletion-handler', () => {
       components: {
         db: mockDb,
         slack: mockSlack,
+        magic: mockMagic,
         logs: mockLogs
       },
       verification: auth ? { auth } : undefined,
@@ -69,6 +73,14 @@ describe('request-deletion-handler', () => {
 
       expect(mockSlack.sendDeletionRequestNotification).not.toHaveBeenCalled()
     })
+
+    it('should not call Magic', async () => {
+      const context = createContext(undefined)
+
+      await requestDeletionHandler(context as any)
+
+      expect(mockMagic.requestDeletion).not.toHaveBeenCalled()
+    })
   })
 
   describe('when the request is authenticated', () => {
@@ -82,7 +94,7 @@ describe('request-deletion-handler', () => {
         mockDb.createDeletionRequest.mockResolvedValue(mockDeletionRequest)
       })
 
-      it('should return 201 with the deletion request data', async () => {
+      it('should return 201 immediately with magic queued for background processing', async () => {
         const context = createContext(TEST_ADDRESS)
 
         const response = await requestDeletionHandler(context as any)
@@ -93,7 +105,8 @@ describe('request-deletion-handler', () => {
           data: {
             userAddress: mockDeletionRequest.userAddress,
             requestedAt: mockDeletionRequest.requestedAt,
-            status: mockDeletionRequest.status
+            status: mockDeletionRequest.status,
+            magic: { status: 'queued' }
           }
         })
       })
@@ -106,15 +119,26 @@ describe('request-deletion-handler', () => {
         expect(mockDb.createDeletionRequest).toHaveBeenCalledWith(TEST_ADDRESS)
       })
 
-      it('should send a Slack notification with auth chain', async () => {
+      it('should call Magic with the user address', async () => {
         const context = createContext(TEST_ADDRESS)
 
         await requestDeletionHandler(context as any)
 
-        // Wait for the fire-and-forget promise
+        expect(mockMagic.requestDeletion).toHaveBeenCalledWith(TEST_ADDRESS)
+      })
+
+      it('should send a Slack notification with auth chain and Magic result', async () => {
+        const context = createContext(TEST_ADDRESS)
+
+        await requestDeletionHandler(context as any)
+
         await new Promise((resolve) => setTimeout(resolve, 10))
 
-        expect(mockSlack.sendDeletionRequestNotification).toHaveBeenCalledWith(TEST_ADDRESS, TEST_AUTH_CHAIN)
+        expect(mockSlack.sendDeletionRequestNotification).toHaveBeenCalledWith(
+          TEST_ADDRESS,
+          TEST_AUTH_CHAIN,
+          { status: 'processed' }
+        )
       })
 
       it('should log the deletion request creation', async () => {
@@ -124,6 +148,106 @@ describe('request-deletion-handler', () => {
 
         const logger = mockLogs.getLogger('request-deletion')
         expect(logger.info).toHaveBeenCalledWith('Deletion request created', { userAddress: TEST_ADDRESS })
+      })
+    })
+
+    describe('and Magic processes the deletion', () => {
+      beforeEach(() => {
+        mockDb.createDeletionRequest.mockResolvedValue(
+          createTestDeletionRequest({ userAddress: TEST_ADDRESS.toLowerCase() })
+        )
+        mockMagic.requestDeletion.mockResolvedValue({ status: 'processed', email: 'user@example.com' })
+      })
+
+      it('should still return queued (Magic runs in the background)', async () => {
+        const context = createContext(TEST_ADDRESS)
+
+        const response = await requestDeletionHandler(context as any)
+
+        expect(response.status).toBe(201)
+        expect(response.body).toMatchObject({
+          ok: true,
+          data: { magic: { status: 'queued' } }
+        })
+      })
+
+      it('should forward the Magic result to Slack after the background call finishes', async () => {
+        const context = createContext(TEST_ADDRESS)
+
+        await requestDeletionHandler(context as any)
+
+        await new Promise((resolve) => setTimeout(resolve, 10))
+
+        expect(mockSlack.sendDeletionRequestNotification).toHaveBeenCalledWith(
+          TEST_ADDRESS,
+          TEST_AUTH_CHAIN,
+          { status: 'processed', email: 'user@example.com' }
+        )
+      })
+    })
+
+    describe('and Magic does not know the address', () => {
+      beforeEach(() => {
+        mockDb.createDeletionRequest.mockResolvedValue(
+          createTestDeletionRequest({ userAddress: TEST_ADDRESS.toLowerCase() })
+        )
+        mockMagic.requestDeletion.mockResolvedValue({ status: 'not_found' })
+      })
+
+      it('should still record the request and return 201 queued', async () => {
+        const context = createContext(TEST_ADDRESS)
+
+        const response = await requestDeletionHandler(context as any)
+
+        expect(response.status).toBe(201)
+        expect(response.body).toMatchObject({ ok: true, data: { magic: { status: 'queued' } } })
+        expect(mockDb.createDeletionRequest).toHaveBeenCalled()
+      })
+
+      it('should forward not_found to Slack so the adapter can suppress the Magic line', async () => {
+        const context = createContext(TEST_ADDRESS)
+
+        await requestDeletionHandler(context as any)
+
+        await new Promise((resolve) => setTimeout(resolve, 10))
+
+        expect(mockSlack.sendDeletionRequestNotification).toHaveBeenCalledWith(
+          TEST_ADDRESS,
+          TEST_AUTH_CHAIN,
+          { status: 'not_found' }
+        )
+      })
+    })
+
+    describe('and Magic returns an error', () => {
+      beforeEach(() => {
+        mockDb.createDeletionRequest.mockResolvedValue(
+          createTestDeletionRequest({ userAddress: TEST_ADDRESS.toLowerCase() })
+        )
+        mockMagic.requestDeletion.mockResolvedValue({ status: 'error', error: 'HTTP 500' })
+      })
+
+      it('should still return 201 queued (Magic failure must not block the request)', async () => {
+        const context = createContext(TEST_ADDRESS)
+
+        const response = await requestDeletionHandler(context as any)
+
+        expect(response.status).toBe(201)
+        expect(response.body).toMatchObject({ ok: true, data: { magic: { status: 'queued' } } })
+      })
+
+      it('should propagate the Magic error to Slack so the team is alerted', async () => {
+        const context = createContext(TEST_ADDRESS)
+
+        await requestDeletionHandler(context as any)
+
+        await new Promise((resolve) => setTimeout(resolve, 10))
+
+        expect(mockSlack.sendDeletionRequestNotification).toHaveBeenCalledWith(
+          TEST_ADDRESS,
+          TEST_AUTH_CHAIN,
+          { status: 'error', error: 'HTTP 500' }
+        )
       })
     })
 
@@ -221,8 +345,9 @@ describe('request-deletion-handler', () => {
         await new Promise((resolve) => setTimeout(resolve, 10))
 
         const logger = mockLogs.getLogger('request-deletion')
-        expect(logger.error).toHaveBeenCalledWith('Failed to send Slack notification', {
-          error: 'Slack webhook failed'
+        expect(logger.error).toHaveBeenCalledWith('Background Magic/Slack pipeline failed', {
+          error: 'Slack webhook failed',
+          userAddress: TEST_ADDRESS
         })
       })
     })

@@ -289,6 +289,26 @@ Ban types:
 | GET | `/deletion` | Get deletion request status (signedFetch) |
 | DELETE | `/deletion` | Cancel deletion request (signedFetch) |
 
+`POST /deletion` records the request in the `deletion_requests` table and responds immediately. In the background it dispatches a Magic Link wallet deletion (`POST https://api.magic.link/v1/admin/user/deletion/request`) for the requesting address, then sends a Slack notification with the outcome. `MAGIC_SECRET_KEY` is required — the service will fail to boot without it.
+
+Slack-message behavior, by Magic outcome:
+- `processed` — confirmation message with the user's email (auto-deleted, no manual work needed).
+- `error` — alert message; manual deletion still required.
+- `not_found` — original "deletion requested" message with no Magic mention (non-Magic users follow the existing manual flow, e.g., thirdweb).
+
+Response:
+```json
+{
+  "ok": true,
+  "data": {
+    "userAddress": "0x...",
+    "requestedAt": "2026-05-15T00:00:00.000Z",
+    "status": "pending",
+    "magic": { "status": "queued" }
+  }
+}
+```
+
 ### Wallets & Attestation
 
 Thin proxy in front of Thirdweb's `POST /v1/wallets/sign-message` plus a platform-attestation gate that issues a short-lived session token. The proxy forwards the user's `Authorization: Bearer <jwt>` verbatim and injects the server-only `x-secret-key`.
@@ -335,6 +355,8 @@ Session-token errors at `/wallets/sign-message` carry `ATTESTATION_SESSION_MISSI
 | `PLAY_INTEGRITY_SA_JSON` | Base64 of the GCP service-account JSON. Generate with `base64 -i sa.json \| tr -d '\n'`. |
 | `ATTESTATION_SESSION_SECRET` | 256-bit secret. HMAC key for both session tokens (issued by `/attest/session`) and stateless challenges (issued by `/attest/ios/challenge`). Generate with `openssl rand -base64 32`. Rotating it invalidates every outstanding session token and challenge. |
 | `ATTESTATION_SESSION_TTL_MS` | Session-token TTL in ms. Default 48h. Longer TTL = fewer attestations but wider replay window if a token leaks. |
+| `MAGIC_SECRET_KEY` | **Required.** Magic Link admin secret used by `POST /deletion` to delete the user's Magic wallet. Boot fails if unset. |
+| `MAGIC_API_BASE` | Optional override for the Magic API base URL (default: `https://api.magic.link`). |
 
 ## Database
 
