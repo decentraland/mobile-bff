@@ -83,9 +83,13 @@ export async function createAppAttestComponent({
   config
 }: Pick<AppComponents, 'config'>): Promise<IAppAttestComponent> {
   const expectedAppId = await config.requireString('APP_ATTEST_APP_ID')
-  const envRaw =
-    (await config.getString('APP_ATTEST_ENV')) ??
-    ((await config.getString('ENV')) === 'prd' ? 'production' : 'development')
+  // `.env.default` ships these vars as empty strings (so they appear as
+  // documentation placeholders) — `config.getString` returns `''` rather
+  // than `undefined` in that case, which ?? would not catch. Coerce empties
+  // to undefined before applying the ENV-derived fallback.
+  const appAttestEnvRaw = (await config.getString('APP_ATTEST_ENV')) || undefined
+  const deployEnv = (await config.getString('ENV')) || undefined
+  const envRaw = appAttestEnvRaw ?? (deployEnv === 'prd' ? 'production' : 'development')
   if (envRaw !== 'development' && envRaw !== 'production') {
     throw new Error(`APP_ATTEST_ENV must be 'development' or 'production', got '${envRaw}'`)
   }
