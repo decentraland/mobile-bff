@@ -22,7 +22,6 @@ import { createDestinationsApiComponent } from './adapters/destinations-api'
 import { createAppVersionsDbComponent } from './adapters/app-versions-db'
 import { createAppAttestComponent } from './adapters/app-attest'
 import { createPlayIntegrityComponent } from './adapters/play-integrity'
-import { createAttestationStateComponent } from './adapters/attestation-state'
 import { createAttestationVerifierComponent } from './adapters/attestation-verifier'
 import { createAttestationSessionComponent } from './adapters/attestation-session'
 import { createThirdwebProxyComponent } from './adapters/thirdweb-proxy'
@@ -65,11 +64,9 @@ export async function initComponents(): Promise<AppComponents> {
   const appVersionsDb = await createAppVersionsDbComponent({ pg })
   const appAttest = await createAppAttestComponent({ config })
   const playIntegrity = await createPlayIntegrityComponent({ config })
-  const attestationState = await createAttestationStateComponent({ pg })
   const attestationVerifier = await createAttestationVerifierComponent({
     appAttest,
     playIntegrity,
-    attestationState,
     logs,
     metrics
   })
@@ -99,7 +96,6 @@ export async function initComponents(): Promise<AppComponents> {
     appVersionsDb,
     appAttest,
     playIntegrity,
-    attestationState,
     attestationVerifier,
     attestationSession,
     thirdwebProxy,

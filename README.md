@@ -291,41 +291,32 @@ Ban types:
 
 ### Wallets & Attestation
 
-Thin proxy in front of Thirdweb's `POST /v1/wallets/sign-message` plus a platform-attestation report endpoint. The proxy forwards the user's `Authorization: Bearer <jwt>` verbatim and injects the server-only `x-secret-key`.
+Thin proxy in front of Thirdweb's `POST /v1/wallets/sign-message` plus a platform-attestation gate that issues a short-lived session token. The proxy forwards the user's `Authorization: Bearer <jwt>` verbatim and injects the server-only `x-secret-key`.
 
-**Attestation gates sign-message**: the client must send the standard `x-attest-*` headers (the same ones consumed by `/attest/check`). A failed verdict returns HTTP 401 with the attestation `code` in the body so the client can decide whether to retry (e.g. re-enroll on `ATTESTATION_IOS_KEY_NOT_REGISTERED`). `/attest/check` always returns 200 and is intended as an analytics report endpoint.
+**Flow**: the client runs platform attestation once and exchanges it for a session token at `POST /attest/session`. Subsequent `/wallets/sign-message` calls send only `x-attest-session: <token>` — no per-request attestation, no per-request Play Integrity / App Attest verification. A failed verdict at session-issuance returns HTTP 401 with the attestation `code` in the body so the client can decide how to retry.
 
-**Threat model — what attestation proves and does not prove**: a passing attestation verdict only proves the request came from a genuine, unmodified iOS/Android build of our app on a non-rooted device. It does not prove _which user_ is signing. The signing user identity comes from the `Authorization: Bearer <jwt>` validated by Thirdweb downstream. If an attacker exfiltrates another user's JWT and pairs it with a legitimate device's attestation headers, they can sign as the JWT owner. The body-binding (App Attest `clientDataHash` and Play Integrity `requestHash`) ensures the headers are tied to the exact request body, but the `Authorization` header is not part of that hash.
+The server keeps **no attestation state**. Challenges are HMAC-signed (5 min TTL, stateless). iOS clients generate a fresh App Attest key per session (Secure Enclave, ~200ms). Session tokens are HMAC-signed too; rotating `ATTESTATION_SESSION_SECRET` invalidates every outstanding token.
+
+**Threat model — what attestation proves and does not prove**: a passing attestation verdict only proves the request came from a genuine, unmodified iOS/Android build of our app on a non-rooted device. It does not prove _which user_ is signing. The signing user identity comes from the `Authorization: Bearer <jwt>` validated by Thirdweb downstream. If an attacker exfiltrates another user's JWT and pairs it with a valid session token (or a legitimate device's headers at session-issuance), they can sign as the JWT owner. The session token is the long-lived (48h default) credential; treat it as a bearer secret.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/wallets/sign-message` | Thirdweb sign-message proxy. Gated by platform attestation; 401 on failure. |
-| POST | `/attest/ios/challenge` | Issue a random one-shot challenge for App Attest enrollment. |
-| POST | `/attest/ios/register` | Finish App Attest enrollment: verify the attestation object and persist the leaf public key. |
-| POST | `/attest/check` | Verify the platform attestation headers + body. **Always 200**; outcome is in the response body. |
+| POST | `/attest/ios/challenge` | Mint a stateless HMAC-signed challenge for iOS App Attest. Returns `{ challenge, expires_at }`. |
+| POST | `/attest/session` | Verify the platform attestation and return `{ token, expires_at }`. 401 on failure with the attestation `code` in the body. |
+| POST | `/wallets/sign-message` | Thirdweb sign-message proxy. Requires `x-attest-session`; returns 401 if the token is missing, malformed, or expired. |
 
-`/attest/check` response shape:
+`POST /attest/session` request shape:
 
-```json
-{
-  "ok": true,
-  "platform": "ios",
-  "code": "OK",
-  "verdicts": ["MEETS_DEVICE_INTEGRITY"],
-  "elapsed_ms": 312
-}
-```
+- iOS: `x-attest-platform: ios` header + JSON body `{ key_id, attestation_object, challenge }` (all base64url; `challenge` is what `/attest/ios/challenge` returned).
+- Android: `x-attest-platform: android` header + `x-attest-integrity-token: <raw Play Integrity token>`. The raw request body is the nonce the token was bound to via `requestHash`.
 
 On failure, `ok=false` and `code` carries one of:
 
-- iOS: `ATTESTATION_IOS_MISSING_HEADERS`, `ATTESTATION_IOS_KEY_NOT_REGISTERED`, `ATTESTATION_IOS_BAD_CBOR`, `ATTESTATION_IOS_BAD_SIGNATURE`, `ATTESTATION_IOS_BAD_ASSERTION`, `ATTESTATION_IOS_COUNTER_REPLAY`
+- iOS: `ATTESTATION_IOS_BAD_BODY`, `ATTESTATION_IOS_BAD_CHALLENGE`, `ATTESTATION_IOS_BAD_CBOR`, `ATTESTATION_IOS_BAD_ASSERTION`
 - Android: `ATTESTATION_ANDROID_INVALID_TOKEN`, `ATTESTATION_ANDROID_HASH_MISMATCH`, `ATTESTATION_ANDROID_TOKEN_STALE`, `ATTESTATION_ANDROID_VERDICT_FAILED`, `ATTESTATION_ANDROID_PACKAGE_MISMATCH`
 - Generic: `ATTESTATION_UNKNOWN_PLATFORM`, `ATTESTATION_MISSING`
 
-Required request headers (same for `/attest/check`, `/wallets/sign-message`, and what the iOS/Android plugins compute):
-
-- iOS: `x-attest-platform: ios`, `x-attest-key-id`, `x-attest-assertion`, `x-attest-nonce` (all base64url)
-- Android: `x-attest-platform: android`, `x-attest-integrity-token` (raw Play Integrity token)
+Session-token errors at `/wallets/sign-message` carry `ATTESTATION_SESSION_MISSING`, `ATTESTATION_SESSION_MALFORMED`, `ATTESTATION_SESSION_BAD_SIGNATURE`, `ATTESTATION_SESSION_EXPIRED`, or `ATTESTATION_SESSION_BAD_VERSION`.
 
 ## Environment Variables
 
@@ -342,6 +333,8 @@ Required request headers (same for `/attest/check`, `/wallets/sign-message`, and
 | `PLAY_INTEGRITY_PACKAGE_NAME` | Android package name (must match the verified token). |
 | `PLAY_INTEGRITY_REQUIRED_VERDICTS` | Comma-separated `deviceRecognitionVerdict` values that must all be present. |
 | `PLAY_INTEGRITY_SA_JSON` | Base64 of the GCP service-account JSON. Generate with `base64 -i sa.json \| tr -d '\n'`. |
+| `ATTESTATION_SESSION_SECRET` | 256-bit secret. HMAC key for both session tokens (issued by `/attest/session`) and stateless challenges (issued by `/attest/ios/challenge`). Generate with `openssl rand -base64 32`. Rotating it invalidates every outstanding session token and challenge. |
+| `ATTESTATION_SESSION_TTL_MS` | Session-token TTL in ms. Default 48h. Longer TTL = fewer attestations but wider replay window if a token leaks. |
 
 ## Database
 
@@ -422,15 +415,6 @@ npm run migrate
 └─────────────────────┘
 
 
-┌─────────────────────┐       ┌─────────────────────┐
-│  attest_challenges  │       │     attest_keys     │
-├─────────────────────┤       ├─────────────────────┤
-│ challenge   (PK)    │       │ key_id      (PK)    │
-│ challenge_bytes     │       │ public_key_pem      │
-│ expires_at          │       │ counter   bigint    │
-└─────────────────────┘       │ created_at          │
-                              │ last_used_at        │
-                              └─────────────────────┘
 ```
 
 ### Tables
@@ -443,5 +427,5 @@ npm run migrate
 - `bans` - Ban records (for places, groups, scenes, or worlds)
 - `ban_positions` - Parcel coordinates for scene bans
 - `deletion_requests` - Account deletion requests
-- `attest_challenges` - Short-lived (5 min TTL) one-shot challenges for App Attest enrollment
-- `attest_keys` - Long-lived iOS App Attest registrations (one row per install, monotonic counter for replay detection)
+
+The attestation flow is stateless — challenges are HMAC-signed and session tokens are HMAC-signed, so no DB tables back it.

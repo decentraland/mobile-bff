@@ -9,10 +9,8 @@
 import { RateLimitRule } from '../adapters/rate-limiter'
 
 export const RL_ATTEST_CHALLENGE: RateLimitRule = { windowMs: 60_000, max: 30 }
-export const RL_ATTEST_REGISTER: RateLimitRule = { windowMs: 60_000, max: 10 }
-export const RL_ATTEST_CHECK: RateLimitRule = { windowMs: 60_000, max: 60 }
 // Session issuance burns one paid Play Integrity verdict per call on
-// Android; cap matches /attest/check.
+// Android (and full cert-chain verification on iOS); same cap as challenge.
 export const RL_ATTEST_SESSION: RateLimitRule = { windowMs: 60_000, max: 30 }
 export const RL_SIGN_MESSAGE: RateLimitRule = { windowMs: 60_000, max: 60 }
 

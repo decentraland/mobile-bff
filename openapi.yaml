@@ -261,12 +261,12 @@ paths:
         - Attestation
       summary: Issue an iOS App Attest challenge
       description: |
-        Returns a one-shot, random challenge the client must use as part of
-        the iOS App Attest enrollment ceremony. The challenge is short-lived
-        (5 min TTL) and consumed once by `POST /attest/ios/register`.
+        Returns a stateless HMAC-signed challenge the client uses as input
+        to App Attest. The challenge is short-lived (5 min TTL) — the server
+        keeps no row; verification on the way back recomputes the HMAC.
 
         Anonymous endpoint. Rate limited per client IP — legitimate use is
-        one call per install.
+        one call per session token issuance.
       operationId: attestIosChallenge
       security: []
       responses:
@@ -282,79 +282,35 @@ paths:
         '429':
           $ref: '#/components/responses/RateLimited'
 
-  /attest/ios/register:
+  /attest/session:
     post:
       tags:
         - Attestation
-      summary: Complete iOS App Attest registration
+      summary: Issue a session token after a successful platform attestation
       description: |
-        Finishes the App Attest enrollment ceremony. The server verifies the
-        attestation object against the previously-issued challenge, extracts
-        the leaf public key, and stores it for future assertion verification.
+        Verifies the platform attestation and, on success, returns a session
+        token the client replays on subsequent `/wallets/sign-message` calls.
+        One attestation per session — no per-request Play Integrity / App
+        Attest verification.
 
-        Anonymous endpoint. Rate limited per client IP — legitimate use is
-        one call per install.
-      operationId: attestIosRegister
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/AttestRegisterRequest'
-      responses:
-        '200':
-          description: Key registered successfully
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AttestRegisterResponse'
-              example:
-                registered: true
-                key_id_prefix: "abc12345"
-        '400':
-          description: Invalid request body, expired challenge, or attestation verification failure
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/FlatErrorResponse'
-              examples:
-                invalidBody:
-                  summary: Missing or malformed fields
-                  value:
-                    error: "key_id, attestation_object, challenge are required strings"
-                expiredChallenge:
-                  summary: Challenge unknown or expired
-                  value:
-                    error: "challenge unknown or expired"
-                attestationFailed:
-                  summary: App Attest verification failed
-                  value:
-                    error: "aaguid mismatch"
-        '429':
-          $ref: '#/components/responses/RateLimited'
+        Request shape is platform-specific:
 
-  /attest/check:
-    post:
-      tags:
-        - Attestation
-      summary: Report a platform attestation verdict
-      description: |
-        Non-gating verdict endpoint. The client sends the SAME headers and
-        raw body it would use for `/wallets/sign-message`; the server runs
-        the platform attestation verification and reports the outcome.
+        - **iOS**: `x-attest-platform: ios` + JSON body
+          `{ key_id, attestation_object, challenge }` (all base64url; the
+          `challenge` is what `/attest/ios/challenge` returned). The client
+          generates a fresh App Attest key per session.
+        - **Android**: `x-attest-platform: android` + the Play Integrity JWS
+          token in `x-attest-integrity-token`. The raw request body is the
+          nonce the token was bound to via `requestHash`.
 
-        **Always returns 200** (except on rate-limit) — analytics downstream
-        parses the body shape to compute pass rates. Failing here is
-        informational, not user-facing.
+        On failure, returns **401** with the attestation `code` in the body
+        so the client can branch (re-mint challenge on
+        `ATTESTATION_IOS_BAD_CHALLENGE`, retry on `ATTESTATION_ANDROID_*`).
 
-        For iOS, send the `x-attest-key-id`, `x-attest-assertion`, and
-        `x-attest-nonce` headers. For Android, send the
-        `x-attest-integrity-token` header.
-
-        Anonymous endpoint. Rate limited per client IP — verify() on Android
-        triggers a paid call to Google Play Integrity.
-      operationId: attestCheck
+        Anonymous endpoint. Rate limited per client IP — each call burns one
+        upstream Play Integrity verdict on Android (or full cert-chain
+        verification on iOS).
+      operationId: attestSession
       security: []
       parameters:
         - in: header
@@ -364,68 +320,62 @@ paths:
             type: string
             enum: [ios, android]
         - in: header
-          name: x-attest-key-id
-          required: false
-          schema: { type: string }
-          description: iOS only — base64url App Attest key id
-        - in: header
-          name: x-attest-assertion
-          required: false
-          schema: { type: string }
-          description: iOS only — base64url App Attest assertion
-        - in: header
-          name: x-attest-nonce
-          required: false
-          schema: { type: string }
-          description: iOS only — base64url nonce hashed with the request body
-        - in: header
           name: x-attest-integrity-token
           required: false
           schema: { type: string }
           description: Android only — Play Integrity JWS token
       requestBody:
-        required: false
+        required: true
         description: |
-          Opaque payload — its bytes are hashed alongside the nonce/token
-          to bind the attestation to this exact request.
+          iOS: JSON body with `{ key_id, attestation_object, challenge }`.
+          Android: opaque payload — its bytes are hashed into the Play
+          Integrity `requestHash` so the upstream verdict is bound to this
+          exact request.
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
+              oneOf:
+                - $ref: '#/components/schemas/AttestSessionIosRequest'
+                - type: object
+                  additionalProperties: true
+                  description: Android — arbitrary JSON whose bytes are the Play Integrity nonce
       responses:
         '200':
-          description: Verdict computed (success OR failure — check the `ok` field)
+          description: Session token issued
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AttestCheckResponse'
+                $ref: '#/components/schemas/AttestSessionResponse'
+              example:
+                token: "eyJ2IjoxLCJwbGF0Zm9ybSI6ImlvcyIsImlhdCI6MTcwMDAwMDAwMDAwMCwiZXhwIjoxNzAwMTcyODAwMDAwLCJqdGkiOiJhYmMifQ.ZmFrZS1tYWMtdGFnLWZvci1leGFtcGxlLW9ubHk"
+                expires_at: "2026-01-03T00:00:00.000Z"
+        '401':
+          description: Attestation verification failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttestationGateError'
               examples:
-                ok:
-                  summary: Successful verification
+                badChallenge:
+                  summary: iOS challenge invalid or expired
                   value:
-                    ok: true
+                    error: "challenge is invalid, tampered, or expired — request a fresh one from /attest/ios/challenge"
+                    code: ATTESTATION_IOS_BAD_CHALLENGE
                     platform: ios
-                    code: OK
-                    key_id_prefix: "abc12345"
-                    elapsed_ms: 47
-                missingHeaders:
-                  summary: iOS headers missing
+                badAssertion:
+                  summary: iOS attestation rejected
                   value:
-                    ok: false
+                    error: "aaguid mismatch for APP_ATTEST_ENV=production"
+                    code: ATTESTATION_IOS_BAD_ASSERTION
                     platform: ios
-                    code: ATTESTATION_IOS_MISSING_HEADERS
-                    error: "x-attest-key-id, x-attest-assertion, x-attest-nonce all required"
-                    elapsed_ms: 1
-                counterReplay:
-                  summary: iOS counter replay
+                androidVerdict:
+                  summary: Android device integrity verdicts insufficient
                   value:
-                    ok: false
-                    platform: ios
-                    code: ATTESTATION_IOS_COUNTER_REPLAY
-                    error: "counter advanced by a concurrent request"
-                    key_id_prefix: "abc12345"
-                    elapsed_ms: 32
+                    error: "missing required verdicts: MEETS_STRONG_INTEGRITY"
+                    code: ATTESTATION_ANDROID_VERDICT_FAILED
+                    platform: android
+                    details:
+                      missing: [MEETS_STRONG_INTEGRITY]
         '429':
           $ref: '#/components/responses/RateLimited'
 
@@ -433,7 +383,7 @@ paths:
     post:
       tags:
         - Wallets
-      summary: Sign a message via Thirdweb (attestation-gated)
+      summary: Sign a message via Thirdweb (session-token gated)
       description: |
         Thin proxy to Thirdweb's `POST /v1/wallets/sign-message`.
 
@@ -441,26 +391,25 @@ paths:
         server-only `x-secret-key` is injected by the BFF so it never ships
         in a client build.
 
-        **Attestation gate**: clients must send the standard `x-attest-*`
-        headers (see `/attest/check`). A failed verdict returns **401** with
-        the attestation `code` in the body — clients can branch on it
-        (e.g. `ATTESTATION_IOS_KEY_NOT_REGISTERED` → re-enrol).
+        **Session-token gate**: clients must send `x-attest-session: <token>`
+        obtained from `POST /attest/session`. A missing, malformed, or
+        expired token returns **401** with the session `code` in the body
+        — clients re-run `/attest/session` and retry.
 
         On a successful gate, the request is forwarded and the upstream
         response body is returned byte-for-byte (Content-Type preserved).
 
-        Anonymous endpoint. Rate limited per client IP — each call burns
-        an attestation verification and (on success) a paid Thirdweb call.
+        Rate limited per client IP — each call hits a paid Thirdweb endpoint.
       operationId: walletsSignMessage
       security:
         - bearerJwt: []
       parameters:
         - in: header
-          name: x-attest-platform
+          name: x-attest-session
           required: true
           schema:
             type: string
-            enum: [ios, android]
+          description: Session token issued by `POST /attest/session`.
       requestBody:
         required: true
         description: Forwarded verbatim to Thirdweb's sign-message endpoint.
@@ -483,7 +432,7 @@ paths:
               example:
                 signature: "0xdeadbeef..."
         '401':
-          description: Missing/invalid bearer JWT, or attestation gate failed
+          description: Missing/invalid bearer JWT, or session-token gate failed
           content:
             application/json:
               schema:
@@ -493,12 +442,16 @@ paths:
                   summary: No Authorization header
                   value:
                     error: "missing Authorization: Bearer <jwt>"
-                attestationFailed:
-                  summary: Attestation gate failed
+                missingSession:
+                  summary: No session header
                   value:
-                    error: "key_id has not completed registration — call /attest/ios/register first"
-                    code: ATTESTATION_IOS_KEY_NOT_REGISTERED
-                    platform: ios
+                    error: "missing x-attest-session header — obtain one from POST /attest/session"
+                    code: ATTESTATION_SESSION_MISSING
+                expiredSession:
+                  summary: Session token expired
+                  value:
+                    error: "token expired"
+                    code: ATTESTATION_SESSION_EXPIRED
         '400':
           description: Upstream rejected request (sanitized — only `error`, `code`, `message` forwarded)
           content:
@@ -704,13 +657,16 @@ components:
       properties:
         challenge:
           type: string
-          description: base64url-encoded random challenge (32 bytes)
+          description: |
+            base64url-encoded 40-byte blob: 16 random bytes || 8-byte
+            big-endian unix-ms expiry || 16-byte HMAC-SHA256 tag. The client
+            decodes this blob and passes the bytes to App Attest verbatim.
         expires_at:
           type: string
           format: date-time
-          description: ISO timestamp after which the challenge can no longer be consumed
+          description: ISO timestamp after which `/attest/session` will reject this challenge
 
-    AttestRegisterRequest:
+    AttestSessionIosRequest:
       type: object
       required:
         - key_id
@@ -719,7 +675,7 @@ components:
       properties:
         key_id:
           type: string
-          description: base64url-encoded App Attest key id
+          description: base64url-encoded App Attest key id (fresh per session)
         attestation_object:
           type: string
           description: base64url-encoded App Attest attestation object (CBOR)
@@ -727,57 +683,22 @@ components:
           type: string
           description: The exact `challenge` returned by `/attest/ios/challenge`
 
-    AttestRegisterResponse:
+    AttestSessionResponse:
       type: object
       required:
-        - registered
-        - key_id_prefix
+        - token
+        - expires_at
       properties:
-        registered:
-          type: boolean
-          example: true
-        key_id_prefix:
-          type: string
-          description: First 8 base64url characters of the registered key_id (for log correlation)
-          example: "abc12345"
-
-    AttestCheckResponse:
-      type: object
-      required:
-        - ok
-        - platform
-        - code
-        - elapsed_ms
-      properties:
-        ok:
-          type: boolean
-          description: True only when `code` is "OK"
-        platform:
-          type: string
-          enum: [ios, android, unknown]
-        code:
+        token:
           type: string
           description: |
-            "OK" on success, otherwise an `ATTESTATION_*` code identifying
-            the failure mode. iOS codes start with `ATTESTATION_IOS_*`,
-            android codes with `ATTESTATION_ANDROID_*`.
-          example: OK
-        error:
+            Opaque session token of the form `<payloadB64u>.<tagB64u>`.
+            Send verbatim in the `x-attest-session` header on
+            `/wallets/sign-message`.
+        expires_at:
           type: string
-          description: Human-readable description of a non-OK code
-        verdicts:
-          type: array
-          description: Android only — the `deviceRecognitionVerdict` array from Play Integrity
-          items:
-            type: string
-        details:
-          description: Platform-specific extras (shape may vary)
-        key_id_prefix:
-          type: string
-          description: iOS only — first 8 base64url chars of the key id
-        elapsed_ms:
-          type: integer
-          description: Wall-clock time spent inside the verifier
+          format: date-time
+          description: ISO timestamp after which the token will be rejected
 
     AttestationGateError:
       type: object

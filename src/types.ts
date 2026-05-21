@@ -20,7 +20,6 @@ import { IDestinationsApiComponent } from './adapters/destinations-api'
 import { IAppVersionsDbComponent } from './adapters/app-versions-db'
 import { IAppAttestComponent } from './adapters/app-attest'
 import { IPlayIntegrityComponent } from './adapters/play-integrity'
-import { IAttestationStateComponent } from './adapters/attestation-state'
 import { IAttestationVerifierComponent } from './adapters/attestation-verifier'
 import { IAttestationSessionComponent } from './adapters/attestation-session'
 import { IThirdwebProxyComponent } from './adapters/thirdweb-proxy'
@@ -50,7 +49,6 @@ export type BaseComponents = {
   appVersionsDb: IAppVersionsDbComponent
   appAttest: IAppAttestComponent
   playIntegrity: IPlayIntegrityComponent
-  attestationState: IAttestationStateComponent
   attestationVerifier: IAttestationVerifierComponent
   attestationSession: IAttestationSessionComponent
   thirdwebProxy: IThirdwebProxyComponent

@@ -1,10 +1,14 @@
-// Shared platform-attestation verifier — used by both /attest/check (which
-// always returns 200 with the verdict in the body) and the /wallets/sign-message
-// gate (which returns 401 on a failed verdict).
+// Shared platform-attestation verifier — drives POST /attest/session.
 //
-// Outcome shape mirrors the response body of /attest/check so analytics
-// downstream can parse the same fields whether they come from the report
-// endpoint or from a sign-message failure.
+// iOS: each session-issuance request carries a fresh App Attest attestation
+// (the client generates a new key per session, ~200ms in Secure Enclave).
+// We verify the attestation against a server-issued challenge and return
+// the leaf public key only as a side-effect of validation — nothing is
+// persisted, the session token issued by the caller is the durable
+// credential.
+//
+// Android: stateless from the start — Play Integrity tokens are verified
+// against Google and bound to SHA256(rawBody) via requestHash.
 
 import { AppComponents } from '../types'
 import { AppAttestError } from './app-attest'
@@ -22,6 +26,14 @@ export type AttestationOutcome = {
 
 type HeadersLike = { get(name: string): string | null }
 
+// iOS body shape carried inside the raw request body of POST /attest/session.
+// Parsed by the verifier so the handler stays platform-agnostic.
+type IosAttestBody = {
+  key_id?: unknown
+  attestation_object?: unknown
+  challenge?: unknown
+}
+
 export type IAttestationVerifierComponent = {
   verify(input: { headers: HeadersLike; rawBody: Buffer }): Promise<AttestationOutcome>
 }
@@ -29,10 +41,9 @@ export type IAttestationVerifierComponent = {
 export async function createAttestationVerifierComponent({
   appAttest,
   playIntegrity,
-  attestationState,
   logs,
   metrics
-}: Pick<AppComponents, 'appAttest' | 'playIntegrity' | 'attestationState' | 'logs' | 'metrics'>): Promise<IAttestationVerifierComponent> {
+}: Pick<AppComponents, 'appAttest' | 'playIntegrity' | 'logs' | 'metrics'>): Promise<IAttestationVerifierComponent> {
   const logger = logs.getLogger('attestation-verifier')
 
   function record(outcome: AttestationOutcome, startMs: number): AttestationOutcome {
@@ -68,68 +79,43 @@ export async function createAttestationVerifierComponent({
     }
 
     if (platformRaw === 'ios') {
-      const keyIdB64u = headers.get('x-attest-key-id')
-      const assertionB64u = headers.get('x-attest-assertion')
-      const nonceB64u = headers.get('x-attest-nonce')
-      if (!keyIdB64u || !assertionB64u || !nonceB64u) {
+      let parsed: IosAttestBody
+      try {
+        parsed = JSON.parse(rawBody.toString('utf8'))
+      } catch (e: any) {
         return {
           ok: false,
           platform: 'ios',
-          code: 'ATTESTATION_IOS_MISSING_HEADERS',
-          error: 'x-attest-key-id, x-attest-assertion, x-attest-nonce all required'
+          code: 'ATTESTATION_IOS_BAD_BODY',
+          error: `request body is not valid JSON: ${e?.message || e}`
         }
       }
-      const keyIdPrefix = keyIdB64u.slice(0, 8)
-      const stored = await attestationState.getRegisteredKey(keyIdB64u)
-      if (!stored) {
+      const { key_id, attestation_object, challenge } = parsed
+      if (typeof key_id !== 'string' || typeof attestation_object !== 'string' || typeof challenge !== 'string') {
         return {
           ok: false,
           platform: 'ios',
-          code: 'ATTESTATION_IOS_KEY_NOT_REGISTERED',
-          error: 'key_id has not completed registration — call /attest/ios/register first',
+          code: 'ATTESTATION_IOS_BAD_BODY',
+          error: 'key_id, attestation_object, challenge are required strings'
+        }
+      }
+      const keyIdPrefix = key_id.slice(0, 8)
+      const challengeBytes = appAttest.verifyChallenge(challenge)
+      if (!challengeBytes) {
+        return {
+          ok: false,
+          platform: 'ios',
+          code: 'ATTESTATION_IOS_BAD_CHALLENGE',
+          error: 'challenge is invalid, tampered, or expired — request a fresh one from /attest/ios/challenge',
           keyIdPrefix
         }
       }
-      // Buffer.from(..., 'base64url') does not throw on malformed input — it
-      // silently truncates. We rely on the downstream signature check to
-      // catch bad nonces, since a corrupted nonce will produce the wrong
-      // digest and verifyAssertion will surface a BAD_SIGNATURE.
-      const nonceBytes = Buffer.from(nonceB64u, 'base64url')
       try {
-        const { newCounter } = appAttest.verifyAssertion({
-          assertionB64u,
-          nonceBytes,
-          rawBody,
-          storedPublicKeyPem: stored.publicKeyPem,
-          storedCounter: stored.counter
+        appAttest.verifyRegistration({
+          keyIdB64u: key_id,
+          attestationObjectB64u: attestation_object,
+          challengeBytes
         })
-        const updated = await attestationState.updateKeyCounterIfGreater(keyIdB64u, newCounter)
-        if (updated.status === 'counter_not_greater') {
-          // Lost the race: a concurrent request advanced the counter past
-          // ours, which means our (older) assertion is a replay.
-          logger.warn('ios attest concurrent replay', { key_id_prefix: keyIdPrefix })
-          return {
-            ok: false,
-            platform: 'ios',
-            code: 'ATTESTATION_IOS_COUNTER_REPLAY',
-            error: 'counter advanced by a concurrent request',
-            keyIdPrefix
-          }
-        }
-        if (updated.status === 'key_missing') {
-          // The row disappeared between getRegisteredKey() above and the
-          // CAS update — most likely the cleanup-30d job deleted an idle
-          // key out from under us. Surface it as KEY_NOT_REGISTERED so the
-          // client re-enrols rather than retrying with the same assertion.
-          logger.warn('ios attest key vanished mid-flight', { key_id_prefix: keyIdPrefix })
-          return {
-            ok: false,
-            platform: 'ios',
-            code: 'ATTESTATION_IOS_KEY_NOT_REGISTERED',
-            error: 'key disappeared between verify and counter update — re-enrol',
-            keyIdPrefix
-          }
-        }
         logger.info('ios attest ok', { key_id_prefix: keyIdPrefix })
         return { ok: true, platform: 'ios', code: 'OK', keyIdPrefix }
       } catch (e: any) {

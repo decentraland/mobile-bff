@@ -4,7 +4,6 @@ import { createAttestationVerifierComponent } from '../../src/adapters/attestati
 import { AppAttestError } from '../../src/adapters/app-attest'
 import { PlayIntegrityError } from '../../src/adapters/play-integrity'
 import { metricDeclarations } from '../../src/metrics'
-import { createAttestationStateJestMockComponent } from '../mocks/attestation-state-mock'
 import { createAppAttestJestMockComponent } from '../mocks/app-attest-mock'
 import { createPlayIntegrityJestMockComponent } from '../mocks/play-integrity-mock'
 import { createLogsMockComponent } from '../mocks/logs-mock'
@@ -16,11 +15,9 @@ describe('attestation-verifier', () => {
   }
 
   async function buildVerifier(overrides: {
-    state?: ReturnType<typeof createAttestationStateJestMockComponent>
     appAttest?: ReturnType<typeof createAppAttestJestMockComponent>
     playIntegrity?: ReturnType<typeof createPlayIntegrityJestMockComponent>
   } = {}) {
-    const state = overrides.state ?? createAttestationStateJestMockComponent()
     const appAttest = overrides.appAttest ?? createAppAttestJestMockComponent()
     const playIntegrity = overrides.playIntegrity ?? createPlayIntegrityJestMockComponent()
     const logs = createLogsMockComponent()
@@ -28,11 +25,10 @@ describe('attestation-verifier', () => {
     const verifier = await createAttestationVerifierComponent({
       appAttest,
       playIntegrity,
-      attestationState: state,
       logs,
       metrics
     } as any)
-    return { verifier, state, appAttest, playIntegrity, metrics }
+    return { verifier, appAttest, playIntegrity, metrics }
   }
 
   describe('platform routing', () => {
@@ -54,112 +50,90 @@ describe('attestation-verifier', () => {
   })
 
   describe('ios path', () => {
-    const iosHeaders = {
-      'x-attest-platform': 'ios',
-      'x-attest-key-id': 'a'.repeat(43), // base64url of 32 bytes
-      'x-attest-assertion': 'YXNzZXJ0aW9u',
-      'x-attest-nonce': 'bm9uY2U'
-    }
+    const iosHeaders = { 'x-attest-platform': 'ios' }
+    const validBody = (overrides: Record<string, unknown> = {}) =>
+      Buffer.from(
+        JSON.stringify({
+          key_id: 'a'.repeat(43),
+          attestation_object: 'YXR0',
+          challenge: 'Y2g',
+          ...overrides
+        }),
+        'utf8'
+      )
 
-    it('returns ATTESTATION_IOS_MISSING_HEADERS when any of key-id/assertion/nonce is missing', async () => {
+    it('returns ATTESTATION_IOS_BAD_BODY when the body is not valid JSON', async () => {
       const { verifier } = await buildVerifier()
+      const out = await verifier.verify({ headers: mkHeaders(iosHeaders), rawBody: Buffer.from('not-json') })
+      expect(out.code).toBe('ATTESTATION_IOS_BAD_BODY')
+    })
+
+    it.each([
+      ['missing key_id', { key_id: undefined }],
+      ['missing attestation_object', { attestation_object: undefined }],
+      ['missing challenge', { challenge: undefined }],
+      ['non-string key_id', { key_id: 1 }]
+    ])('returns ATTESTATION_IOS_BAD_BODY for %s', async (_name, overrides) => {
+      const { verifier } = await buildVerifier()
+      const body = { key_id: 'k', attestation_object: 'a', challenge: 'c', ...overrides }
       const out = await verifier.verify({
-        headers: mkHeaders({ 'x-attest-platform': 'ios' }),
-        rawBody: Buffer.from('')
+        headers: mkHeaders(iosHeaders),
+        rawBody: Buffer.from(JSON.stringify(body), 'utf8')
       })
-      expect(out.code).toBe('ATTESTATION_IOS_MISSING_HEADERS')
+      expect(out.code).toBe('ATTESTATION_IOS_BAD_BODY')
     })
 
-    it('returns ATTESTATION_IOS_KEY_NOT_REGISTERED when the key is unknown', async () => {
-      const state = createAttestationStateJestMockComponent()
-      state.getRegisteredKey.mockResolvedValue(null)
-      const { verifier } = await buildVerifier({ state })
-      const out = await verifier.verify({ headers: mkHeaders(iosHeaders), rawBody: Buffer.from('') })
-      expect(out.code).toBe('ATTESTATION_IOS_KEY_NOT_REGISTERED')
-      expect(out.keyIdPrefix).toBe(iosHeaders['x-attest-key-id'].slice(0, 8))
-    })
-
-    it('returns OK on a valid assertion and advances the counter', async () => {
-      const state = createAttestationStateJestMockComponent()
-      state.getRegisteredKey.mockResolvedValue({ publicKeyPem: 'PEM', counter: 5 })
-      state.updateKeyCounterIfGreater.mockResolvedValue({ status: 'advanced' })
+    it('returns ATTESTATION_IOS_BAD_CHALLENGE when verifyChallenge returns null', async () => {
       const appAttest = createAppAttestJestMockComponent()
-      appAttest.verifyAssertion.mockReturnValue({ newCounter: 6 })
-      const { verifier } = await buildVerifier({ state, appAttest })
-      const out = await verifier.verify({ headers: mkHeaders(iosHeaders), rawBody: Buffer.from('') })
+      appAttest.verifyChallenge.mockReturnValue(null)
+      const { verifier } = await buildVerifier({ appAttest })
+      const out = await verifier.verify({ headers: mkHeaders(iosHeaders), rawBody: validBody() })
+      expect(out.code).toBe('ATTESTATION_IOS_BAD_CHALLENGE')
+      expect(out.keyIdPrefix).toBe('a'.repeat(8))
+    })
+
+    it('returns OK on a valid registration and forwards the recovered challenge bytes', async () => {
+      const appAttest = createAppAttestJestMockComponent()
+      const recovered = Buffer.from('recovered-challenge-bytes')
+      appAttest.verifyChallenge.mockReturnValue(recovered)
+      appAttest.verifyRegistration.mockReturnValue({ publicKeyPem: 'PEM' })
+      const { verifier } = await buildVerifier({ appAttest })
+      const out = await verifier.verify({ headers: mkHeaders(iosHeaders), rawBody: validBody() })
       expect(out).toMatchObject({ ok: true, platform: 'ios', code: 'OK' })
-      expect(state.updateKeyCounterIfGreater).toHaveBeenCalledWith(iosHeaders['x-attest-key-id'], 6)
-    })
-
-    it('returns ATTESTATION_IOS_COUNTER_REPLAY when CAS update loses to a concurrent advance', async () => {
-      const state = createAttestationStateJestMockComponent()
-      state.getRegisteredKey.mockResolvedValue({ publicKeyPem: 'PEM', counter: 5 })
-      state.updateKeyCounterIfGreater.mockResolvedValue({ status: 'counter_not_greater' })
-      const appAttest = createAppAttestJestMockComponent()
-      appAttest.verifyAssertion.mockReturnValue({ newCounter: 6 })
-      const { verifier } = await buildVerifier({ state, appAttest })
-      const out = await verifier.verify({ headers: mkHeaders(iosHeaders), rawBody: Buffer.from('') })
-      expect(out.ok).toBe(false)
-      expect(out.code).toBe('ATTESTATION_IOS_COUNTER_REPLAY')
-    })
-
-    it('returns ATTESTATION_IOS_KEY_NOT_REGISTERED when the row vanishes mid-flight', async () => {
-      const state = createAttestationStateJestMockComponent()
-      state.getRegisteredKey.mockResolvedValue({ publicKeyPem: 'PEM', counter: 5 })
-      state.updateKeyCounterIfGreater.mockResolvedValue({ status: 'key_missing' })
-      const appAttest = createAppAttestJestMockComponent()
-      appAttest.verifyAssertion.mockReturnValue({ newCounter: 6 })
-      const { verifier } = await buildVerifier({ state, appAttest })
-      const out = await verifier.verify({ headers: mkHeaders(iosHeaders), rawBody: Buffer.from('') })
-      expect(out.ok).toBe(false)
-      expect(out.code).toBe('ATTESTATION_IOS_KEY_NOT_REGISTERED')
-    })
-
-    it('propagates COUNTER_REPLAY code from AppAttestError', async () => {
-      const state = createAttestationStateJestMockComponent()
-      state.getRegisteredKey.mockResolvedValue({ publicKeyPem: 'PEM', counter: 10 })
-      const appAttest = createAppAttestJestMockComponent()
-      appAttest.verifyAssertion.mockImplementation(() => {
-        throw new AppAttestError('ATTESTATION_IOS_COUNTER_REPLAY', 'counter replay (stored=10, received=5)')
+      expect(appAttest.verifyRegistration).toHaveBeenCalledWith({
+        keyIdB64u: 'a'.repeat(43),
+        attestationObjectB64u: 'YXR0',
+        challengeBytes: recovered
       })
-      const { verifier } = await buildVerifier({ state, appAttest })
-      const out = await verifier.verify({ headers: mkHeaders(iosHeaders), rawBody: Buffer.from('') })
-      expect(out.code).toBe('ATTESTATION_IOS_COUNTER_REPLAY')
     })
 
     it('propagates BAD_CBOR code from AppAttestError', async () => {
-      const state = createAttestationStateJestMockComponent()
-      state.getRegisteredKey.mockResolvedValue({ publicKeyPem: 'PEM', counter: 0 })
       const appAttest = createAppAttestJestMockComponent()
-      appAttest.verifyAssertion.mockImplementation(() => {
-        throw new AppAttestError('ATTESTATION_IOS_BAD_CBOR', 'assertion is not valid CBOR: bad token')
+      appAttest.verifyRegistration.mockImplementation(() => {
+        throw new AppAttestError('ATTESTATION_IOS_BAD_CBOR', 'attestation_object is not valid CBOR')
       })
-      const { verifier } = await buildVerifier({ state, appAttest })
-      const out = await verifier.verify({ headers: mkHeaders(iosHeaders), rawBody: Buffer.from('') })
+      const { verifier } = await buildVerifier({ appAttest })
+      const out = await verifier.verify({ headers: mkHeaders(iosHeaders), rawBody: validBody() })
       expect(out.code).toBe('ATTESTATION_IOS_BAD_CBOR')
     })
 
-    it('propagates BAD_SIGNATURE code from AppAttestError', async () => {
-      const state = createAttestationStateJestMockComponent()
-      state.getRegisteredKey.mockResolvedValue({ publicKeyPem: 'PEM', counter: 0 })
+    it('propagates BAD_ASSERTION code from AppAttestError', async () => {
       const appAttest = createAppAttestJestMockComponent()
-      appAttest.verifyAssertion.mockImplementation(() => {
-        throw new AppAttestError('ATTESTATION_IOS_BAD_SIGNATURE', 'assertion signature invalid')
+      appAttest.verifyRegistration.mockImplementation(() => {
+        throw new AppAttestError('ATTESTATION_IOS_BAD_ASSERTION', 'aaguid mismatch')
       })
-      const { verifier } = await buildVerifier({ state, appAttest })
-      const out = await verifier.verify({ headers: mkHeaders(iosHeaders), rawBody: Buffer.from('') })
-      expect(out.code).toBe('ATTESTATION_IOS_BAD_SIGNATURE')
+      const { verifier } = await buildVerifier({ appAttest })
+      const out = await verifier.verify({ headers: mkHeaders(iosHeaders), rawBody: validBody() })
+      expect(out.code).toBe('ATTESTATION_IOS_BAD_ASSERTION')
     })
 
     it('falls back to BAD_ASSERTION for non-AppAttestError throws', async () => {
-      const state = createAttestationStateJestMockComponent()
-      state.getRegisteredKey.mockResolvedValue({ publicKeyPem: 'PEM', counter: 0 })
       const appAttest = createAppAttestJestMockComponent()
-      appAttest.verifyAssertion.mockImplementation(() => {
+      appAttest.verifyRegistration.mockImplementation(() => {
         throw new Error('something else went wrong')
       })
-      const { verifier } = await buildVerifier({ state, appAttest })
-      const out = await verifier.verify({ headers: mkHeaders(iosHeaders), rawBody: Buffer.from('') })
+      const { verifier } = await buildVerifier({ appAttest })
+      const out = await verifier.verify({ headers: mkHeaders(iosHeaders), rawBody: validBody() })
       expect(out.code).toBe('ATTESTATION_IOS_BAD_ASSERTION')
     })
   })

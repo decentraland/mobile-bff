@@ -5,15 +5,20 @@ import { RL_ATTEST_SESSION, withFallbackCap } from '../../../logic/rate-limit-ru
 // POST /attest/session — verify platform attestation, then issue a session
 // token the client can replay on subsequent /wallets/sign-message calls.
 //
-// The attestation here IS body-bound (same verifier as /attest/check
-// uses, against the exact bytes of THIS request). What's NOT bound to a
-// body is the issued token — it sits in the client's memory and is sent
-// verbatim on each /sign-message call. The point is to keep Play
-// Integrity calls bounded to one per session rather than one per signed
-// message.
+// Request shape is platform-specific:
+//   iOS    : JSON body { key_id, attestation_object, challenge }. The
+//            attestation is fresh per session (DCAppAttestService.generateKey
+//            on the client) — no key persistence on the server.
+//   Android: Play Integrity token in `x-attest-integrity-token`; the raw
+//            body is the nonce the token was bound to via requestHash.
+//
+// The issued session token has no body binding — it sits in the client's
+// memory and is sent verbatim on each /sign-message call. The point is to
+// keep Play Integrity / App Attest verifications bounded to one per
+// session rather than one per signed message.
 //
 // Rate-limited per IP: every call still pays one upstream Play Integrity
-// verdict on Android.
+// verdict on Android (or full cert-chain verification on iOS).
 export async function attestSessionHandler(
   context: HandlerContextWithPath<
     'attestationVerifier' | 'attestationSession' | 'rateLimiter' | 'logs',

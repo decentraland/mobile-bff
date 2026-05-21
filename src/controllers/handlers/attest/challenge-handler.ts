@@ -2,18 +2,24 @@ import { HandlerContextWithPath } from '../../../types'
 import { clientKeyFromHeaders } from '../../../adapters/rate-limiter'
 import { RL_ATTEST_CHALLENGE, withFallbackCap } from '../../../logic/rate-limit-rules'
 
-// POST /attest/ios/challenge — issue a random one-shot challenge that the
-// client uses as part of the App Attest enrollment ceremony.
+// POST /attest/ios/challenge — mint a server-signed challenge for the App
+// Attest enrollment ceremony.
 //
-// Rate limited per IP: the endpoint writes a row per call (and GC's another
-// on the way in), so an unbounded caller could push tail latency / disk
-// usage. The limit is much higher than legitimate use — registration is
-// one-shot per install.
+// The challenge is an HMAC-signed blob containing a random nonce and an
+// expiration timestamp (see `app-attest.ts::issueChallenge`). No DB is
+// touched — verification on the way back recomputes the HMAC. This means
+// challenges are technically replayable within their TTL window, but the
+// attestation_object Apple produces is bound to the exact challenge bytes
+// (and to the per-session ephemeral key), so a replay within TTL would
+// only yield the same outcome as a fresh ceremony.
+//
+// Rate limited per IP because issuance is anonymous and we want a buggy
+// client retry loop to fall off a cliff before it floods analytics.
 export async function attestIosChallengeHandler(
-  context: HandlerContextWithPath<'attestationState' | 'rateLimiter' | 'logs', '/attest/ios/challenge'>
+  context: HandlerContextWithPath<'appAttest' | 'rateLimiter' | 'logs', '/attest/ios/challenge'>
 ) {
   const {
-    components: { attestationState, rateLimiter, logs },
+    components: { appAttest, rateLimiter, logs },
     request
   } = context
   const { key: ipKey, isFallback } = clientKeyFromHeaders(request.headers, logs.getLogger('rate-limit'))
@@ -29,6 +35,6 @@ export async function attestIosChallengeHandler(
       body: { error: 'rate limit exceeded' }
     }
   }
-  const { challenge, expiresAt } = await attestationState.issueChallenge()
+  const { challenge, expiresAt } = appAttest.issueChallenge()
   return { status: 200, body: { challenge, expires_at: expiresAt } }
 }

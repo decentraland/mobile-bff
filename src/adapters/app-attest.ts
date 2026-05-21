@@ -1,12 +1,16 @@
 // Apple App Attest verification.
 //
-// Two entry points:
-//   verifyRegistration() - runs the seven-step "validating apps" ceremony
-//     from Apple's docs, returns the leaf public key (SPKI PEM) so the
-//     caller can persist it alongside the client-supplied key_id.
-//   verifyAssertion()    - verifies a per-request CBOR assertion against
-//     the previously persisted public key, the raw request body, and a
-//     monotonic counter.
+// Entry points:
+//   issueChallenge()      - mint a stateless HMAC-signed challenge. The
+//     client passes it to App Attest, which embeds SHA256(challenge) in
+//     the leaf cert's nonce extension. No DB row is created.
+//   verifyChallenge()     - validate the HMAC and TTL, recover the original
+//     challenge bytes (so verifyRegistration can recompute Apple's nonce).
+//   verifyRegistration()  - run the App Attest "validating apps" ceremony
+//     from Apple's docs and return the leaf public key (SPKI PEM). Used
+//     once per session token issuance: the client generates a fresh key
+//     (via DCAppAttestService.generateKey, ~200ms in Secure Enclave), so
+//     no public key persistence is needed.
 //
 // Spec: https://developer.apple.com/documentation/devicecheck/validating-apps-that-connect-to-your-server
 //
@@ -36,14 +40,23 @@ const APPLE_ROOT_X509 = new crypto.X509Certificate(APPLE_APP_ATTEST_ROOT_CA_PEM)
 // chain to verify before any other check kicks in.
 const MAX_X5C_CHAIN_LENGTH = 5
 
+// Stateless challenge format: nonce16 || expU64BE || mac16
+// Total 40 bytes, base64url-encoded for transport (~54 chars).
+// mac = HMAC-SHA256(secret, CHALLENGE_DOMAIN || nonce || expU64BE), truncated.
+const CHALLENGE_NONCE_LEN = 16
+const CHALLENGE_EXP_LEN = 8
+const CHALLENGE_MAC_LEN = 16
+const CHALLENGE_TOTAL_LEN = CHALLENGE_NONCE_LEN + CHALLENGE_EXP_LEN + CHALLENGE_MAC_LEN
+// Domain separator: keeps the secret reusable for other purposes without
+// the HMAC output of one context being a valid tag in another.
+const CHALLENGE_DOMAIN = Buffer.from('v1:attest-challenge', 'utf8')
+const CHALLENGE_TTL_MS = 5 * 60 * 1000
+const MIN_SECRET_LENGTH = 32
+
 // Granular error codes — surfaced to the client through the
 // attestation-verifier outcome so the client (and analytics) can branch on
 // the failure mode without parsing free-form messages.
-export type AppAttestErrorCode =
-  | 'ATTESTATION_IOS_BAD_CBOR'
-  | 'ATTESTATION_IOS_BAD_SIGNATURE'
-  | 'ATTESTATION_IOS_COUNTER_REPLAY'
-  | 'ATTESTATION_IOS_BAD_ASSERTION'
+export type AppAttestErrorCode = 'ATTESTATION_IOS_BAD_CBOR' | 'ATTESTATION_IOS_BAD_ASSERTION'
 
 export class AppAttestError extends Error {
   code: AppAttestErrorCode
@@ -57,18 +70,13 @@ export class AppAttestError extends Error {
 export type AppAttestEnv = 'development' | 'production'
 
 export type IAppAttestComponent = {
+  issueChallenge(): { challenge: string; expiresAt: string }
+  verifyChallenge(challenge: string): Buffer | null
   verifyRegistration(input: {
     keyIdB64u: string
     attestationObjectB64u: string
     challengeBytes: Buffer
   }): { publicKeyPem: string }
-  verifyAssertion(input: {
-    assertionB64u: string
-    nonceBytes: Buffer
-    rawBody: Buffer
-    storedPublicKeyPem: string
-    storedCounter: number
-  }): { newCounter: number }
 }
 
 export async function createAppAttestComponent({
@@ -82,6 +90,55 @@ export async function createAppAttestComponent({
     throw new Error(`APP_ATTEST_ENV must be 'development' or 'production', got '${envRaw}'`)
   }
   const env: AppAttestEnv = envRaw
+
+  // Reuses ATTESTATION_SESSION_SECRET (the same key that signs session
+  // tokens). Safe because of CHALLENGE_DOMAIN — the HMAC inputs are
+  // disjoint, so a challenge tag is never a valid session-token tag.
+  const secret = await config.requireString('ATTESTATION_SESSION_SECRET')
+  if (secret.length < MIN_SECRET_LENGTH) {
+    throw new Error(
+      `ATTESTATION_SESSION_SECRET must be at least ${MIN_SECRET_LENGTH} chars (use a 256-bit random secret)`
+    )
+  }
+
+  function macChallenge(nonce: Buffer, expBuf: Buffer): Buffer {
+    return crypto
+      .createHmac('sha256', secret)
+      .update(CHALLENGE_DOMAIN)
+      .update(nonce)
+      .update(expBuf)
+      .digest()
+      .subarray(0, CHALLENGE_MAC_LEN)
+  }
+
+  function issueChallenge(): { challenge: string; expiresAt: string } {
+    const nonce = crypto.randomBytes(CHALLENGE_NONCE_LEN)
+    const expMs = Date.now() + CHALLENGE_TTL_MS
+    const expBuf = Buffer.alloc(CHALLENGE_EXP_LEN)
+    expBuf.writeBigUInt64BE(BigInt(expMs), 0)
+    const mac = macChallenge(nonce, expBuf)
+    const challengeBytes = Buffer.concat([nonce, expBuf, mac])
+    return {
+      challenge: challengeBytes.toString('base64url'),
+      expiresAt: new Date(expMs).toISOString()
+    }
+  }
+
+  function verifyChallenge(challenge: string): Buffer | null {
+    if (typeof challenge !== 'string' || challenge.length === 0) return null
+    const bytes = Buffer.from(challenge, 'base64url')
+    // Buffer.from(..., 'base64url') silently truncates on bad input, so a
+    // length check is both a format gate and an integrity guard.
+    if (bytes.length !== CHALLENGE_TOTAL_LEN) return null
+    const nonce = bytes.subarray(0, CHALLENGE_NONCE_LEN)
+    const expBuf = bytes.subarray(CHALLENGE_NONCE_LEN, CHALLENGE_NONCE_LEN + CHALLENGE_EXP_LEN)
+    const mac = bytes.subarray(CHALLENGE_NONCE_LEN + CHALLENGE_EXP_LEN)
+    const expectedMac = macChallenge(nonce, expBuf)
+    if (mac.length !== expectedMac.length || !crypto.timingSafeEqual(mac, expectedMac)) return null
+    const expMs = Number(expBuf.readBigUInt64BE(0))
+    if (!Number.isFinite(expMs) || expMs < Date.now()) return null
+    return bytes
+  }
 
   function verifyRegistration({
     keyIdB64u,
@@ -179,87 +236,7 @@ export async function createAppAttestComponent({
     return { publicKeyPem }
   }
 
-  function verifyAssertion({
-    assertionB64u,
-    nonceBytes,
-    rawBody,
-    storedPublicKeyPem,
-    storedCounter
-  }: {
-    assertionB64u: string
-    nonceBytes: Buffer
-    rawBody: Buffer
-    storedPublicKeyPem: string
-    storedCounter: number
-  }): { newCounter: number } {
-    const assertionBytes = Buffer.from(assertionB64u, 'base64url')
-    let decoded: any
-    try {
-      decoded = cborDecode(assertionBytes)
-    } catch (e: any) {
-      throw new AppAttestError('ATTESTATION_IOS_BAD_CBOR', `assertion is not valid CBOR: ${e.message}`)
-    }
-
-    const signature = bufferOf(decoded && decoded.signature, 'signature')
-    const authData = bufferOf(decoded && decoded.authenticatorData, 'authenticatorData')
-    if (authData.length < 37) {
-      throw new AppAttestError('ATTESTATION_IOS_BAD_ASSERTION', 'assertion authenticatorData too short')
-    }
-    // App Attest assertion authData is exactly 37 bytes (RP ID hash || flags
-    // || counter); attested-credential-data (AT, 0x40) and extension-data
-    // (ED, 0x80) flags must not be set — those only appear in registration,
-    // never in per-call assertions. Reject so a forged authData padded with
-    // extra bytes can't sneak past the length check.
-    const flags = authData[32]
-    if ((flags & 0xc0) !== 0) {
-      throw new AppAttestError(
-        'ATTESTATION_IOS_BAD_ASSERTION',
-        `assertion authData flags must not include AT or ED bits (got 0x${flags.toString(16)})`
-      )
-    }
-    if (authData.length !== 37) {
-      throw new AppAttestError(
-        'ATTESTATION_IOS_BAD_ASSERTION',
-        `assertion authData has unexpected length ${authData.length} (expected 37)`
-      )
-    }
-
-    // clientDataHash = SHA256(raw request body || client-supplied nonce)
-    const clientDataHash = sha256(Buffer.concat([rawBody, nonceBytes]))
-
-    // Apple App Attest's per-request signature is over `nonce` (where
-    // `nonce = SHA256(authData || clientDataHash)`) passed AS A MESSAGE to
-    // the ECDSA-SHA256 signer — so the signer hashes `nonce` again
-    // internally, and the value that ECDSA actually signs is SHA256(nonce).
-    // To verify we must mirror that: compute `nonce`, then `update(nonce)`
-    // so Node also applies SHA256 inside createVerify("SHA256"). Feeding
-    // `update(authData) + update(clientDataHash)` only hashes once and
-    // verifies against the wrong digest.
-    const nonce = sha256(Buffer.concat([authData, clientDataHash]))
-    const verifier = crypto.createVerify('SHA256')
-    verifier.update(nonce)
-    const verified = verifier.verify(storedPublicKeyPem, signature)
-    if (!verified) {
-      throw new AppAttestError('ATTESTATION_IOS_BAD_SIGNATURE', 'assertion signature invalid')
-    }
-
-    const expectedRpIdHash = sha256(Buffer.from(expectedAppId, 'utf8'))
-    if (!authData.subarray(0, 32).equals(expectedRpIdHash)) {
-      throw new AppAttestError('ATTESTATION_IOS_BAD_ASSERTION', 'assertion RP ID hash does not match appId')
-    }
-
-    const newCounter = authData.readUInt32BE(33)
-    if (newCounter <= storedCounter) {
-      throw new AppAttestError(
-        'ATTESTATION_IOS_COUNTER_REPLAY',
-        `counter replay (stored=${storedCounter}, received=${newCounter})`
-      )
-    }
-
-    return { newCounter }
-  }
-
-  return { verifyRegistration, verifyAssertion }
+  return { issueChallenge, verifyChallenge, verifyRegistration }
 }
 
 function sha256(buf: Buffer): Buffer {

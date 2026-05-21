@@ -69,13 +69,13 @@ describe('attest session handler', () => {
     mocks.verifier.verify.mockResolvedValue({
       ok: false,
       platform: 'ios',
-      code: 'ATTESTATION_IOS_BAD_SIGNATURE',
-      error: 'sig invalid',
+      code: 'ATTESTATION_IOS_BAD_ASSERTION',
+      error: 'aaguid mismatch',
       keyIdPrefix: 'aaaa'
     })
     const res = await attestSessionHandler(context as any)
     expect(res.status).toBe(401)
-    expect((res.body as any).code).toBe('ATTESTATION_IOS_BAD_SIGNATURE')
+    expect((res.body as any).code).toBe('ATTESTATION_IOS_BAD_ASSERTION')
     expect((res.body as any).platform).toBe('ios')
     expect(mocks.session.issue).not.toHaveBeenCalled()
   })
