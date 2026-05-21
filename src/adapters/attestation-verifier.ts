@@ -30,11 +30,31 @@ export async function createAttestationVerifierComponent({
   appAttest,
   playIntegrity,
   attestationState,
-  logs
-}: Pick<AppComponents, 'appAttest' | 'playIntegrity' | 'attestationState' | 'logs'>): Promise<IAttestationVerifierComponent> {
+  logs,
+  metrics
+}: Pick<AppComponents, 'appAttest' | 'playIntegrity' | 'attestationState' | 'logs' | 'metrics'>): Promise<IAttestationVerifierComponent> {
   const logger = logs.getLogger('attestation-verifier')
 
+  function record(outcome: AttestationOutcome, startMs: number): AttestationOutcome {
+    const labels = { platform: outcome.platform, code: outcome.code }
+    metrics.increment('attestation_verify_total', labels)
+    metrics.observe('attestation_verify_duration_seconds', labels, (Date.now() - startMs) / 1000)
+    return outcome
+  }
+
   async function verify({
+    headers,
+    rawBody
+  }: {
+    headers: HeadersLike
+    rawBody: Buffer
+  }): Promise<AttestationOutcome> {
+    const startMs = Date.now()
+    const out = await verifyInternal({ headers, rawBody })
+    return record(out, startMs)
+  }
+
+  async function verifyInternal({
     headers,
     rawBody
   }: {
@@ -84,7 +104,7 @@ export async function createAttestationVerifierComponent({
           storedCounter: stored.counter
         })
         const updated = await attestationState.updateKeyCounterIfGreater(keyIdB64u, newCounter)
-        if (!updated) {
+        if (updated.status === 'counter_not_greater') {
           // Lost the race: a concurrent request advanced the counter past
           // ours, which means our (older) assertion is a replay.
           logger.warn('ios attest concurrent replay', { key_id_prefix: keyIdPrefix })
@@ -93,6 +113,20 @@ export async function createAttestationVerifierComponent({
             platform: 'ios',
             code: 'ATTESTATION_IOS_COUNTER_REPLAY',
             error: 'counter advanced by a concurrent request',
+            keyIdPrefix
+          }
+        }
+        if (updated.status === 'key_missing') {
+          // The row disappeared between getRegisteredKey() above and the
+          // CAS update — most likely the cleanup-30d job deleted an idle
+          // key out from under us. Surface it as KEY_NOT_REGISTERED so the
+          // client re-enrols rather than retrying with the same assertion.
+          logger.warn('ios attest key vanished mid-flight', { key_id_prefix: keyIdPrefix })
+          return {
+            ok: false,
+            platform: 'ios',
+            code: 'ATTESTATION_IOS_KEY_NOT_REGISTERED',
+            error: 'key disappeared between verify and counter update — re-enrol',
             keyIdPrefix
           }
         }

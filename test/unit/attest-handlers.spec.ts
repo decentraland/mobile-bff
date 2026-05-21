@@ -5,18 +5,43 @@ import { AppAttestError } from '../../src/adapters/app-attest'
 import { createAttestationStateJestMockComponent } from '../mocks/attestation-state-mock'
 import { createAppAttestJestMockComponent } from '../mocks/app-attest-mock'
 import { createAttestationVerifierJestMockComponent } from '../mocks/attestation-verifier-mock'
+import { createRateLimiterJestMockComponent } from '../mocks/rate-limiter-mock'
 import { createLogsMockComponent } from '../mocks/logs-mock'
+
+// Build an empty headers stub so handlers can extract a client key without
+// blowing up.
+const emptyHeaders = { get: (_: string) => null }
 
 describe('attest handlers', () => {
   describe('challenge handler', () => {
-    it('issues a challenge from the state component', async () => {
+    function buildCtx() {
       const mockState = createAttestationStateJestMockComponent()
+      const mockRateLimiter = createRateLimiterJestMockComponent()
+      return {
+        mockState,
+        mockRateLimiter,
+        context: {
+          components: { attestationState: mockState, rateLimiter: mockRateLimiter },
+          request: { headers: emptyHeaders }
+        }
+      }
+    }
+
+    it('issues a challenge from the state component', async () => {
+      const { context, mockState } = buildCtx()
       mockState.issueChallenge.mockResolvedValue({ challenge: 'ch1', expiresAt: '2026-01-01T00:00:00.000Z' })
-      const res = await attestIosChallengeHandler({
-        components: { attestationState: mockState }
-      } as any)
+      const res = await attestIosChallengeHandler(context as any)
       expect(res.status).toBe(200)
       expect(res.body).toEqual({ challenge: 'ch1', expires_at: '2026-01-01T00:00:00.000Z' })
+    })
+
+    it('returns 429 when rate limited', async () => {
+      const { context, mockRateLimiter, mockState } = buildCtx()
+      mockRateLimiter.check.mockReturnValue({ allowed: false, retryAfterSec: 13 })
+      const res = await attestIosChallengeHandler(context as any)
+      expect(res.status).toBe(429)
+      expect((res.headers as any)?.['Retry-After']).toBe('13')
+      expect(mockState.issueChallenge).not.toHaveBeenCalled()
     })
   })
 
@@ -24,10 +49,15 @@ describe('attest handlers', () => {
     function createContext(body: unknown, opts: {
       consumeReturns?: Buffer | null
       verifyThrows?: Error
+      rateLimited?: boolean
     } = {}) {
       const mockState = createAttestationStateJestMockComponent()
       const mockAppAttest = createAppAttestJestMockComponent()
       const mockLogs = createLogsMockComponent()
+      const mockRateLimiter = createRateLimiterJestMockComponent()
+      if (opts.rateLimited) {
+        mockRateLimiter.check.mockReturnValue({ allowed: false, retryAfterSec: 7 })
+      }
       const consume = 'consumeReturns' in opts ? opts.consumeReturns! : Buffer.from('chal-bytes')
       mockState.consumeChallenge.mockResolvedValue(consume)
       if (opts.verifyThrows) {
@@ -36,10 +66,15 @@ describe('attest handlers', () => {
         })
       }
       return {
-        mocks: { state: mockState, appAttest: mockAppAttest, logs: mockLogs },
+        mocks: { state: mockState, appAttest: mockAppAttest, logs: mockLogs, rateLimiter: mockRateLimiter },
         context: {
-          components: { attestationState: mockState, appAttest: mockAppAttest, logs: mockLogs },
-          request: { json: async () => body }
+          components: {
+            attestationState: mockState,
+            appAttest: mockAppAttest,
+            logs: mockLogs,
+            rateLimiter: mockRateLimiter
+          },
+          request: { json: async () => body, headers: emptyHeaders }
         }
       }
     }
@@ -48,16 +83,34 @@ describe('attest handlers', () => {
       const mockState = createAttestationStateJestMockComponent()
       const mockAppAttest = createAppAttestJestMockComponent()
       const mockLogs = createLogsMockComponent()
+      const mockRateLimiter = createRateLimiterJestMockComponent()
       const res = await attestIosRegisterHandler({
-        components: { attestationState: mockState, appAttest: mockAppAttest, logs: mockLogs },
+        components: {
+          attestationState: mockState,
+          appAttest: mockAppAttest,
+          logs: mockLogs,
+          rateLimiter: mockRateLimiter
+        },
         request: {
           json: async () => {
             throw new Error('not json')
-          }
+          },
+          headers: emptyHeaders
         }
       } as any)
       expect(res.status).toBe(400)
       expect((res.body as any).error).toMatch(/invalid JSON/i)
+    })
+
+    it('returns 429 before parsing JSON when rate limited', async () => {
+      const { context, mocks } = createContext(
+        { key_id: 'k', attestation_object: 'a', challenge: 'c' },
+        { rateLimited: true }
+      )
+      const res = await attestIosRegisterHandler(context as any)
+      expect(res.status).toBe(429)
+      expect((res.headers as any)?.['Retry-After']).toBe('7')
+      expect(mocks.state.consumeChallenge).not.toHaveBeenCalled()
     })
 
     const invalidBodies: Array<{ name: string; body: Record<string, unknown> }> = [
@@ -143,13 +196,19 @@ describe('attest handlers', () => {
   })
 
   describe('check handler', () => {
-    function createContext(body = '{}', headers: Record<string, string> = {}) {
+    function createContext(body = '{}', headers: Record<string, string> = {}, opts: { rateLimited?: boolean } = {}) {
       const headersMap = new Map(Object.entries(headers))
       const mockVerifier = createAttestationVerifierJestMockComponent()
+      const mockRateLimiter = createRateLimiterJestMockComponent()
+      const mockLogs = createLogsMockComponent()
+      if (opts.rateLimited) {
+        mockRateLimiter.check.mockReturnValue({ allowed: false, retryAfterSec: 9 })
+      }
       return {
         mockVerifier,
+        mockRateLimiter,
         context: {
-          components: { attestationVerifier: mockVerifier },
+          components: { attestationVerifier: mockVerifier, rateLimiter: mockRateLimiter, logs: mockLogs },
           request: {
             headers: { get: (k: string) => headersMap.get(k) ?? null },
             arrayBuffer: async () => new TextEncoder().encode(body).buffer
@@ -157,6 +216,14 @@ describe('attest handlers', () => {
         }
       }
     }
+
+    it('returns 429 when rate limited, without invoking the verifier', async () => {
+      const { context, mockVerifier } = createContext('{}', {}, { rateLimited: true })
+      const res = await attestCheckHandler(context as any)
+      expect(res.status).toBe(429)
+      expect((res.headers as any)?.['Retry-After']).toBe('9')
+      expect(mockVerifier.verify).not.toHaveBeenCalled()
+    })
 
     it('always returns 200 even on failure', async () => {
       const { context, mockVerifier } = createContext()

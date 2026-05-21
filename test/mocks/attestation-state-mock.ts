@@ -11,7 +11,7 @@ export function createAttestationStateJestMockComponent(
     consumeChallenge: jest.fn().mockResolvedValue(null),
     registerKey: jest.fn().mockResolvedValue({ inserted: true }),
     getRegisteredKey: jest.fn().mockResolvedValue(null),
-    updateKeyCounterIfGreater: jest.fn().mockResolvedValue(true),
+    updateKeyCounterIfGreater: jest.fn().mockResolvedValue({ status: 'advanced' }),
     ...overrides
   }
 }

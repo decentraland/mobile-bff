@@ -25,6 +25,7 @@ import { createPlayIntegrityComponent } from './adapters/play-integrity'
 import { createAttestationStateComponent } from './adapters/attestation-state'
 import { createAttestationVerifierComponent } from './adapters/attestation-verifier'
 import { createThirdwebProxyComponent } from './adapters/thirdweb-proxy'
+import { createRateLimiterComponent } from './adapters/rate-limiter'
 
 // Initialize all the components of the app
 export async function initComponents(): Promise<AppComponents> {
@@ -68,9 +69,11 @@ export async function initComponents(): Promise<AppComponents> {
     appAttest,
     playIntegrity,
     attestationState,
-    logs
+    logs,
+    metrics
   })
-  const thirdwebProxy = await createThirdwebProxyComponent({ config, fetch, logs })
+  const thirdwebProxy = await createThirdwebProxyComponent({ config, fetch, logs, metrics })
+  const rateLimiter = await createRateLimiterComponent({ metrics })
 
   await instrumentHttpServerWithPromClientRegistry({ metrics, server, config, registry: metrics.registry! })
 
@@ -96,7 +99,8 @@ export async function initComponents(): Promise<AppComponents> {
     playIntegrity,
     attestationState,
     attestationVerifier,
-    thirdwebProxy
+    thirdwebProxy,
+    rateLimiter
   }
 }
 

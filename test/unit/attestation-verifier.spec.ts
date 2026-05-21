@@ -1,6 +1,9 @@
+import { createTestMetricsComponent } from '@well-known-components/metrics'
+
 import { createAttestationVerifierComponent } from '../../src/adapters/attestation-verifier'
 import { AppAttestError } from '../../src/adapters/app-attest'
 import { PlayIntegrityError } from '../../src/adapters/play-integrity'
+import { metricDeclarations } from '../../src/metrics'
 import { createAttestationStateJestMockComponent } from '../mocks/attestation-state-mock'
 import { createAppAttestJestMockComponent } from '../mocks/app-attest-mock'
 import { createPlayIntegrityJestMockComponent } from '../mocks/play-integrity-mock'
@@ -21,13 +24,15 @@ describe('attestation-verifier', () => {
     const appAttest = overrides.appAttest ?? createAppAttestJestMockComponent()
     const playIntegrity = overrides.playIntegrity ?? createPlayIntegrityJestMockComponent()
     const logs = createLogsMockComponent()
+    const metrics = createTestMetricsComponent(metricDeclarations)
     const verifier = await createAttestationVerifierComponent({
       appAttest,
       playIntegrity,
       attestationState: state,
-      logs
+      logs,
+      metrics
     } as any)
-    return { verifier, state, appAttest, playIntegrity }
+    return { verifier, state, appAttest, playIntegrity, metrics }
   }
 
   describe('platform routing', () => {
@@ -77,7 +82,7 @@ describe('attestation-verifier', () => {
     it('returns OK on a valid assertion and advances the counter', async () => {
       const state = createAttestationStateJestMockComponent()
       state.getRegisteredKey.mockResolvedValue({ publicKeyPem: 'PEM', counter: 5 })
-      state.updateKeyCounterIfGreater.mockResolvedValue(true)
+      state.updateKeyCounterIfGreater.mockResolvedValue({ status: 'advanced' })
       const appAttest = createAppAttestJestMockComponent()
       appAttest.verifyAssertion.mockReturnValue({ newCounter: 6 })
       const { verifier } = await buildVerifier({ state, appAttest })
@@ -86,16 +91,28 @@ describe('attestation-verifier', () => {
       expect(state.updateKeyCounterIfGreater).toHaveBeenCalledWith(iosHeaders['x-attest-key-id'], 6)
     })
 
-    it('returns ATTESTATION_IOS_COUNTER_REPLAY when CAS update fails', async () => {
+    it('returns ATTESTATION_IOS_COUNTER_REPLAY when CAS update loses to a concurrent advance', async () => {
       const state = createAttestationStateJestMockComponent()
       state.getRegisteredKey.mockResolvedValue({ publicKeyPem: 'PEM', counter: 5 })
-      state.updateKeyCounterIfGreater.mockResolvedValue(false)
+      state.updateKeyCounterIfGreater.mockResolvedValue({ status: 'counter_not_greater' })
       const appAttest = createAppAttestJestMockComponent()
       appAttest.verifyAssertion.mockReturnValue({ newCounter: 6 })
       const { verifier } = await buildVerifier({ state, appAttest })
       const out = await verifier.verify({ headers: mkHeaders(iosHeaders), rawBody: Buffer.from('') })
       expect(out.ok).toBe(false)
       expect(out.code).toBe('ATTESTATION_IOS_COUNTER_REPLAY')
+    })
+
+    it('returns ATTESTATION_IOS_KEY_NOT_REGISTERED when the row vanishes mid-flight', async () => {
+      const state = createAttestationStateJestMockComponent()
+      state.getRegisteredKey.mockResolvedValue({ publicKeyPem: 'PEM', counter: 5 })
+      state.updateKeyCounterIfGreater.mockResolvedValue({ status: 'key_missing' })
+      const appAttest = createAppAttestJestMockComponent()
+      appAttest.verifyAssertion.mockReturnValue({ newCounter: 6 })
+      const { verifier } = await buildVerifier({ state, appAttest })
+      const out = await verifier.verify({ headers: mkHeaders(iosHeaders), rawBody: Buffer.from('') })
+      expect(out.ok).toBe(false)
+      expect(out.code).toBe('ATTESTATION_IOS_KEY_NOT_REGISTERED')
     })
 
     it('propagates COUNTER_REPLAY code from AppAttestError', async () => {

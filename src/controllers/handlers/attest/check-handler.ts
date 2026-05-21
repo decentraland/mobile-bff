@@ -1,4 +1,6 @@
 import { HandlerContextWithPath } from '../../../types'
+import { clientKeyFromHeaders } from '../../../adapters/rate-limiter'
+import { RL_ATTEST_CHECK } from '../../../logic/rate-limit-rules'
 
 // POST /attest/check — non-gating verdict endpoint.
 //
@@ -6,6 +8,10 @@ import { HandlerContextWithPath } from '../../../types'
 // run the platform attestation verification and report the outcome in the
 // response. ALWAYS returns 200 — analytics downstream parses the body shape
 // to compute pass rates. Failing here is informational, not user-facing.
+//
+// Rate limited per IP because verify() on Android triggers a paid call to
+// Google Play Integrity API; without a cap an anonymous script can drain
+// the daily quota.
 //
 // Response shape:
 //   {
@@ -18,18 +24,35 @@ import { HandlerContextWithPath } from '../../../types'
 //     elapsed_ms: number
 //   }
 export async function attestCheckHandler(
-  context: HandlerContextWithPath<'attestationVerifier', '/attest/check'>
+  context: HandlerContextWithPath<'attestationVerifier' | 'rateLimiter' | 'logs', '/attest/check'>
 ) {
   const {
-    components: { attestationVerifier },
+    components: { attestationVerifier, rateLimiter, logs },
     request
   } = context
   const start = Date.now()
+  const logger = logs.getLogger('attest-check')
+
+  const ipKey = clientKeyFromHeaders(request.headers)
+  const rl = rateLimiter.check(RL_ATTEST_CHECK, `attest:check:${ipKey}`, 'attest:check')
+  if (!rl.allowed) {
+    return {
+      status: 429,
+      headers: { 'Retry-After': String(rl.retryAfterSec) },
+      body: { error: 'rate limit exceeded' }
+    }
+  }
 
   let rawBody: Buffer
   try {
     rawBody = Buffer.from(await request.arrayBuffer())
-  } catch {
+  } catch (e: any) {
+    // Reading the body should not fail on a well-formed HTTP request — if
+    // it does, the request is malformed (truncated, bad framing, client
+    // disconnect mid-stream). We surface this in logs instead of pretending
+    // an empty body was supplied, which would mask the failure mode and
+    // produce a confusing downstream "missing headers" outcome.
+    logger.warn('failed to read request body', { error: e?.message || String(e) })
     rawBody = Buffer.alloc(0)
   }
 

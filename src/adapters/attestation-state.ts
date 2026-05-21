@@ -30,16 +30,22 @@ export type RegisterKeyResult = {
   inserted: boolean
 }
 
+// Discriminated result of the CAS counter update. We need to distinguish
+// "the row is gone" from "the row exists but its counter is already >=
+// newCounter" — the first means the key was GC'd or never registered (the
+// client should re-enrol) and the second is a genuine replay. Reporting
+// both as a flat `false` led to misleading COUNTER_REPLAY codes in logs.
+export type UpdateCounterResult =
+  | { status: 'advanced' }
+  | { status: 'counter_not_greater' }
+  | { status: 'key_missing' }
+
 export type IAttestationStateComponent = {
   issueChallenge(): Promise<{ challenge: string; expiresAt: string }>
   consumeChallenge(challenge: string): Promise<Buffer | null>
   registerKey(keyId: string, publicKeyPem: string): Promise<RegisterKeyResult>
   getRegisteredKey(keyId: string): Promise<RegisteredKey | null>
-  // CAS update: only writes if newCounter > current counter, returns whether
-  // the write actually happened. Returning `false` means a concurrent request
-  // already advanced past `newCounter` — the caller should treat it as a
-  // replay.
-  updateKeyCounterIfGreater(keyId: string, newCounter: number): Promise<boolean>
+  updateKeyCounterIfGreater(keyId: string, newCounter: number): Promise<UpdateCounterResult>
 }
 
 export async function createAttestationStateComponent({
@@ -113,18 +119,29 @@ export async function createAttestationStateComponent({
     return { publicKeyPem: row.public_key_pem, counter: Number(row.counter) }
   }
 
-  async function updateKeyCounterIfGreater(keyId: string, newCounter: number): Promise<boolean> {
+  async function updateKeyCounterIfGreater(keyId: string, newCounter: number): Promise<UpdateCounterResult> {
     // Atomic compare-and-swap: only advances if the stored counter is still
     // strictly below newCounter. Two concurrent requests verifying assertions
     // for the same key_id will both pass the signature check (assertions
     // were valid when issued) but only the one with the higher counter
-    // wins; the other gets `false` here and is reported as a replay.
-    const result = await pg.query(SQL`
+    // wins.
+    //
+    // We need to distinguish three outcomes — advanced, lost-the-race
+    // (replay), and row-vanished (key GC'd / not registered) — so we
+    // RETURNING the post-update counter and then do a follow-up read when
+    // the UPDATE matched no rows. The follow-up runs in the same connection
+    // and the race window is small; a row deleted between UPDATE and SELECT
+    // still gets reported as `key_missing`, which is the correct answer.
+    const update = await pg.query<{ counter: string }>(SQL`
       UPDATE attest_keys
       SET counter = ${newCounter}, last_used_at = NOW()
       WHERE key_id = ${keyId} AND counter < ${newCounter}
+      RETURNING counter
     `)
-    return (result.rowCount ?? 0) > 0
+    if ((update.rowCount ?? 0) > 0) return { status: 'advanced' }
+    const existing = await pg.query(SQL`SELECT 1 FROM attest_keys WHERE key_id = ${keyId}`)
+    if (existing.rows.length === 0) return { status: 'key_missing' }
+    return { status: 'counter_not_greater' }
   }
 
   return { issueChallenge, consumeChallenge, registerKey, getRegisteredKey, updateKeyCounterIfGreater }

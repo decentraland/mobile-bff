@@ -23,6 +23,7 @@ import { IPlayIntegrityComponent } from './adapters/play-integrity'
 import { IAttestationStateComponent } from './adapters/attestation-state'
 import { IAttestationVerifierComponent } from './adapters/attestation-verifier'
 import { IThirdwebProxyComponent } from './adapters/thirdweb-proxy'
+import { IRateLimiterComponent } from './adapters/rate-limiter'
 
 export type GlobalContext = {
   components: BaseComponents
@@ -51,6 +52,7 @@ export type BaseComponents = {
   attestationState: IAttestationStateComponent
   attestationVerifier: IAttestationVerifierComponent
   thirdwebProxy: IThirdwebProxyComponent
+  rateLimiter: IRateLimiterComponent
 }
 
 // components used in runtime

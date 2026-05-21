@@ -1,5 +1,7 @@
 import { HandlerContextWithPath } from '../../../types'
 import { AppAttestError } from '../../../adapters/app-attest'
+import { clientKeyFromHeaders } from '../../../adapters/rate-limiter'
+import { RL_ATTEST_REGISTER } from '../../../logic/rate-limit-rules'
 
 type RegisterBody = {
   key_id?: unknown
@@ -11,14 +13,31 @@ type RegisterBody = {
 // verifies the attestation object against the previously-issued challenge,
 // extracts the leaf public key, and stores it under key_id for future
 // assertion checks.
+//
+// Rate limited per IP: registration triggers cert chain verification, ASN.1
+// parsing, and a DB insert. Cheap by itself, but spammable enough to be a
+// nuisance without a cap. Legitimate use is one call per install.
 export async function attestIosRegisterHandler(
-  context: HandlerContextWithPath<'appAttest' | 'attestationState' | 'logs', '/attest/ios/register'>
+  context: HandlerContextWithPath<
+    'appAttest' | 'attestationState' | 'logs' | 'rateLimiter',
+    '/attest/ios/register'
+  >
 ) {
   const {
-    components: { appAttest, attestationState, logs },
+    components: { appAttest, attestationState, logs, rateLimiter },
     request
   } = context
   const logger = logs.getLogger('attest-ios-register')
+
+  const ipKey = clientKeyFromHeaders(request.headers)
+  const rl = rateLimiter.check(RL_ATTEST_REGISTER, `attest:register:${ipKey}`, 'attest:register')
+  if (!rl.allowed) {
+    return {
+      status: 429,
+      headers: { 'Retry-After': String(rl.retryAfterSec) },
+      body: { error: 'rate limit exceeded' }
+    }
+  }
 
   let body: RegisterBody
   try {

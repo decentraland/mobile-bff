@@ -1,16 +1,19 @@
 import { signMessageHandler } from '../../src/controllers/handlers/wallets/sign-message-handler'
 import { createThirdwebProxyJestMockComponent } from '../mocks/thirdweb-proxy-mock'
 import { createAttestationVerifierJestMockComponent } from '../mocks/attestation-verifier-mock'
+import { createRateLimiterJestMockComponent } from '../mocks/rate-limiter-mock'
 import { createLogsMockComponent } from '../mocks/logs-mock'
 
 describe('sign-message-handler', () => {
   let mockProxy: ReturnType<typeof createThirdwebProxyJestMockComponent>
   let mockVerifier: ReturnType<typeof createAttestationVerifierJestMockComponent>
+  let mockRateLimiter: ReturnType<typeof createRateLimiterJestMockComponent>
   let mockLogs: ReturnType<typeof createLogsMockComponent>
 
   beforeEach(() => {
     mockProxy = createThirdwebProxyJestMockComponent()
     mockVerifier = createAttestationVerifierJestMockComponent()
+    mockRateLimiter = createRateLimiterJestMockComponent()
     mockLogs = createLogsMockComponent()
   })
 
@@ -21,7 +24,12 @@ describe('sign-message-handler', () => {
     const headersMap = new Map<string, string>()
     if (authorization !== null) headersMap.set('authorization', authorization)
     return {
-      components: { thirdwebProxy: mockProxy, attestationVerifier: mockVerifier, logs: mockLogs },
+      components: {
+        thirdwebProxy: mockProxy,
+        attestationVerifier: mockVerifier,
+        rateLimiter: mockRateLimiter,
+        logs: mockLogs
+      },
       request: {
         headers: {
           get: (k: string) => headersMap.get(k.toLowerCase()) ?? null
@@ -30,6 +38,18 @@ describe('sign-message-handler', () => {
       }
     }
   }
+
+  describe('when rate limited', () => {
+    it('returns 429 with Retry-After before touching the verifier or proxy', async () => {
+      mockRateLimiter.check.mockReturnValue({ allowed: false, retryAfterSec: 42 })
+      const ctx = createContext()
+      const res = await signMessageHandler(ctx as any)
+      expect(res.status).toBe(429)
+      expect((res.headers as any)?.['Retry-After']).toBe('42')
+      expect(mockVerifier.verify).not.toHaveBeenCalled()
+      expect(mockProxy.forwardSignMessage).not.toHaveBeenCalled()
+    })
+  })
 
   describe('when Authorization header is missing', () => {
     it('returns 401', async () => {

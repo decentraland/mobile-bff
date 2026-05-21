@@ -192,4 +192,99 @@ describe('app-attest verifyAssertion (synthetic key)', () => {
       })
     ).toThrow(AppAttestError)
   })
+
+  it('rejects a malformed client nonce (truncated base64url that decodes to wrong-length bytes)', () => {
+    // Buffer.from('zz', 'base64url') silently produces 1 byte; the assertion
+    // was signed assuming a 32-byte nonce, so the signature should not
+    // verify. The verifier surfaces this as BAD_SIGNATURE because the
+    // signature check is what catches the digest mismatch.
+    const authData = makeAuthData(7)
+    const signature = signAssertion({ privateKey, authData, rawBody, clientNonce })
+    const assertionB64u = encodeAssertion(signature, authData)
+    expect(() =>
+      appAttest.verifyAssertion({
+        assertionB64u,
+        nonceBytes: Buffer.from('zz', 'base64url'),
+        rawBody,
+        storedPublicKeyPem: publicKeyPem,
+        storedCounter: 6
+      })
+    ).toThrow(/signature invalid/)
+  })
+
+  it('rejects an assertion authData padded with extra bytes (AT/ED flags must be zero)', () => {
+    // Forge an authData with the AT bit (0x40) set and 18 extra trailing
+    // bytes. The signature still validates against this exact authData,
+    // but the verifier should reject before that because per Apple's spec
+    // assertion authData is strictly 37 bytes with flags=0x00.
+    const padded = Buffer.alloc(55)
+    sha256(Buffer.from(APP_ID, 'utf8')).copy(padded, 0, 0, 32)
+    padded[32] = 0x40
+    padded.writeUInt32BE(7, 33)
+    const signature = signAssertion({ privateKey, authData: padded, rawBody, clientNonce })
+    const assertionB64u = encodeAssertion(signature, padded)
+    expect(() =>
+      appAttest.verifyAssertion({
+        assertionB64u,
+        nonceBytes: clientNonce,
+        rawBody,
+        storedPublicKeyPem: publicKeyPem,
+        storedCounter: 6
+      })
+    ).toThrow(/AT or ED bits/)
+  })
+})
+
+// Cert-chain validity window: we cannot synthesise an Apple-signed leaf,
+// but the registration verifier calls verifyCertChain before any
+// Apple-specific check, and the chain walker enforces both Apple-root
+// termination and the validity window. Constructing a self-signed
+// expired cert and feeding it through verifyRegistration confirms the
+// adapter rejects expired material — the failure path is the chain or
+// validity-window check, both of which raise AppAttestError.
+
+describe('app-attest cert chain validity window', () => {
+  function makeSelfSignedDer({ notBefore, notAfter }: { notBefore: Date; notAfter: Date }): Buffer {
+    // node-forge can both build and PEM-encode a self-signed cert, then
+    // crypto.X509Certificate hands us the DER bytes we'd otherwise need
+    // to write by hand.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const forge = require('node-forge')
+    const keys = forge.pki.rsa.generateKeyPair(2048)
+    const cert = forge.pki.createCertificate()
+    cert.publicKey = keys.publicKey
+    cert.serialNumber = '01'
+    cert.validity.notBefore = notBefore
+    cert.validity.notAfter = notAfter
+    const attrs = [{ name: 'commonName', value: 'test-expired' }]
+    cert.setSubject(attrs)
+    cert.setIssuer(attrs)
+    cert.sign(keys.privateKey, forge.md.sha256.create())
+    const pem = forge.pki.certificateToPem(cert)
+    return Buffer.from(new crypto.X509Certificate(pem).raw)
+  }
+
+  it('rejects an expired cert during verifyRegistration', async () => {
+    const expiredDer = makeSelfSignedDer({
+      notBefore: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000),
+      notAfter: new Date(Date.now() - 24 * 60 * 60 * 1000)
+    })
+    const config = createConfigJestMockComponent({
+      APP_ATTEST_APP_ID: APP_ID,
+      APP_ATTEST_ENV: 'development'
+    })
+    const att = await createAppAttestComponent({ config })
+    const attObj = cborEncode({
+      fmt: 'apple-appattest',
+      attStmt: { x5c: [expiredDer] },
+      authData: Buffer.alloc(55)
+    })
+    expect(() =>
+      att.verifyRegistration({
+        keyIdB64u: Buffer.alloc(32).toString('base64url'),
+        attestationObjectB64u: Buffer.from(attObj).toString('base64url'),
+        challengeBytes: Buffer.from('chal')
+      })
+    ).toThrow(AppAttestError)
+  })
 })
