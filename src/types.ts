@@ -21,6 +21,7 @@ import { IAppVersionsDbComponent } from './adapters/app-versions-db'
 import { IAppAttestComponent } from './adapters/app-attest'
 import { IPlayIntegrityComponent } from './adapters/play-integrity'
 import { IAttestationStateComponent } from './adapters/attestation-state'
+import { IAttestationVerifierComponent } from './adapters/attestation-verifier'
 import { IThirdwebProxyComponent } from './adapters/thirdweb-proxy'
 
 export type GlobalContext = {
@@ -48,6 +49,7 @@ export type BaseComponents = {
   appAttest: IAppAttestComponent
   playIntegrity: IPlayIntegrityComponent
   attestationState: IAttestationStateComponent
+  attestationVerifier: IAttestationVerifierComponent
   thirdwebProxy: IThirdwebProxyComponent
 }
 

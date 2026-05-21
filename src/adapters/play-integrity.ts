@@ -48,8 +48,12 @@ export async function createPlayIntegrityComponent({
     throw new Error('PLAY_INTEGRITY_REQUIRED_VERDICTS must list at least one verdict')
   }
 
-  // The googleapis client picks up GOOGLE_APPLICATION_CREDENTIALS from env.
+  // Service-account credentials come from PLAY_INTEGRITY_SA_JSON: base64 of the
+  // GCP-issued JSON. We avoid the file-path mode entirely because most deploy
+  // environments only expose .env to the application.
+  const credentials = await loadServiceAccountCredentials(config)
   const auth = new google.auth.GoogleAuth({
+    credentials,
     scopes: ['https://www.googleapis.com/auth/playintegrity']
   })
   const client = google.playintegrity({ version: 'v1', auth })
@@ -155,4 +159,29 @@ function decodeFlexibleBase64(s: unknown): Buffer | null {
   } catch {
     return null
   }
+}
+
+// Parses the service-account credentials from PLAY_INTEGRITY_SA_JSON. The env
+// var holds the base64 of the GCP-issued service-account JSON — generate it
+// with `base64 -i sa.json | tr -d '\n'`.
+async function loadServiceAccountCredentials(
+  config: AppComponents['config']
+): Promise<{ client_email: string; private_key: string }> {
+  const raw = await config.requireString('PLAY_INTEGRITY_SA_JSON')
+  let jsonText: string
+  try {
+    jsonText = Buffer.from(raw.trim(), 'base64').toString('utf8')
+  } catch (e: any) {
+    throw new Error(`PLAY_INTEGRITY_SA_JSON is not valid base64: ${e.message || e}`)
+  }
+  let parsed: any
+  try {
+    parsed = JSON.parse(jsonText)
+  } catch (e: any) {
+    throw new Error(`PLAY_INTEGRITY_SA_JSON could not be parsed as JSON: ${e.message || e}`)
+  }
+  if (typeof parsed.client_email !== 'string' || typeof parsed.private_key !== 'string') {
+    throw new Error('PLAY_INTEGRITY_SA_JSON missing client_email or private_key fields')
+  }
+  return { client_email: parsed.client_email, private_key: parsed.private_key }
 }

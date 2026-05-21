@@ -1,14 +1,25 @@
 import { HandlerContextWithPath } from '../../../types'
 
-// Thin proxy in front of Thirdweb's sign-message — the Authorization Bearer
-// JWT is forwarded verbatim, the x-secret-key (server-only) is injected by
-// the thirdweb-proxy adapter. No attestation gate here: platform integrity
-// is reported separately via POST /v1/attest/check.
+// POST /v1/wallets/sign-message — thin proxy to Thirdweb's sign-message, gated
+// by platform attestation. The user's `Authorization: Bearer <jwt>` flows
+// through; the server-only `x-secret-key` is injected by the thirdweb-proxy
+// adapter.
+//
+// Attestation gate: the client must send the standard x-attest-* headers (the
+// same ones consumed by /v1/attest/check). A failed verdict returns 401 with
+// the attestation `code` in the body, so the client can decide whether to
+// retry (e.g. re-enrollment on ATTESTATION_IOS_KEY_NOT_REGISTERED). The
+// "validated once per install version" marker on the client side does NOT
+// remove the per-call attestation here — each sign-message body needs its
+// own assertion bound to those exact bytes.
 export async function signMessageHandler(
-  context: HandlerContextWithPath<'thirdwebProxy' | 'logs', '/v1/wallets/sign-message'>
+  context: HandlerContextWithPath<
+    'thirdwebProxy' | 'attestationVerifier' | 'logs',
+    '/v1/wallets/sign-message'
+  >
 ) {
   const {
-    components: { thirdwebProxy, logs },
+    components: { thirdwebProxy, attestationVerifier, logs },
     request
   } = context
   const logger = logs.getLogger('sign-message')
@@ -20,8 +31,22 @@ export async function signMessageHandler(
 
   const rawBody = Buffer.from(await request.arrayBuffer())
 
+  const outcome = await attestationVerifier.verify({ headers: request.headers, rawBody })
+  if (!outcome.ok) {
+    logger.warn('sign-message blocked by attestation', { code: outcome.code, platform: outcome.platform })
+    return {
+      status: 401,
+      body: {
+        error: outcome.error,
+        code: outcome.code,
+        platform: outcome.platform,
+        ...(outcome.details ? { details: outcome.details } : {})
+      }
+    }
+  }
+
   const upstream = await thirdwebProxy.forwardSignMessage({ authorization, rawBody })
-  logger.info('forwarded', { status: upstream.status })
+  logger.info('forwarded', { status: upstream.status, platform: outcome.platform })
 
   return {
     status: upstream.status,

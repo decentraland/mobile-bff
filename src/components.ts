@@ -23,6 +23,7 @@ import { createAppVersionsDbComponent } from './adapters/app-versions-db'
 import { createAppAttestComponent } from './adapters/app-attest'
 import { createPlayIntegrityComponent } from './adapters/play-integrity'
 import { createAttestationStateComponent } from './adapters/attestation-state'
+import { createAttestationVerifierComponent } from './adapters/attestation-verifier'
 import { createThirdwebProxyComponent } from './adapters/thirdweb-proxy'
 
 // Initialize all the components of the app
@@ -63,6 +64,12 @@ export async function initComponents(): Promise<AppComponents> {
   const appAttest = await createAppAttestComponent({ config })
   const playIntegrity = await createPlayIntegrityComponent({ config })
   const attestationState = await createAttestationStateComponent()
+  const attestationVerifier = await createAttestationVerifierComponent({
+    appAttest,
+    playIntegrity,
+    attestationState,
+    logs
+  })
   const thirdwebProxy = await createThirdwebProxyComponent({ config, fetch, logs })
 
   await instrumentHttpServerWithPromClientRegistry({ metrics, server, config, registry: metrics.registry! })
@@ -88,6 +95,7 @@ export async function initComponents(): Promise<AppComponents> {
     appAttest,
     playIntegrity,
     attestationState,
+    attestationVerifier,
     thirdwebProxy
   }
 }

@@ -332,7 +332,7 @@ Required request headers (same for `/v1/attest/check` and what the iOS/Android p
 | `APP_ATTEST_ENV` | `development` (sandbox-attested keys) or `production` (App Store builds). |
 | `PLAY_INTEGRITY_PACKAGE_NAME` | Android package name (must match the verified token). |
 | `PLAY_INTEGRITY_REQUIRED_VERDICTS` | Comma-separated `deviceRecognitionVerdict` values that must all be present. |
-| `GOOGLE_APPLICATION_CREDENTIALS` | Path to a GCP service-account JSON with the Play Integrity API scope. |
+| `PLAY_INTEGRITY_SA_JSON` | Base64 of the GCP service-account JSON. Generate with `base64 -i sa.json \| tr -d '\n'`. |
 
 ## Database
 
