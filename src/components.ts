@@ -20,6 +20,10 @@ import { createPlaceGroupsDbComponent } from './adapters/place-groups-db'
 import { createCacheComponent } from './adapters/cache'
 import { createDestinationsApiComponent } from './adapters/destinations-api'
 import { createAppVersionsDbComponent } from './adapters/app-versions-db'
+import { createAppAttestComponent } from './adapters/app-attest'
+import { createPlayIntegrityComponent } from './adapters/play-integrity'
+import { createAttestationStateComponent } from './adapters/attestation-state'
+import { createThirdwebProxyComponent } from './adapters/thirdweb-proxy'
 
 // Initialize all the components of the app
 export async function initComponents(): Promise<AppComponents> {
@@ -56,6 +60,10 @@ export async function initComponents(): Promise<AppComponents> {
   const cache = await createCacheComponent({ config })
   const destinationsApi = await createDestinationsApiComponent({ fetch, config, cache, logs })
   const appVersionsDb = await createAppVersionsDbComponent({ pg })
+  const appAttest = await createAppAttestComponent({ config })
+  const playIntegrity = await createPlayIntegrityComponent({ config })
+  const attestationState = await createAttestationStateComponent()
+  const thirdwebProxy = await createThirdwebProxyComponent({ config, fetch, logs })
 
   await instrumentHttpServerWithPromClientRegistry({ metrics, server, config, registry: metrics.registry! })
 
@@ -76,7 +84,11 @@ export async function initComponents(): Promise<AppComponents> {
     placeGroupsDb,
     cache,
     destinationsApi,
-    appVersionsDb
+    appVersionsDb,
+    appAttest,
+    playIntegrity,
+    attestationState,
+    thirdwebProxy
   }
 }
 

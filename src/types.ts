@@ -18,6 +18,10 @@ import { IPlaceGroupsDbComponent } from './adapters/place-groups-db'
 import { ICacheComponent } from './adapters/cache'
 import { IDestinationsApiComponent } from './adapters/destinations-api'
 import { IAppVersionsDbComponent } from './adapters/app-versions-db'
+import { IAppAttestComponent } from './adapters/app-attest'
+import { IPlayIntegrityComponent } from './adapters/play-integrity'
+import { IAttestationStateComponent } from './adapters/attestation-state'
+import { IThirdwebProxyComponent } from './adapters/thirdweb-proxy'
 
 export type GlobalContext = {
   components: BaseComponents
@@ -41,6 +45,10 @@ export type BaseComponents = {
   cache: ICacheComponent
   destinationsApi: IDestinationsApiComponent
   appVersionsDb: IAppVersionsDbComponent
+  appAttest: IAppAttestComponent
+  playIntegrity: IPlayIntegrityComponent
+  attestationState: IAttestationStateComponent
+  thirdwebProxy: IThirdwebProxyComponent
 }
 
 // components used in runtime

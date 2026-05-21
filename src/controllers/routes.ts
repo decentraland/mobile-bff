@@ -52,6 +52,14 @@ import { deletePlaceGroupHandler } from "./handlers/backoffice/place-groups/dele
 import { getAppVersionsHandler } from "./handlers/app-versions/get-app-versions-handler"
 import { updateAppVersionsHandler } from "./handlers/backoffice/app-versions/update-app-versions-handler"
 
+// Wallets (Thirdweb thin proxy)
+import { signMessageHandler } from "./handlers/wallets/sign-message-handler"
+
+// Attestation (App Attest / Play Integrity)
+import { attestIosChallengeHandler } from "./handlers/attest/challenge-handler"
+import { attestIosRegisterHandler } from "./handlers/attest/register-handler"
+import { attestCheckHandler } from "./handlers/attest/check-handler"
+
 // We return the entire router because it will be easier to test than a whole server
 export async function setupRouter(globalContext: GlobalContext): Promise<Router<GlobalContext>> {
   const router = new Router<GlobalContext>()
@@ -98,6 +106,18 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
   // Only active when TEST_AUTH_EMAIL is configured.
   router.post("/test-auth/send-code", testAuthSendCodeHandler)
   router.post("/test-auth/verify-code", testAuthVerifyCodeHandler)
+
+  // ============== WALLETS / ATTESTATION ==============
+  // Thirdweb sign-message thin proxy (no gate — attestation reported separately).
+  router.post("/v1/wallets/sign-message", signMessageHandler)
+
+  // iOS App Attest enrollment ceremony.
+  router.post("/v1/attest/ios/challenge", attestIosChallengeHandler)
+  router.post("/v1/attest/ios/register", attestIosRegisterHandler)
+
+  // Cross-platform attestation verdict endpoint — always 200, body carries
+  // outcome. Designed to be consumed by a future analytics service.
+  router.post("/v1/attest/check", attestCheckHandler)
 
   // ============== BACKOFFICE ENDPOINTS ==============
   // require signed fetch + ALLOWED_USERS
