@@ -75,7 +75,9 @@ export async function createAppAttestComponent({
   config
 }: Pick<AppComponents, 'config'>): Promise<IAppAttestComponent> {
   const expectedAppId = await config.requireString('APP_ATTEST_APP_ID')
-  const envRaw = (await config.getString('APP_ATTEST_ENV')) ?? 'development'
+  const envRaw =
+    (await config.getString('APP_ATTEST_ENV')) ??
+    ((await config.getString('ENV')) === 'prd' ? 'production' : 'development')
   if (envRaw !== 'development' && envRaw !== 'production') {
     throw new Error(`APP_ATTEST_ENV must be 'development' or 'production', got '${envRaw}'`)
   }
