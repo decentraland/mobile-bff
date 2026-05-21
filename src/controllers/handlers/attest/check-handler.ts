@@ -1,6 +1,6 @@
 import { HandlerContextWithPath } from '../../../types'
 
-// POST /v1/attest/check — non-gating verdict endpoint.
+// POST /attest/check — non-gating verdict endpoint.
 //
 // The client sends the SAME headers + raw body it uses for sign-message; we
 // run the platform attestation verification and report the outcome in the
@@ -18,7 +18,7 @@ import { HandlerContextWithPath } from '../../../types'
 //     elapsed_ms: number
 //   }
 export async function attestCheckHandler(
-  context: HandlerContextWithPath<'attestationVerifier', '/v1/attest/check'>
+  context: HandlerContextWithPath<'attestationVerifier', '/attest/check'>
 ) {
   const {
     components: { attestationVerifier },

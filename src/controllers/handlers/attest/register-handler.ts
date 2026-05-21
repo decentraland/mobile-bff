@@ -7,12 +7,12 @@ type RegisterBody = {
   challenge?: unknown
 }
 
-// POST /v1/attest/ios/register — finishes the App Attest enrollment ceremony:
+// POST /attest/ios/register — finishes the App Attest enrollment ceremony:
 // verifies the attestation object against the previously-issued challenge,
 // extracts the leaf public key, and stores it under key_id for future
 // assertion checks.
 export async function attestIosRegisterHandler(
-  context: HandlerContextWithPath<'appAttest' | 'attestationState' | 'logs', '/v1/attest/ios/register'>
+  context: HandlerContextWithPath<'appAttest' | 'attestationState' | 'logs', '/attest/ios/register'>
 ) {
   const {
     components: { appAttest, attestationState, logs },
@@ -32,7 +32,7 @@ export async function attestIosRegisterHandler(
     return { status: 400, body: { error: 'key_id, attestation_object, challenge are required strings' } }
   }
 
-  const challengeBytes = attestationState.consumeChallenge(challenge)
+  const challengeBytes = await attestationState.consumeChallenge(challenge)
   if (!challengeBytes) {
     return { status: 400, body: { error: 'challenge unknown or expired' } }
   }
@@ -43,7 +43,7 @@ export async function attestIosRegisterHandler(
       attestationObjectB64u: attestation_object,
       challengeBytes
     })
-    attestationState.registerKey(key_id, publicKeyPem)
+    await attestationState.registerKey(key_id, publicKeyPem)
     logger.info('ios key registered', { key_id_prefix: key_id.slice(0, 8) })
     return { status: 200, body: { registered: true } }
   } catch (e: any) {

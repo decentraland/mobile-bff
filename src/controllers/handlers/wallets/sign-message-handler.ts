@@ -1,21 +1,21 @@
 import { HandlerContextWithPath } from '../../../types'
 
-// POST /v1/wallets/sign-message — thin proxy to Thirdweb's sign-message, gated
-// by platform attestation. The user's `Authorization: Bearer <jwt>` flows
+// POST /wallets/sign-message — thin proxy to Thirdweb's sign-message, gated by
+// platform attestation. The user's `Authorization: Bearer <jwt>` flows
 // through; the server-only `x-secret-key` is injected by the thirdweb-proxy
 // adapter.
 //
 // Attestation gate: the client must send the standard x-attest-* headers (the
-// same ones consumed by /v1/attest/check). A failed verdict returns 401 with
-// the attestation `code` in the body, so the client can decide whether to
-// retry (e.g. re-enrollment on ATTESTATION_IOS_KEY_NOT_REGISTERED). The
-// "validated once per install version" marker on the client side does NOT
-// remove the per-call attestation here — each sign-message body needs its
-// own assertion bound to those exact bytes.
+// same ones consumed by /attest/check). A failed verdict returns 401 with the
+// attestation `code` in the body, so the client can decide whether to retry
+// (e.g. re-enrollment on ATTESTATION_IOS_KEY_NOT_REGISTERED). The "validated
+// once per install version" marker on the client side does NOT remove the
+// per-call attestation here — each sign-message body needs its own assertion
+// bound to those exact bytes.
 export async function signMessageHandler(
   context: HandlerContextWithPath<
     'thirdwebProxy' | 'attestationVerifier' | 'logs',
-    '/v1/wallets/sign-message'
+    '/wallets/sign-message'
   >
 ) {
   const {
@@ -33,7 +33,11 @@ export async function signMessageHandler(
 
   const outcome = await attestationVerifier.verify({ headers: request.headers, rawBody })
   if (!outcome.ok) {
-    logger.warn('sign-message blocked by attestation', { code: outcome.code, platform: outcome.platform })
+    logger.warn('sign-message blocked by attestation', {
+      code: outcome.code,
+      platform: outcome.platform,
+      key_id_prefix: outcome.keyIdPrefix ?? ''
+    })
     return {
       status: 401,
       body: {
@@ -46,7 +50,11 @@ export async function signMessageHandler(
   }
 
   const upstream = await thirdwebProxy.forwardSignMessage({ authorization, rawBody })
-  logger.info('forwarded', { status: upstream.status, platform: outcome.platform })
+  logger.info('forwarded', {
+    status: upstream.status,
+    platform: outcome.platform,
+    key_id_prefix: outcome.keyIdPrefix ?? ''
+  })
 
   return {
     status: upstream.status,

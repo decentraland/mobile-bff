@@ -1,8 +1,8 @@
-// Shared platform-attestation verifier — used by both /v1/attest/check (which
-// always returns 200 with the verdict in the body) and the /v1/wallets/sign-message
+// Shared platform-attestation verifier — used by both /attest/check (which
+// always returns 200 with the verdict in the body) and the /wallets/sign-message
 // gate (which returns 401 on a failed verdict).
 //
-// Outcome shape mirrors the response body of /v1/attest/check so analytics
+// Outcome shape mirrors the response body of /attest/check so analytics
 // downstream can parse the same fields whether they come from the report
 // endpoint or from a sign-message failure.
 
@@ -55,30 +55,26 @@ export async function createAttestationVerifierComponent({
         return {
           ok: false,
           platform: 'ios',
-          code: 'ATTESTATION_IOS_BAD_ASSERTION',
+          code: 'ATTESTATION_IOS_MISSING_HEADERS',
           error: 'x-attest-key-id, x-attest-assertion, x-attest-nonce all required'
         }
       }
-      const stored = attestationState.getRegisteredKey(keyIdB64u)
+      const keyIdPrefix = keyIdB64u.slice(0, 8)
+      const stored = await attestationState.getRegisteredKey(keyIdB64u)
       if (!stored) {
         return {
           ok: false,
           platform: 'ios',
           code: 'ATTESTATION_IOS_KEY_NOT_REGISTERED',
-          error: 'key_id has not completed registration — call /v1/attest/ios/register first'
+          error: 'key_id has not completed registration — call /attest/ios/register first',
+          keyIdPrefix
         }
       }
-      let nonceBytes: Buffer
-      try {
-        nonceBytes = Buffer.from(nonceB64u, 'base64url')
-      } catch {
-        return {
-          ok: false,
-          platform: 'ios',
-          code: 'ATTESTATION_IOS_BAD_ASSERTION',
-          error: 'x-attest-nonce is not base64url'
-        }
-      }
+      // Buffer.from(..., 'base64url') does not throw on malformed input — it
+      // silently truncates. We rely on the downstream signature check to
+      // catch bad nonces, since a corrupted nonce will produce the wrong
+      // digest and verifyAssertion will surface a BAD_SIGNATURE.
+      const nonceBytes = Buffer.from(nonceB64u, 'base64url')
       try {
         const { newCounter } = appAttest.verifyAssertion({
           assertionB64u,
@@ -87,16 +83,26 @@ export async function createAttestationVerifierComponent({
           storedPublicKeyPem: stored.publicKeyPem,
           storedCounter: stored.counter
         })
-        attestationState.updateKeyCounter(keyIdB64u, newCounter)
-        const keyIdPrefix = keyIdB64u.slice(0, 8)
+        const updated = await attestationState.updateKeyCounterIfGreater(keyIdB64u, newCounter)
+        if (!updated) {
+          // Lost the race: a concurrent request advanced the counter past
+          // ours, which means our (older) assertion is a replay.
+          logger.warn('ios attest concurrent replay', { key_id_prefix: keyIdPrefix })
+          return {
+            ok: false,
+            platform: 'ios',
+            code: 'ATTESTATION_IOS_COUNTER_REPLAY',
+            error: 'counter advanced by a concurrent request',
+            keyIdPrefix
+          }
+        }
         logger.info('ios attest ok', { key_id_prefix: keyIdPrefix })
         return { ok: true, platform: 'ios', code: 'OK', keyIdPrefix }
       } catch (e: any) {
-        const isReplay = e instanceof AppAttestError && /counter replay/.test(e.message)
-        const code = isReplay ? 'ATTESTATION_IOS_COUNTER_REPLAY' : 'ATTESTATION_IOS_BAD_ASSERTION'
+        const code = mapAppAttestErrorToCode(e)
         const error: string = e?.message || String(e)
-        logger.warn('ios attest failed', { key_id_prefix: keyIdB64u.slice(0, 8), code, error })
-        return { ok: false, platform: 'ios', code, error }
+        logger.warn('ios attest failed', { key_id_prefix: keyIdPrefix, code, error })
+        return { ok: false, platform: 'ios', code, error, keyIdPrefix }
       }
     }
 
@@ -135,4 +141,13 @@ export async function createAttestationVerifierComponent({
   }
 
   return { verify }
+}
+
+function mapAppAttestErrorToCode(e: unknown): string {
+  if (!(e instanceof AppAttestError)) return 'ATTESTATION_IOS_BAD_ASSERTION'
+  const msg = e.message
+  if (/counter replay/.test(msg)) return 'ATTESTATION_IOS_COUNTER_REPLAY'
+  if (/not valid CBOR/.test(msg)) return 'ATTESTATION_IOS_BAD_CBOR'
+  if (/signature invalid/.test(msg)) return 'ATTESTATION_IOS_BAD_SIGNATURE'
+  return 'ATTESTATION_IOS_BAD_ASSERTION'
 }

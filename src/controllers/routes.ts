@@ -108,16 +108,17 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
   router.post("/test-auth/verify-code", testAuthVerifyCodeHandler)
 
   // ============== WALLETS / ATTESTATION ==============
-  // Thirdweb sign-message thin proxy (no gate — attestation reported separately).
-  router.post("/v1/wallets/sign-message", signMessageHandler)
+  // Thirdweb sign-message thin proxy. Gated by platform attestation: a failed
+  // verdict returns 401 with the attestation code in the body.
+  router.post("/wallets/sign-message", signMessageHandler)
 
   // iOS App Attest enrollment ceremony.
-  router.post("/v1/attest/ios/challenge", attestIosChallengeHandler)
-  router.post("/v1/attest/ios/register", attestIosRegisterHandler)
+  router.post("/attest/ios/challenge", attestIosChallengeHandler)
+  router.post("/attest/ios/register", attestIosRegisterHandler)
 
   // Cross-platform attestation verdict endpoint — always 200, body carries
   // outcome. Designed to be consumed by a future analytics service.
-  router.post("/v1/attest/check", attestCheckHandler)
+  router.post("/attest/check", attestCheckHandler)
 
   // ============== BACKOFFICE ENDPOINTS ==============
   // require signed fetch + ALLOWED_USERS

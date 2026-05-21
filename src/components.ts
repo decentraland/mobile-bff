@@ -63,7 +63,7 @@ export async function initComponents(): Promise<AppComponents> {
   const appVersionsDb = await createAppVersionsDbComponent({ pg })
   const appAttest = await createAppAttestComponent({ config })
   const playIntegrity = await createPlayIntegrityComponent({ config })
-  const attestationState = await createAttestationStateComponent()
+  const attestationState = await createAttestationStateComponent({ pg })
   const attestationVerifier = await createAttestationVerifierComponent({
     appAttest,
     playIntegrity,

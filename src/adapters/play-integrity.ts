@@ -15,7 +15,11 @@ import { google, playintegrity_v1 } from 'googleapis'
 
 import { AppComponents } from '../types'
 
-const FRESHNESS_MS = 60 * 1000
+// Five minutes of clock skew tolerance. The token is body-bound by SHA256, so
+// a stale replay still has to match the exact request body; the freshness
+// window only limits opportunistic re-use on mobile networks with slow
+// round-trips.
+const FRESHNESS_MS = 5 * 60 * 1000
 
 export class PlayIntegrityError extends Error {
   code: string
@@ -39,7 +43,7 @@ export async function createPlayIntegrityComponent({
   config
 }: Pick<AppComponents, 'config'>): Promise<IPlayIntegrityComponent> {
   const packageName = await config.requireString('PLAY_INTEGRITY_PACKAGE_NAME')
-  const requiredVerdictsRaw = (await config.getString('PLAY_INTEGRITY_REQUIRED_VERDICTS')) ?? 'MEETS_DEVICE_INTEGRITY'
+  const requiredVerdictsRaw = (await config.getString('PLAY_INTEGRITY_REQUIRED_VERDICTS')) ?? 'MEETS_STRONG_INTEGRITY'
   const requiredVerdicts = requiredVerdictsRaw
     .split(',')
     .map((s) => s.trim())
@@ -153,12 +157,10 @@ export async function createPlayIntegrityComponent({
 
 function decodeFlexibleBase64(s: unknown): Buffer | null {
   if (typeof s !== 'string' || s.length === 0) return null
+  // Buffer.from with 'base64' tolerates both standard and url-safe alphabets
+  // once we normalize the url-safe substitutions back.
   const normalized = s.replace(/-/g, '+').replace(/_/g, '/')
-  try {
-    return Buffer.from(normalized, 'base64')
-  } catch {
-    return null
-  }
+  return Buffer.from(normalized, 'base64')
 }
 
 // Parses the service-account credentials from PLAY_INTEGRITY_SA_JSON. The env

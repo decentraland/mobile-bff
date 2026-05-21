@@ -285,22 +285,24 @@ Ban types:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/deletion-request` | Request account deletion (signedFetch) |
-| GET | `/deletion-status` | Get deletion request status (signedFetch) |
-| DELETE | `/deletion-request` | Cancel deletion request (signedFetch) |
+| POST | `/deletion` | Request account deletion (signedFetch) |
+| GET | `/deletion` | Get deletion request status (signedFetch) |
+| DELETE | `/deletion` | Cancel deletion request (signedFetch) |
 
 ### Wallets & Attestation
 
-Thin proxy in front of Thirdweb's `POST /v1/wallets/sign-message` plus a separate platform-attestation report endpoint. The proxy forwards the user's `Authorization: Bearer <jwt>` verbatim and injects the server-only `x-secret-key`. **Attestation does NOT gate sign-message** — clients should call `/v1/attest/check` fire-and-forget so an analytics consumer can compute pass rates.
+Thin proxy in front of Thirdweb's `POST /v1/wallets/sign-message` plus a platform-attestation report endpoint. The proxy forwards the user's `Authorization: Bearer <jwt>` verbatim and injects the server-only `x-secret-key`.
+
+**Attestation gates sign-message**: the client must send the standard `x-attest-*` headers (the same ones consumed by `/attest/check`). A failed verdict returns HTTP 401 with the attestation `code` in the body so the client can decide whether to retry (e.g. re-enroll on `ATTESTATION_IOS_KEY_NOT_REGISTERED`). `/attest/check` always returns 200 and is intended as an analytics report endpoint.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/v1/wallets/sign-message` | Thirdweb sign-message proxy. Forwards `Authorization` header and JSON body. |
-| POST | `/v1/attest/ios/challenge` | Issue a random one-shot challenge for App Attest enrollment. |
-| POST | `/v1/attest/ios/register` | Finish App Attest enrollment: verify the attestation object and persist the leaf public key. |
-| POST | `/v1/attest/check` | Verify the platform attestation headers + body. **Always 200**; outcome is in the response body. |
+| POST | `/wallets/sign-message` | Thirdweb sign-message proxy. Gated by platform attestation; 401 on failure. |
+| POST | `/attest/ios/challenge` | Issue a random one-shot challenge for App Attest enrollment. |
+| POST | `/attest/ios/register` | Finish App Attest enrollment: verify the attestation object and persist the leaf public key. |
+| POST | `/attest/check` | Verify the platform attestation headers + body. **Always 200**; outcome is in the response body. |
 
-`/v1/attest/check` response shape:
+`/attest/check` response shape:
 
 ```json
 {
@@ -312,9 +314,13 @@ Thin proxy in front of Thirdweb's `POST /v1/wallets/sign-message` plus a separat
 }
 ```
 
-On failure, `ok=false` and `code` carries one of `ATTESTATION_IOS_BAD_ASSERTION`, `ATTESTATION_IOS_KEY_NOT_REGISTERED`, `ATTESTATION_IOS_COUNTER_REPLAY`, `ATTESTATION_ANDROID_INVALID_TOKEN`, `ATTESTATION_ANDROID_HASH_MISMATCH`, `ATTESTATION_ANDROID_TOKEN_STALE`, `ATTESTATION_ANDROID_VERDICT_FAILED`, `ATTESTATION_ANDROID_PACKAGE_MISMATCH`, `ATTESTATION_UNKNOWN_PLATFORM`, `ATTESTATION_MISSING`.
+On failure, `ok=false` and `code` carries one of:
 
-Required request headers (same for `/v1/attest/check` and what the iOS/Android plugins compute):
+- iOS: `ATTESTATION_IOS_MISSING_HEADERS`, `ATTESTATION_IOS_KEY_NOT_REGISTERED`, `ATTESTATION_IOS_BAD_CBOR`, `ATTESTATION_IOS_BAD_SIGNATURE`, `ATTESTATION_IOS_BAD_ASSERTION`, `ATTESTATION_IOS_COUNTER_REPLAY`
+- Android: `ATTESTATION_ANDROID_INVALID_TOKEN`, `ATTESTATION_ANDROID_HASH_MISMATCH`, `ATTESTATION_ANDROID_TOKEN_STALE`, `ATTESTATION_ANDROID_VERDICT_FAILED`, `ATTESTATION_ANDROID_PACKAGE_MISMATCH`
+- Generic: `ATTESTATION_UNKNOWN_PLATFORM`, `ATTESTATION_MISSING`
+
+Required request headers (same for `/attest/check`, `/wallets/sign-message`, and what the iOS/Android plugins compute):
 
 - iOS: `x-attest-platform: ios`, `x-attest-key-id`, `x-attest-assertion`, `x-attest-nonce` (all base64url)
 - Android: `x-attest-platform: android`, `x-attest-integrity-token` (raw Play Integrity token)
@@ -328,6 +334,7 @@ Required request headers (same for `/v1/attest/check` and what the iOS/Android p
 | `SLACK_WEBHOOK_URL` | Webhook for deletion request notifications |
 | `THIRDWEB_SECRET_KEY` | Server-only Thirdweb API key for the sign-message proxy. |
 | `THIRDWEB_CLIENT_ID` | Thirdweb client id (sent alongside the secret key). |
+| `THIRDWEB_API_BASE_URL` | Optional upstream override; defaults to the public Thirdweb API. |
 | `APP_ATTEST_APP_ID` | Apple appId for the iOS app, in the form `<TEAM_ID>.<bundle.id>`. |
 | `APP_ATTEST_ENV` | `development` (sandbox-attested keys) or `production` (App Store builds). |
 | `PLAY_INTEGRITY_PACKAGE_NAME` | Android package name (must match the verified token). |
