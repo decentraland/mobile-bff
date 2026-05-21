@@ -110,9 +110,7 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
 
   // ============== WALLETS / ATTESTATION ==============
   // Thirdweb sign-message thin proxy. Gated by an attestation session
-  // token obtained from POST /attest/session — the token is NOT body-bound,
-  // see attestation-body-binding.patch in the repo root for the upgrade
-  // path that restores per-request binding.
+  // token obtained from POST /attest/session.
   router.post("/wallets/sign-message", signMessageHandler)
 
   // iOS App Attest enrollment ceremony.

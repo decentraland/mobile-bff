@@ -1,12 +1,7 @@
 // Session tokens issued by POST /attest/session after a successful platform
 // attestation. The token is replayed on subsequent /wallets/sign-message
-// calls until it expires — it carries NO body binding.
-//
-// This is a deliberate simplification vs the per-request attestation gate
-// the codebase used to enforce: it cuts Play Integrity calls dramatically
-// (one verdict per session instead of per request) at the cost of replay
-// safety. See `attestation-body-binding.patch` in the repo root for the
-// upgrade path that restores per-request binding.
+// calls until it expires. One Play Integrity / App Attest verdict per
+// session instead of per request.
 //
 // Token format: `<payloadB64u>.<tagB64u>`
 //   payloadB64u = base64url(JSON.stringify({ v, platform, iat, exp, jti }))

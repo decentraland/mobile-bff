@@ -8,14 +8,6 @@ import { RL_SIGN_MESSAGE, withFallbackCap } from '../../../logic/rate-limit-rule
 // The user's `Authorization: Bearer <jwt>` flows through to Thirdweb; the
 // server-only `x-secret-key` is injected by the thirdweb-proxy adapter.
 //
-// SECURITY NOTE: the session token is NOT bound to the request body.
-// Anyone with a valid (non-expired) token can sign arbitrary messages
-// with this wallet's bearer JWT until the token expires. This is a
-// deliberate simplification vs the per-request attestation gate the
-// codebase used to enforce — see `attestation-body-binding.patch` in the
-// repo root for the upgrade path that restores per-request body
-// binding.
-//
 // Rate-limited per IP. Cheap relative to attestation but the upstream
 // Thirdweb call is paid and slow, so the cap stays.
 export async function signMessageHandler(
