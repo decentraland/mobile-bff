@@ -2,31 +2,30 @@ import { HandlerContextWithPath } from '../../../types'
 import { clientKeyFromHeaders } from '../../../adapters/rate-limiter'
 import { RL_SIGN_MESSAGE, withFallbackCap } from '../../../logic/rate-limit-rules'
 
-// POST /wallets/sign-message — thin proxy to Thirdweb's sign-message, gated by
-// platform attestation. The user's `Authorization: Bearer <jwt>` flows
-// through; the server-only `x-secret-key` is injected by the thirdweb-proxy
-// adapter.
+// POST /wallets/sign-message — thin proxy to Thirdweb's sign-message,
+// gated by an attestation session token issued by POST /attest/session.
 //
-// Attestation gate: the client must send the standard x-attest-* headers (the
-// same ones consumed by /attest/check). A failed verdict returns 401 with the
-// attestation `code` in the body, so the client can decide whether to retry
-// (e.g. re-enrollment on ATTESTATION_IOS_KEY_NOT_REGISTERED). The "validated
-// once per install version" marker on the client side does NOT remove the
-// per-call attestation here — each sign-message body needs its own assertion
-// bound to those exact bytes.
+// The user's `Authorization: Bearer <jwt>` flows through to Thirdweb; the
+// server-only `x-secret-key` is injected by the thirdweb-proxy adapter.
 //
-// Rate limited per IP. The attestation gate already burns one paid upstream
-// call (Play Integrity / verifyAssertion + CAS write) per attempt, so even
-// failed sign-messages consume real resources; cap before we even look at
-// the headers.
+// SECURITY NOTE: the session token is NOT bound to the request body.
+// Anyone with a valid (non-expired) token can sign arbitrary messages
+// with this wallet's bearer JWT until the token expires. This is a
+// deliberate simplification vs the per-request attestation gate the
+// codebase used to enforce — see `attestation-body-binding.patch` in the
+// repo root for the upgrade path that restores per-request body
+// binding.
+//
+// Rate-limited per IP. Cheap relative to attestation but the upstream
+// Thirdweb call is paid and slow, so the cap stays.
 export async function signMessageHandler(
   context: HandlerContextWithPath<
-    'thirdwebProxy' | 'attestationVerifier' | 'rateLimiter' | 'logs',
+    'thirdwebProxy' | 'attestationSession' | 'rateLimiter' | 'logs',
     '/wallets/sign-message'
   >
 ) {
   const {
-    components: { thirdwebProxy, attestationVerifier, rateLimiter, logs },
+    components: { thirdwebProxy, attestationSession, rateLimiter, logs },
     request
   } = context
   const logger = logs.getLogger('sign-message')
@@ -38,10 +37,9 @@ export async function signMessageHandler(
     'wallets:sign-message'
   )
   if (!rl.allowed) {
-    const retryHeaders: Record<string, string> = { 'Retry-After': String(rl.retryAfterSec) }
     return {
       status: 429,
-      headers: retryHeaders,
+      headers: { 'Retry-After': String(rl.retryAfterSec) },
       body: { error: 'rate limit exceeded' }
     }
   }
@@ -59,31 +57,34 @@ export async function signMessageHandler(
     return { status: 401, body: { error: 'missing Authorization: Bearer <jwt>' } }
   }
 
-  const rawBody = Buffer.from(await request.arrayBuffer())
-
-  const outcome = await attestationVerifier.verify({ headers: request.headers, rawBody })
-  if (!outcome.ok) {
-    logger.warn('sign-message blocked by attestation', {
-      code: outcome.code,
-      platform: outcome.platform,
-      key_id_prefix: outcome.keyIdPrefix ?? ''
-    })
+  const sessionToken = request.headers.get('x-attest-session') || ''
+  if (!sessionToken) {
     return {
       status: 401,
       body: {
-        error: outcome.error,
-        code: outcome.code,
-        platform: outcome.platform,
-        ...(outcome.details ? { details: outcome.details } : {})
+        error: 'missing x-attest-session header — obtain one from POST /attest/session',
+        code: 'ATTESTATION_SESSION_MISSING'
+      }
+    }
+  }
+  const verification = attestationSession.verify(sessionToken)
+  if (!verification.ok) {
+    logger.warn('sign-message blocked by session token', { code: verification.code ?? '' })
+    return {
+      status: 401,
+      body: {
+        error: verification.error,
+        code: verification.code
       }
     }
   }
 
+  const rawBody = Buffer.from(await request.arrayBuffer())
   const upstream = await thirdwebProxy.forwardSignMessage({ authorization, rawBody })
   logger.info('forwarded', {
     status: upstream.status,
-    platform: outcome.platform,
-    key_id_prefix: outcome.keyIdPrefix ?? ''
+    platform: verification.payload?.platform ?? '',
+    jti: verification.payload?.jti ?? ''
   })
 
   const responseHeaders: Record<string, string> | undefined = upstream.contentType

@@ -1,32 +1,34 @@
 import { signMessageHandler } from '../../src/controllers/handlers/wallets/sign-message-handler'
 import { createThirdwebProxyJestMockComponent } from '../mocks/thirdweb-proxy-mock'
-import { createAttestationVerifierJestMockComponent } from '../mocks/attestation-verifier-mock'
+import { createAttestationSessionJestMockComponent } from '../mocks/attestation-session-mock'
 import { createRateLimiterJestMockComponent } from '../mocks/rate-limiter-mock'
 import { createLogsMockComponent } from '../mocks/logs-mock'
 
 describe('sign-message-handler', () => {
   let mockProxy: ReturnType<typeof createThirdwebProxyJestMockComponent>
-  let mockVerifier: ReturnType<typeof createAttestationVerifierJestMockComponent>
+  let mockSession: ReturnType<typeof createAttestationSessionJestMockComponent>
   let mockRateLimiter: ReturnType<typeof createRateLimiterJestMockComponent>
   let mockLogs: ReturnType<typeof createLogsMockComponent>
 
   beforeEach(() => {
     mockProxy = createThirdwebProxyJestMockComponent()
-    mockVerifier = createAttestationVerifierJestMockComponent()
+    mockSession = createAttestationSessionJestMockComponent()
     mockRateLimiter = createRateLimiterJestMockComponent()
     mockLogs = createLogsMockComponent()
   })
 
   function createContext({
     authorization = 'Bearer test-jwt',
+    sessionToken = 'session.token' as string | null,
     body = '{"chain":"polygon","message":"hello"}'
-  }: { authorization?: string | null; body?: string } = {}) {
+  }: { authorization?: string | null; sessionToken?: string | null; body?: string } = {}) {
     const headersMap = new Map<string, string>()
     if (authorization !== null) headersMap.set('authorization', authorization)
+    if (sessionToken !== null) headersMap.set('x-attest-session', sessionToken)
     return {
       components: {
         thirdwebProxy: mockProxy,
-        attestationVerifier: mockVerifier,
+        attestationSession: mockSession,
         rateLimiter: mockRateLimiter,
         logs: mockLogs
       },
@@ -40,13 +42,13 @@ describe('sign-message-handler', () => {
   }
 
   describe('when rate limited', () => {
-    it('returns 429 with Retry-After before touching the verifier or proxy', async () => {
+    it('returns 429 with Retry-After before touching session or proxy', async () => {
       mockRateLimiter.check.mockReturnValue({ allowed: false, retryAfterSec: 42 })
       const ctx = createContext()
       const res = await signMessageHandler(ctx as any)
       expect(res.status).toBe(429)
       expect((res.headers as any)?.['Retry-After']).toBe('42')
-      expect(mockVerifier.verify).not.toHaveBeenCalled()
+      expect(mockSession.verify).not.toHaveBeenCalled()
       expect(mockProxy.forwardSignMessage).not.toHaveBeenCalled()
     })
   })
@@ -59,10 +61,10 @@ describe('sign-message-handler', () => {
       expect((res.body as any).error).toMatch(/Authorization: Bearer/i)
     })
 
-    it('does not call the verifier or proxy', async () => {
+    it('does not call the session verifier or proxy', async () => {
       const ctx = createContext({ authorization: null })
       await signMessageHandler(ctx as any)
-      expect(mockVerifier.verify).not.toHaveBeenCalled()
+      expect(mockSession.verify).not.toHaveBeenCalled()
       expect(mockProxy.forwardSignMessage).not.toHaveBeenCalled()
     })
   })
@@ -75,47 +77,43 @@ describe('sign-message-handler', () => {
     })
   })
 
-  describe('when attestation fails', () => {
-    beforeEach(() => {
-      mockVerifier.verify.mockResolvedValue({
-        ok: false,
-        platform: 'ios',
-        code: 'ATTESTATION_IOS_KEY_NOT_REGISTERED',
-        error: 'key not registered',
-        keyIdPrefix: 'abcd1234'
-      })
+  describe('when session token header is missing', () => {
+    it('returns 401 with ATTESTATION_SESSION_MISSING', async () => {
+      const ctx = createContext({ sessionToken: null })
+      const res = await signMessageHandler(ctx as any)
+      expect(res.status).toBe(401)
+      expect((res.body as any).code).toBe('ATTESTATION_SESSION_MISSING')
+      expect(mockProxy.forwardSignMessage).not.toHaveBeenCalled()
     })
+  })
 
-    it('returns 401 with attestation code in body', async () => {
+  describe('when the session token is invalid', () => {
+    it('returns 401 with the verifier-supplied code', async () => {
+      mockSession.verify.mockReturnValue({
+        ok: false,
+        code: 'ATTESTATION_SESSION_EXPIRED',
+        error: 'token expired'
+      })
       const ctx = createContext()
       const res = await signMessageHandler(ctx as any)
       expect(res.status).toBe(401)
-      expect((res.body as any).code).toBe('ATTESTATION_IOS_KEY_NOT_REGISTERED')
-      expect((res.body as any).platform).toBe('ios')
-      expect((res.body as any).error).toBe('key not registered')
+      expect((res.body as any).code).toBe('ATTESTATION_SESSION_EXPIRED')
+      expect((res.body as any).error).toBe('token expired')
     })
 
     it('does not call the proxy', async () => {
+      mockSession.verify.mockReturnValue({
+        ok: false,
+        code: 'ATTESTATION_SESSION_BAD_SIGNATURE',
+        error: 'tag does not match'
+      })
       const ctx = createContext()
       await signMessageHandler(ctx as any)
       expect(mockProxy.forwardSignMessage).not.toHaveBeenCalled()
     })
-
-    it('forwards platform-specific details when present', async () => {
-      mockVerifier.verify.mockResolvedValue({
-        ok: false,
-        platform: 'android',
-        code: 'ATTESTATION_ANDROID_VERDICT_FAILED',
-        error: 'bad verdict',
-        details: { missing: ['MEETS_STRONG_INTEGRITY'] }
-      })
-      const ctx = createContext()
-      const res = await signMessageHandler(ctx as any)
-      expect((res.body as any).details).toEqual({ missing: ['MEETS_STRONG_INTEGRITY'] })
-    })
   })
 
-  describe('when attestation passes', () => {
+  describe('when session token is valid', () => {
     it('forwards the request to thirdweb proxy and returns its response', async () => {
       const ctx = createContext({ body: '{"foo":"bar"}' })
       const res = await signMessageHandler(ctx as any)
@@ -136,11 +134,12 @@ describe('sign-message-handler', () => {
       expect(res.headers).toEqual({ 'Content-Type': 'application/json' })
     })
 
-    it('passes the raw body to the attestation verifier', async () => {
+    it('does NOT pass the body to the session verifier (no body binding)', async () => {
       const ctx = createContext({ body: '{"hello":"world"}' })
       await signMessageHandler(ctx as any)
-      const rawBody = mockVerifier.verify.mock.calls[0][0].rawBody
-      expect(rawBody.toString('utf8')).toBe('{"hello":"world"}')
+      // The whole point of moving to a session token is that verification
+      // depends only on the token itself, not on the request body.
+      expect(mockSession.verify).toHaveBeenCalledWith('session.token')
     })
   })
 

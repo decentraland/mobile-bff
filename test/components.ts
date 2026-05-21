@@ -23,6 +23,12 @@ export const test = createRunner<TestComponents>({
 async function initComponents(): Promise<TestComponents> {
   // Use test database
   process.env.PG_COMPONENT_PSQL_DATABASE = 'mobile_test'
+  // Attestation session secret: production deploys must set their own, but
+  // the integration test runner needs *some* value that passes the 32-char
+  // length check at startup. This deterministic test value is fine because
+  // the integration tests don't exercise the /attest/session token flow.
+  process.env.ATTESTATION_SESSION_SECRET =
+    process.env.ATTESTATION_SESSION_SECRET || 'test-attestation-session-secret-for-integration-only'
 
   const components = await originalInitComponents()
 

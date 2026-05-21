@@ -24,6 +24,7 @@ import { createAppAttestComponent } from './adapters/app-attest'
 import { createPlayIntegrityComponent } from './adapters/play-integrity'
 import { createAttestationStateComponent } from './adapters/attestation-state'
 import { createAttestationVerifierComponent } from './adapters/attestation-verifier'
+import { createAttestationSessionComponent } from './adapters/attestation-session'
 import { createThirdwebProxyComponent } from './adapters/thirdweb-proxy'
 import { createRateLimiterComponent } from './adapters/rate-limiter'
 
@@ -72,6 +73,7 @@ export async function initComponents(): Promise<AppComponents> {
     logs,
     metrics
   })
+  const attestationSession = await createAttestationSessionComponent({ config })
   const thirdwebProxy = await createThirdwebProxyComponent({ config, fetch, logs, metrics })
   const rateLimiter = await createRateLimiterComponent({ metrics })
 
@@ -99,6 +101,7 @@ export async function initComponents(): Promise<AppComponents> {
     playIntegrity,
     attestationState,
     attestationVerifier,
+    attestationSession,
     thirdwebProxy,
     rateLimiter
   }

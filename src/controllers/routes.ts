@@ -59,6 +59,7 @@ import { signMessageHandler } from "./handlers/wallets/sign-message-handler"
 import { attestIosChallengeHandler } from "./handlers/attest/challenge-handler"
 import { attestIosRegisterHandler } from "./handlers/attest/register-handler"
 import { attestCheckHandler } from "./handlers/attest/check-handler"
+import { attestSessionHandler } from "./handlers/attest/session-handler"
 
 // We return the entire router because it will be easier to test than a whole server
 export async function setupRouter(globalContext: GlobalContext): Promise<Router<GlobalContext>> {
@@ -108,13 +109,20 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
   router.post("/test-auth/verify-code", testAuthVerifyCodeHandler)
 
   // ============== WALLETS / ATTESTATION ==============
-  // Thirdweb sign-message thin proxy. Gated by platform attestation: a failed
-  // verdict returns 401 with the attestation code in the body.
+  // Thirdweb sign-message thin proxy. Gated by an attestation session
+  // token obtained from POST /attest/session — the token is NOT body-bound,
+  // see attestation-body-binding.patch in the repo root for the upgrade
+  // path that restores per-request binding.
   router.post("/wallets/sign-message", signMessageHandler)
 
   // iOS App Attest enrollment ceremony.
   router.post("/attest/ios/challenge", attestIosChallengeHandler)
   router.post("/attest/ios/register", attestIosRegisterHandler)
+
+  // Issue an attestation session token after a successful platform
+  // attestation. The client reuses the token on subsequent /sign-message
+  // calls instead of running attestation per request.
+  router.post("/attest/session", attestSessionHandler)
 
   // Cross-platform attestation verdict endpoint — always 200, body carries
   // outcome. Designed to be consumed by a future analytics service.

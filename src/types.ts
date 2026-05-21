@@ -22,6 +22,7 @@ import { IAppAttestComponent } from './adapters/app-attest'
 import { IPlayIntegrityComponent } from './adapters/play-integrity'
 import { IAttestationStateComponent } from './adapters/attestation-state'
 import { IAttestationVerifierComponent } from './adapters/attestation-verifier'
+import { IAttestationSessionComponent } from './adapters/attestation-session'
 import { IThirdwebProxyComponent } from './adapters/thirdweb-proxy'
 import { IRateLimiterComponent } from './adapters/rate-limiter'
 
@@ -51,6 +52,7 @@ export type BaseComponents = {
   playIntegrity: IPlayIntegrityComponent
   attestationState: IAttestationStateComponent
   attestationVerifier: IAttestationVerifierComponent
+  attestationSession: IAttestationSessionComponent
   thirdwebProxy: IThirdwebProxyComponent
   rateLimiter: IRateLimiterComponent
 }
