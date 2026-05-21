@@ -41,7 +41,10 @@ type Bucket = {
 }
 
 // Cap the total number of buckets to defend against a flood of unique IPs
-// blowing up memory. When over cap, drop the oldest-reset entries first.
+// blowing up memory. When over cap, drop the earliest-inserted entries
+// first (Map iteration is insertion order). For a flood the earliest
+// inserts are also the closest to reset, so insertion order tracks
+// reset-order well enough in practice.
 const MAX_BUCKETS = 50_000
 
 export async function createRateLimiterComponent({
@@ -60,7 +63,8 @@ export async function createRateLimiterComponent({
     }
     if (buckets.size > MAX_BUCKETS) {
       // Pathological case — too many distinct IPs in a single window. Drop
-      // entries until we're back under the cap; whichever IPs lose state
+      // the earliest-inserted entries (Map iteration order is insertion
+      // order) until we're back under the cap; whichever IPs lose state
       // just get an effective reset (which is fine — they're allowed-by-
       // default again, but that's no worse than no rate limit at all).
       const overshoot = buckets.size - MAX_BUCKETS

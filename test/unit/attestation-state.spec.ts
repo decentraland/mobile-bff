@@ -72,25 +72,59 @@ describe('attestation-state', () => {
       const out = await state.consumeChallenge('ch3')
       expect(out).toBeNull()
     })
+
+    it('uses DELETE ... RETURNING in a single statement (atomic race-safe)', async () => {
+      // Two concurrent consumers must not both see the same challenge. The
+      // atomic DELETE ... RETURNING contract is what Postgres enforces; the
+      // unit-test version of that is asserting the statement shape so a
+      // future refactor that splits this into SELECT + DELETE gets caught.
+      const { state, pg } = await buildState([
+        { rows: [{ challenge_bytes: Buffer.from('a'), expires_at: new Date(Date.now() + 10_000) }], rowCount: 1 }
+      ])
+      await state.consumeChallenge('ch-x')
+      const sql = pg.calls()[0].text
+      expect(sql).toMatch(/DELETE FROM attest_challenges/i)
+      expect(sql).toMatch(/RETURNING challenge_bytes, expires_at/i)
+    })
+
+    it('returns null on the second consumer of the same challenge (already-consumed path)', async () => {
+      // Both calls share the same state component; the fake pg scripts the
+      // first DELETE as returning the row and the second as returning none,
+      // mirroring what Postgres would do under real concurrency.
+      const challengeBytes = Buffer.from('once')
+      const { state } = await buildState([
+        { rows: [{ challenge_bytes: challengeBytes, expires_at: new Date(Date.now() + 10_000) }], rowCount: 1 },
+        { rows: [], rowCount: 0 }
+      ])
+      const first = await state.consumeChallenge('ch-race')
+      const second = await state.consumeChallenge('ch-race')
+      expect(first?.equals(challengeBytes)).toBe(true)
+      expect(second).toBeNull()
+    })
   })
 
   describe('registerKey', () => {
-    it('returns { inserted: true } when RETURNING reports a fresh insert (xmax=0)', async () => {
-      const { state } = await buildState([{ rows: [{ inserted: true }], rowCount: 1 }])
+    it('uses ON CONFLICT DO NOTHING so an existing row is never overwritten', async () => {
+      const { state, pg } = await buildState([{ rows: [{ '?column?': 1 }], rowCount: 1 }])
+      await state.registerKey('key-id', 'PEM')
+      const sql = pg.calls()[0].text
+      expect(sql).toMatch(/INSERT INTO attest_keys/i)
+      expect(sql).toMatch(/ON CONFLICT \(key_id\) DO NOTHING/i)
+      // Crucially the SQL must not reset the counter to 0 on conflict — that
+      // was the replay-protection hole the DO NOTHING change closes.
+      expect(sql).not.toMatch(/counter = 0/i)
+    })
+
+    it('returns { inserted: true } when the INSERT actually wrote a row', async () => {
+      const { state } = await buildState([{ rows: [{ '?column?': 1 }], rowCount: 1 }])
       const out = await state.registerKey('key-id', '-----BEGIN PUBLIC KEY-----...')
       expect(out).toEqual({ inserted: true })
     })
 
-    it('returns { inserted: false } when ON CONFLICT updated an existing row', async () => {
-      const { state } = await buildState([{ rows: [{ inserted: false }], rowCount: 1 }])
-      const out = await state.registerKey('key-id', 'PEM')
-      expect(out).toEqual({ inserted: false })
-    })
-
-    it('defaults to inserted=true when the driver returns no rows', async () => {
+    it('returns { inserted: false } when the row already existed (no overwrite)', async () => {
       const { state } = await buildState([{ rows: [], rowCount: 0 }])
       const out = await state.registerKey('key-id', 'PEM')
-      expect(out).toEqual({ inserted: true })
+      expect(out).toEqual({ inserted: false })
     })
   })
 

@@ -31,6 +31,11 @@ const AAGUID_PROD = Buffer.concat([Buffer.from('appattest', 'utf8'), Buffer.allo
 
 const APPLE_ROOT_X509 = new crypto.X509Certificate(APPLE_APP_ATTEST_ROOT_CA_PEM)
 
+// Apple x5c chains observed in the wild are 2 certs (leaf + intermediate).
+// Cap at 5 so a malicious client can't waste CPU shipping us a 1000-cert
+// chain to verify before any other check kicks in.
+const MAX_X5C_CHAIN_LENGTH = 5
+
 // Granular error codes — surfaced to the client through the
 // attestation-verifier outcome so the client (and analytics) can branch on
 // the failure mode without parsing free-form messages.
@@ -102,6 +107,12 @@ export async function createAppAttestComponent({
     const x5c = attStmt && attStmt.x5c
     if (!Array.isArray(x5c) || x5c.length === 0) {
       throw new AppAttestError('ATTESTATION_IOS_BAD_ASSERTION', 'attStmt.x5c missing or empty')
+    }
+    if (x5c.length > MAX_X5C_CHAIN_LENGTH) {
+      throw new AppAttestError(
+        'ATTESTATION_IOS_BAD_ASSERTION',
+        `attStmt.x5c too long (${x5c.length} > ${MAX_X5C_CHAIN_LENGTH})`
+      )
     }
 
     // Chain verification: each cert is signed by the next, last one chains up
@@ -331,7 +342,7 @@ function extractAppleNonce(certDer: Buffer): Buffer {
   // [1]-tagged OCTET STRING — the nonce itself.
   let asn1: any
   try {
-    asn1 = forge.asn1.fromDer(forge.util.createBuffer(certDer.toString('binary'), 'raw'))
+    asn1 = forge.asn1.fromDer(forge.util.createBuffer(certDer))
   } catch (e: any) {
     throw new AppAttestError('ATTESTATION_IOS_BAD_ASSERTION', `leaf cert ASN.1 parse failed: ${e.message}`)
   }
@@ -359,7 +370,7 @@ function extractAppleNonce(certDer: Buffer): Buffer {
     if (oidStr !== APPLE_NONCE_OID) continue
     const octetString = ext.value[ext.value.length - 1]
     const innerBytes = octetString.value
-    const inner = forge.asn1.fromDer(forge.util.createBuffer(innerBytes, 'raw'))
+    const inner = forge.asn1.fromDer(innerBytes)
     // SEQUENCE { [1] EXPLICIT OCTET STRING nonce }
     const tagged: any = inner && (inner as any).value && (inner as any).value[0]
     const nonceOctet: any = tagged && tagged.value && tagged.value[0]

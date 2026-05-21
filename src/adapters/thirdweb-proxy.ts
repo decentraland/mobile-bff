@@ -29,10 +29,13 @@ const UPSTREAM_TIMEOUT_MS = 5_000
 // adapter errors) is dropped server-side — it's still in our logs.
 const ALLOWED_ERROR_FIELDS = ['error', 'code', 'message'] as const
 
-// The wkc fetch-component honors a non-standard `timeout` option that the
-// public IFetchComponent type does not expose. We extend the parameter type
-// here instead of `as any`-casting at the call site.
-type FetchInit = Parameters<IFetchComponent['fetch']>[1] & { timeout?: number }
+// The wkc fetch-component honors an `abortController` option that the
+// public IFetchComponent type does not expose. We extend the parameter
+// type here instead of `as any`-casting at the call site. We use this
+// rather than the standard `signal` field because the node-fetch types
+// underneath IFetchComponent declare their own AbortSignal that doesn't
+// quite line up with the global one.
+type FetchInit = Parameters<IFetchComponent['fetch']>[1] & { abortController?: AbortController }
 
 export type ThirdwebProxyResponse = {
   status: number
@@ -102,6 +105,15 @@ export async function createThirdwebProxyComponent({
     authorization: string
     rawBody: Buffer
   }): Promise<ThirdwebProxyResponse> {
+    // Hard cap — without this a hung upstream pins a request slot
+    // indefinitely. We drive the timeout via AbortController (rather than
+    // the wkc-fetch non-standard `timeout` option) so the abort is
+    // distinguishable from any 408 the upstream itself may return: a
+    // legitimate 408 from Thirdweb gets bucketed as 4xx, a local abort
+    // surfaces as 504 with `code: UPSTREAM_TIMEOUT`.
+    const controller = new AbortController()
+    const timeoutHandle = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS)
+
     const fetchInit: FetchInit = {
       method: 'POST',
       headers: {
@@ -112,36 +124,10 @@ export async function createThirdwebProxyComponent({
         'x-client-id': clientId
       },
       body: rawBody,
-      // Hard cap — without this a hung upstream pins a request slot
-      // indefinitely. The wkc fetch-component implements the timeout via
-      // setTimeout + AbortController and, when it fires, resolves with a
-      // synthetic `408 Request Timeout` Response rather than rejecting.
-      // We detect that status below and surface it as a distinct 504 with
-      // `code: UPSTREAM_TIMEOUT` so clients can implement retry/backoff
-      // instead of treating it as a validation error.
-      timeout: UPSTREAM_TIMEOUT_MS
+      abortController: controller
     }
     try {
       const upstream = await fetch.fetch(upstreamUrl, fetchInit)
-      // wkc fetch-component returns a synthetic 408 when our `timeout`
-      // option fires. Thirdweb's sign-message endpoint does not produce
-      // 408 itself (it returns 4xx for validation and 5xx for outages),
-      // so we treat any 408 here as our local timeout signal. Surfaced
-      // as 504 Gateway Timeout with an explicit `code` field so iOS can
-      // branch on it (e.g. retry with exponential backoff) rather than
-      // treating it as a generic "upstream rejected".
-      if (upstream.status === 408) {
-        metrics.increment('thirdweb_proxy_requests_total', { status_class: 'timeout' })
-        logger.warn('upstream timeout', { timeoutMs: UPSTREAM_TIMEOUT_MS })
-        return {
-          status: 504,
-          contentType: 'application/json',
-          body: Buffer.from(
-            JSON.stringify({ error: 'upstream timed out', code: 'UPSTREAM_TIMEOUT' }),
-            'utf8'
-          )
-        }
-      }
       bumpStatusClass(upstream.status)
       const bodyBytes = Buffer.from(await upstream.arrayBuffer())
       if (upstream.status >= 500) {
@@ -160,9 +146,26 @@ export async function createThirdwebProxyComponent({
       }
       return { status: upstream.status, contentType: upstream.headers.get('content-type'), body: bodyBytes }
     } catch (err: any) {
+      // Node's fetch surfaces an abort as a DOMException with name 'AbortError'
+      // (some runtimes use a plain Error with the same name). Match on the
+      // signal we control rather than relying on err.name alone.
+      if (controller.signal.aborted) {
+        metrics.increment('thirdweb_proxy_requests_total', { status_class: 'timeout' })
+        logger.warn('upstream timeout', { timeoutMs: UPSTREAM_TIMEOUT_MS })
+        return {
+          status: 504,
+          contentType: 'application/json',
+          body: Buffer.from(
+            JSON.stringify({ error: 'upstream timed out', code: 'UPSTREAM_TIMEOUT' }),
+            'utf8'
+          )
+        }
+      }
       metrics.increment('thirdweb_proxy_requests_total', { status_class: 'fetch_error' })
       logger.error('upstream request failed', { error: err?.message || String(err) })
       return jsonError(502, 'upstream request failed')
+    } finally {
+      clearTimeout(timeoutHandle)
     }
   }
 

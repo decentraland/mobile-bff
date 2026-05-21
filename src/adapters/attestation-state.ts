@@ -24,9 +24,12 @@ export type RegisteredKey = {
 }
 
 export type RegisterKeyResult = {
-  // true on a fresh INSERT, false when ON CONFLICT updated an existing row.
-  // Re-registration shouldn't happen in normal App Attest flow (attestation
-  // is one-shot per key), so callers warn-log when this returns false.
+  // true on a fresh INSERT, false when the row already existed and we
+  // refused to overwrite. Re-registration shouldn't happen in normal App
+  // Attest flow (attestation is one-shot per key); we surface this so
+  // callers warn-log, and we deliberately do NOT touch the existing row —
+  // overwriting would reset the replay counter, which an attacker with a
+  // captured attestation_object could use to replay older assertions.
   inserted: boolean
 }
 
@@ -83,27 +86,24 @@ export async function createAttestationStateComponent({
   }
 
   async function registerKey(keyId: string, publicKeyPem: string): Promise<RegisterKeyResult> {
-    // ON CONFLICT DO UPDATE: if a client re-registers the same key_id
-    // (shouldn't happen in normal flow — App Attest attestation is one-shot
-    // per key — but harmless to overwrite), we reset the counter to 0 to
-    // match the freshly-attested key.
+    // ON CONFLICT DO NOTHING: re-registration is rejected at the DB level.
+    // Earlier versions reset the counter on conflict — that turned out to be
+    // a replay-protection hole: an attacker who captured a valid
+    // (attestation_object, key_id) pair could replay it later to rewind the
+    // counter and then replay older assertions. App Attest attestation is
+    // one-shot per key in legitimate flow, so refusing the overwrite costs
+    // nothing real.
     //
-    // `xmax = 0` on the RETURNING row is the Postgres idiom for "this was
-    // an INSERT, not an UPDATE": xmax is unset on a freshly-inserted tuple,
-    // and ON CONFLICT DO UPDATE sets it. We surface that distinction so the
-    // caller can warn-log overwrites — they can mean a client bug or, more
-    // worryingly, an attacker resetting the counter on a key they control.
-    const result = await pg.query<{ inserted: boolean }>(SQL`
+    // With DO NOTHING, the RETURNING clause emits a row only on a successful
+    // INSERT. rowCount === 1 means we wrote, rowCount === 0 means the
+    // pre-existing row was preserved unchanged.
+    const result = await pg.query(SQL`
       INSERT INTO attest_keys (key_id, public_key_pem, counter, last_used_at)
       VALUES (${keyId}, ${publicKeyPem}, 0, NOW())
-      ON CONFLICT (key_id) DO UPDATE SET
-        public_key_pem = EXCLUDED.public_key_pem,
-        counter = 0,
-        last_used_at = NOW()
-      RETURNING (xmax = 0) AS inserted
+      ON CONFLICT (key_id) DO NOTHING
+      RETURNING 1
     `)
-    const inserted = result.rows[0]?.inserted ?? true
-    return { inserted }
+    return { inserted: (result.rowCount ?? 0) > 0 }
   }
 
   async function getRegisteredKey(keyId: string): Promise<RegisteredKey | null> {

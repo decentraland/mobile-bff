@@ -53,11 +53,20 @@ export async function attestCheckHandler(
   } catch (e: any) {
     // Reading the body should not fail on a well-formed HTTP request — if
     // it does, the request is malformed (truncated, bad framing, client
-    // disconnect mid-stream). We surface this in logs instead of pretending
-    // an empty body was supplied, which would mask the failure mode and
-    // produce a confusing downstream "missing headers" outcome.
+    // disconnect mid-stream). Surface this directly instead of running the
+    // verifier with an empty body, which would always be a "missing
+    // headers" outcome and mask the real failure mode.
     logger.warn('failed to read request body', { error: e?.message || String(e) })
-    rawBody = Buffer.alloc(0)
+    return {
+      status: 200,
+      body: {
+        ok: false,
+        platform: 'unknown',
+        code: 'ATTESTATION_BAD_REQUEST_BODY',
+        error: 'could not read request body',
+        elapsed_ms: Date.now() - start
+      }
+    }
   }
 
   const outcome = await attestationVerifier.verify({ headers: request.headers, rawBody })

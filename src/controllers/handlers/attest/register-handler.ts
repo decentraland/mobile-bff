@@ -69,10 +69,13 @@ export async function attestIosRegisterHandler(
     })
     const { inserted } = await attestationState.registerKey(key_id, publicKeyPem)
     if (!inserted) {
-      // Overwrite of an existing row — counter just got reset. Surface it so
-      // we can correlate with any subsequent COUNTER_REPLAY noise from the
-      // same key_id.
-      logger.warn('ios key re-registered, counter reset', { key_id_prefix: keyIdPrefix })
+      // Row already existed — we deliberately did NOT overwrite it (see
+      // registerKey for the replay-protection rationale). Treat as success
+      // for the client (the key it just attested is the one we already have,
+      // since key_id = SHA256(public key) — and any attempt to register a
+      // different public key under the same key_id would imply a hash
+      // collision). Warn-log so we can correlate with downstream noise.
+      logger.warn('ios key already registered, ignoring re-register', { key_id_prefix: keyIdPrefix })
     } else {
       logger.info('ios key registered', { key_id_prefix: keyIdPrefix })
     }

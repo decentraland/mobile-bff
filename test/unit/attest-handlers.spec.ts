@@ -160,7 +160,7 @@ describe('attest handlers', () => {
       expect(mocks.state.registerKey).toHaveBeenCalledWith('k', 'PEM')
     })
 
-    it('returns key_id_prefix and warn-logs when an existing row is overwritten', async () => {
+    it('returns success without resetting state when the key was already registered', async () => {
       const { context, mocks } = createContext({
         key_id: 'key-id-1234567890',
         attestation_object: 'a',
@@ -179,8 +179,9 @@ describe('attest handlers', () => {
       const res = await attestIosRegisterHandler(context as any)
       expect(res.status).toBe(200)
       expect((res.body as any).key_id_prefix).toBe('key-id-1')
+      // Counter is NOT reset on re-register; handler should just warn-log.
       expect(warn).toHaveBeenCalledWith(
-        'ios key re-registered, counter reset',
+        'ios key already registered, ignoring re-register',
         expect.objectContaining({ key_id_prefix: 'key-id-1' })
       )
     })
@@ -263,6 +264,28 @@ describe('attest handlers', () => {
       await attestCheckHandler(context as any)
       const rawBody = mockVerifier.verify.mock.calls[0][0].rawBody
       expect(rawBody.toString('utf8')).toBe('{"foo":1}')
+    })
+
+    it('returns 200 with ATTESTATION_BAD_REQUEST_BODY when the body cannot be read', async () => {
+      const mockVerifier = createAttestationVerifierJestMockComponent()
+      const mockRateLimiter = createRateLimiterJestMockComponent()
+      const mockLogs = createLogsMockComponent()
+      const context = {
+        components: { attestationVerifier: mockVerifier, rateLimiter: mockRateLimiter, logs: mockLogs },
+        request: {
+          headers: { get: (_: string) => null },
+          arrayBuffer: async () => {
+            throw new Error('client disconnected')
+          }
+        }
+      }
+      const res = await attestCheckHandler(context as any)
+      expect(res.status).toBe(200)
+      expect((res.body as any).ok).toBe(false)
+      expect((res.body as any).code).toBe('ATTESTATION_BAD_REQUEST_BODY')
+      // Verifier must NOT be invoked with an empty body — otherwise the
+      // outcome would be a misleading "missing headers" code.
+      expect(mockVerifier.verify).not.toHaveBeenCalled()
     })
   })
 })

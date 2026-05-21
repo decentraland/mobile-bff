@@ -188,6 +188,30 @@ describe('play-integrity adapter', () => {
       })
     })
 
+    it('accepts a non-PLAY_RECOGNIZED verdict when PLAY_INTEGRITY_REQUIRE_PLAY_RECOGNIZED=false', async () => {
+      mockDecodeIntegrityToken.mockResolvedValue(
+        tokenPayload({ appIntegrity: { appRecognitionVerdict: 'UNRECOGNIZED_VERSION' } }, rawBody)
+      )
+      const adapter = await createPlayIntegrityComponent({
+        config: buildConfig({ PLAY_INTEGRITY_REQUIRE_PLAY_RECOGNIZED: 'false' })
+      } as any)
+      await expect(
+        adapter.verifyIntegrityToken({ integrityToken: 'tok', rawBody })
+      ).resolves.toBeDefined()
+    })
+
+    it('any value other than the literal string "false" keeps the strict check', async () => {
+      mockDecodeIntegrityToken.mockResolvedValue(
+        tokenPayload({ appIntegrity: { appRecognitionVerdict: 'UNRECOGNIZED_VERSION' } }, rawBody)
+      )
+      const adapter = await createPlayIntegrityComponent({
+        config: buildConfig({ PLAY_INTEGRITY_REQUIRE_PLAY_RECOGNIZED: '0' })
+      } as any)
+      await expect(adapter.verifyIntegrityToken({ integrityToken: 'tok', rawBody })).rejects.toMatchObject({
+        code: 'ATTESTATION_ANDROID_VERDICT_FAILED'
+      })
+    })
+
     it('rejects when required device verdicts are not all present', async () => {
       mockDecodeIntegrityToken.mockResolvedValue(
         tokenPayload(

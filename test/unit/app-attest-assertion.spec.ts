@@ -287,4 +287,34 @@ describe('app-attest cert chain validity window', () => {
       })
     ).toThrow(AppAttestError)
   })
+
+  it('rejects an x5c chain longer than MAX_X5C_CHAIN_LENGTH before doing any crypto work', async () => {
+    // Cap is 5. Six self-signed certs is enough to trip the guard. The cap
+    // check runs BEFORE crypto.X509Certificate parsing, so the bytes don't
+    // need to be valid DER — but using real self-signed certs keeps the
+    // failure path unambiguous (we want the length-check to fire, not a
+    // downstream parse error masquerading as the same outcome).
+    const cert = makeSelfSignedDer({
+      notBefore: new Date(Date.now() - 60_000),
+      notAfter: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000)
+    })
+    const tooLong = Array.from({ length: 6 }, () => cert)
+    const config = createConfigJestMockComponent({
+      APP_ATTEST_APP_ID: APP_ID,
+      APP_ATTEST_ENV: 'development'
+    })
+    const att = await createAppAttestComponent({ config })
+    const attObj = cborEncode({
+      fmt: 'apple-appattest',
+      attStmt: { x5c: tooLong },
+      authData: Buffer.alloc(55)
+    })
+    expect(() =>
+      att.verifyRegistration({
+        keyIdB64u: Buffer.alloc(32).toString('base64url'),
+        attestationObjectB64u: Buffer.from(attObj).toString('base64url'),
+        challengeBytes: Buffer.from('chal')
+      })
+    ).toThrow(/x5c too long/)
+  })
 })

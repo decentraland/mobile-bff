@@ -68,7 +68,11 @@ describe('thirdweb-proxy', () => {
     expect(captured.headers['x-secret-key']).toBe('sk-test')
     expect(captured.headers['x-client-id']).toBe('client-test')
     expect(captured.body).toBe(baseInput.rawBody)
-    expect(captured.timeout).toBeGreaterThan(0)
+    // Timeout is driven by an AbortController now (wkc-fetch's
+    // `abortController` option) rather than the non-standard `timeout`
+    // field — the controller must be wired so the abort fires.
+    expect(captured.abortController).toBeDefined()
+    expect(typeof captured.abortController.signal.aborted).toBe('boolean')
   })
 
   it('sanitizes 4xx upstream bodies, keeping only allowed fields', async () => {
@@ -114,9 +118,19 @@ describe('thirdweb-proxy', () => {
     expect(JSON.parse(res.body.toString('utf8'))).toEqual({ error: 'upstream temporarily unavailable' })
   })
 
-  it('maps a synthetic 408 (upstream timeout) to 504 with code UPSTREAM_TIMEOUT', async () => {
+  it('maps an aborted fetch (local timeout) to 504 with code UPSTREAM_TIMEOUT', async () => {
+    // Simulate the wkc-fetch behavior when the AbortController fires:
+    // the signal becomes aborted and the fetch rejects with an AbortError.
     const { proxy, metrics } = await build({
-      fetchImpl: async () => buildUpstream({ status: 408, body: '' })
+      fetchImpl: async (_url: string, opts: any) => {
+        // Trigger the abort on the controller the proxy passed in so its
+        // own `controller.signal.aborted` check fires when we throw below.
+        const ac = opts.abortController as AbortController
+        ac.abort()
+        const err = new Error('aborted') as any
+        err.name = 'AbortError'
+        throw err
+      }
     })
     const res = await proxy.forwardSignMessage(baseInput)
     expect(res.status).toBe(504)
@@ -127,7 +141,23 @@ describe('thirdweb-proxy', () => {
     expect(counter.values.some((v: any) => v.labels.status_class === 'timeout' && v.value === 1)).toBe(true)
   })
 
-  it('returns 502 when the fetch call throws', async () => {
+  it('forwards a legitimate upstream 408 as a 4xx, not as a local timeout', async () => {
+    // Older logic special-cased status === 408 to mean "local timeout fired"
+    // and would have returned 504. With AbortSignal-based timeout, a real
+    // upstream 408 should pass through sanitize4xx — distinguishable from
+    // our own abort in metrics.
+    const { proxy, metrics } = await build({
+      fetchImpl: async () => buildUpstream({ status: 408, body: '{"error":"upstream said 408"}' })
+    })
+    const res = await proxy.forwardSignMessage(baseInput)
+    expect(res.status).toBe(408)
+    expect(JSON.parse(res.body.toString('utf8'))).toEqual({ error: 'upstream said 408' })
+    const counter = await metrics.getValue('thirdweb_proxy_requests_total')
+    expect(counter.values.some((v: any) => v.labels.status_class === '4xx' && v.value === 1)).toBe(true)
+    expect(counter.values.some((v: any) => v.labels.status_class === 'timeout')).toBe(false)
+  })
+
+  it('returns 502 when the fetch call throws (not an abort)', async () => {
     const { proxy, metrics } = await build({
       fetchImpl: async () => {
         throw new Error('ENETUNREACH')

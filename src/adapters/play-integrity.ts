@@ -60,6 +60,11 @@ export async function createPlayIntegrityComponent({
   if (requiredVerdicts.length === 0) {
     throw new Error('PLAY_INTEGRITY_REQUIRED_VERDICTS must list at least one verdict')
   }
+  // Production builds shipped via Play Store MUST resolve to PLAY_RECOGNIZED.
+  // Dev/staging with unsigned APKs returns UNRECOGNIZED_VERSION, so we let
+  // ops flip this off in non-prod environments. Default is strict.
+  const requirePlayRecognizedRaw = (await config.getString('PLAY_INTEGRITY_REQUIRE_PLAY_RECOGNIZED')) ?? 'true'
+  const requirePlayRecognized = requirePlayRecognizedRaw.toLowerCase() !== 'false'
 
   // Service-account credentials come from PLAY_INTEGRITY_SA_JSON: base64 of the
   // GCP-issued JSON. We avoid the file-path mode entirely because most deploy
@@ -117,14 +122,25 @@ export async function createPlayIntegrityComponent({
     //   - Classic API (IntegrityManagerFactory.create + setNonce):  `nonce`
     //   - Standard API (StandardIntegrityManager + setRequestHash): `requestHash`
     // We accept either, so the same backend works regardless of which API the
-    // Android plugin uses.
+    // Android plugin uses. We try both independently rather than fall through
+    // with `||` so an empty-but-present field doesn't shadow a populated one.
     const expectedHash = crypto.createHash('sha256').update(rawBody).digest()
-    const tokenHashField = reqDetails.nonce || reqDetails.requestHash
-    const tokenHashBytes = decodeFlexibleBase64(tokenHashField)
-    const matchesB64 = !!tokenHashBytes && tokenHashBytes.length > 0 && tokenHashBytes.equals(expectedHash)
-    const matchesHex =
-      typeof tokenHashField === 'string' && tokenHashField.toLowerCase() === expectedHash.toString('hex')
-    if (!matchesB64 && !matchesHex) {
+    const expectedHashHex = expectedHash.toString('hex')
+    const candidates = [reqDetails.requestHash, reqDetails.nonce]
+    let bodyBindingMatch = false
+    for (const field of candidates) {
+      if (typeof field !== 'string' || field.length === 0) continue
+      const decoded = decodeFlexibleBase64(field)
+      if (decoded && decoded.equals(expectedHash)) {
+        bodyBindingMatch = true
+        break
+      }
+      if (field.toLowerCase() === expectedHashHex) {
+        bodyBindingMatch = true
+        break
+      }
+    }
+    if (!bodyBindingMatch) {
       throw new PlayIntegrityError(
         'ATTESTATION_ANDROID_HASH_MISMATCH',
         'nonce/requestHash in token does not match SHA256(request body)'
@@ -153,7 +169,7 @@ export async function createPlayIntegrityComponent({
 
     const appIntegrity = payload.appIntegrity || {}
     const appVerdict = appIntegrity.appRecognitionVerdict
-    if (appVerdict !== 'PLAY_RECOGNIZED') {
+    if (requirePlayRecognized && appVerdict !== 'PLAY_RECOGNIZED') {
       throw new PlayIntegrityError(
         'ATTESTATION_ANDROID_VERDICT_FAILED',
         `appRecognitionVerdict=${appVerdict}, expected PLAY_RECOGNIZED`,
