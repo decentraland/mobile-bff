@@ -1,6 +1,6 @@
 import { HandlerContextWithPath } from '../../../types'
 import { clientKeyFromHeaders } from '../../../adapters/rate-limiter'
-import { RL_ATTEST_CHECK } from '../../../logic/rate-limit-rules'
+import { RL_ATTEST_CHECK, withFallbackCap } from '../../../logic/rate-limit-rules'
 
 // POST /attest/check — non-gating verdict endpoint.
 //
@@ -33,8 +33,12 @@ export async function attestCheckHandler(
   const start = Date.now()
   const logger = logs.getLogger('attest-check')
 
-  const ipKey = clientKeyFromHeaders(request.headers)
-  const rl = rateLimiter.check(RL_ATTEST_CHECK, `attest:check:${ipKey}`, 'attest:check')
+  const { key: ipKey, isFallback } = clientKeyFromHeaders(request.headers, logs.getLogger('rate-limit'))
+  const rl = rateLimiter.check(
+    withFallbackCap(RL_ATTEST_CHECK, isFallback),
+    `attest:check:${ipKey}`,
+    'attest:check'
+  )
   if (!rl.allowed) {
     return {
       status: 429,

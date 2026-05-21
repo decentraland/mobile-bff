@@ -114,6 +114,19 @@ describe('thirdweb-proxy', () => {
     expect(JSON.parse(res.body.toString('utf8'))).toEqual({ error: 'upstream temporarily unavailable' })
   })
 
+  it('maps a synthetic 408 (upstream timeout) to 504 with code UPSTREAM_TIMEOUT', async () => {
+    const { proxy, metrics } = await build({
+      fetchImpl: async () => buildUpstream({ status: 408, body: '' })
+    })
+    const res = await proxy.forwardSignMessage(baseInput)
+    expect(res.status).toBe(504)
+    expect(res.contentType).toBe('application/json')
+    const parsed = JSON.parse(res.body.toString('utf8'))
+    expect(parsed).toEqual({ error: 'upstream timed out', code: 'UPSTREAM_TIMEOUT' })
+    const counter = await metrics.getValue('thirdweb_proxy_requests_total')
+    expect(counter.values.some((v: any) => v.labels.status_class === 'timeout' && v.value === 1)).toBe(true)
+  })
+
   it('returns 502 when the fetch call throws', async () => {
     const { proxy, metrics } = await build({
       fetchImpl: async () => {

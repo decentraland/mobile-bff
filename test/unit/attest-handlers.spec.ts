@@ -17,11 +17,12 @@ describe('attest handlers', () => {
     function buildCtx() {
       const mockState = createAttestationStateJestMockComponent()
       const mockRateLimiter = createRateLimiterJestMockComponent()
+      const mockLogs = createLogsMockComponent()
       return {
         mockState,
         mockRateLimiter,
         context: {
-          components: { attestationState: mockState, rateLimiter: mockRateLimiter },
+          components: { attestationState: mockState, rateLimiter: mockRateLimiter, logs: mockLogs },
           request: { headers: emptyHeaders }
         }
       }

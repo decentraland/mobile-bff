@@ -13,6 +13,8 @@
 // anything. test-auth's local bucket stays put — it only protects one
 // endpoint and is only ever hit by Apple reviewers.
 
+import type { ILoggerComponent } from '@well-known-components/interfaces'
+
 import { AppComponents } from '../types'
 
 export type RateLimitRule = {
@@ -92,15 +94,52 @@ export async function createRateLimiterComponent({
 
 // Extracts a stable per-caller key. Prefers the leftmost x-forwarded-for
 // hop because that's the client the upstream proxy saw; falls back to a
-// constant so misconfigured deployments still get *some* (degraded) rate
-// limiting rather than none. Log the fallback path so it's visible.
-export function clientKeyFromHeaders(headers: { get(name: string): string | null }): string {
+// shared sentinel so misconfigured deployments still get *some* (degraded)
+// rate limiting rather than none.
+//
+// The fallback case is dangerous: with no proxy headers, every caller
+// collapses onto the same `unknown` bucket, so the first N requests in a
+// window consume the global quota and everyone else gets 429. Callers
+// should pair this with a stricter cap (see `withFallbackCap`) so a
+// misconfigured deployment fails closed (low cap, broken endpoint) rather
+// than leaking the full per-endpoint cap to anonymous traffic. We also
+// warn-log once per process so the misconfiguration is visible without
+// spamming the log on every request.
+export const FALLBACK_CLIENT_KEY = 'unknown'
+
+let warnedAboutMissingProxyHeaders = false
+
+export type ClientKey = {
+  key: string
+  // true when neither x-forwarded-for nor x-real-ip were present and we
+  // had to fall back to the shared sentinel.
+  isFallback: boolean
+}
+
+export function clientKeyFromHeaders(
+  headers: { get(name: string): string | null },
+  logger?: ILoggerComponent.ILogger
+): ClientKey {
   const xff = headers.get('x-forwarded-for')
   if (xff) {
     const first = xff.split(',')[0]?.trim()
-    if (first) return first
+    if (first) return { key: first, isFallback: false }
   }
   const realIp = headers.get('x-real-ip')
-  if (realIp) return realIp.trim()
-  return 'unknown'
+  if (realIp) return { key: realIp.trim(), isFallback: false }
+  if (!warnedAboutMissingProxyHeaders) {
+    warnedAboutMissingProxyHeaders = true
+    logger?.warn(
+      'rate-limit: no x-forwarded-for / x-real-ip header — all clients will share the fallback bucket. ' +
+        'Check that this service is behind a proxy that injects one of those headers.'
+    )
+  }
+  return { key: FALLBACK_CLIENT_KEY, isFallback: true }
+}
+
+// Test-only hook to reset the once-per-process warn flag. Production code
+// must not call this — the flag is intentionally module-scoped so the
+// warning fires exactly once over the lifetime of the process.
+export function __resetFallbackWarningForTests(): void {
+  warnedAboutMissingProxyHeaders = false
 }

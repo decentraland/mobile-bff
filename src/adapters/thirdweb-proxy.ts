@@ -115,14 +115,33 @@ export async function createThirdwebProxyComponent({
       // Hard cap — without this a hung upstream pins a request slot
       // indefinitely. The wkc fetch-component implements the timeout via
       // setTimeout + AbortController and, when it fires, resolves with a
-      // synthetic `408 Request Timeout` Response rather than rejecting. The
-      // 408 path lands in the 4xx branch below and is sanitized to the
-      // client as a generic "upstream rejected" — server-side logs keep
-      // the upstream-status fingerprint.
+      // synthetic `408 Request Timeout` Response rather than rejecting.
+      // We detect that status below and surface it as a distinct 504 with
+      // `code: UPSTREAM_TIMEOUT` so clients can implement retry/backoff
+      // instead of treating it as a validation error.
       timeout: UPSTREAM_TIMEOUT_MS
     }
     try {
       const upstream = await fetch.fetch(upstreamUrl, fetchInit)
+      // wkc fetch-component returns a synthetic 408 when our `timeout`
+      // option fires. Thirdweb's sign-message endpoint does not produce
+      // 408 itself (it returns 4xx for validation and 5xx for outages),
+      // so we treat any 408 here as our local timeout signal. Surfaced
+      // as 504 Gateway Timeout with an explicit `code` field so iOS can
+      // branch on it (e.g. retry with exponential backoff) rather than
+      // treating it as a generic "upstream rejected".
+      if (upstream.status === 408) {
+        metrics.increment('thirdweb_proxy_requests_total', { status_class: 'timeout' })
+        logger.warn('upstream timeout', { timeoutMs: UPSTREAM_TIMEOUT_MS })
+        return {
+          status: 504,
+          contentType: 'application/json',
+          body: Buffer.from(
+            JSON.stringify({ error: 'upstream timed out', code: 'UPSTREAM_TIMEOUT' }),
+            'utf8'
+          )
+        }
+      }
       bumpStatusClass(upstream.status)
       const bodyBytes = Buffer.from(await upstream.arrayBuffer())
       if (upstream.status >= 500) {

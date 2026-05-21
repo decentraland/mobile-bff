@@ -1,6 +1,6 @@
 import { HandlerContextWithPath } from '../../../types'
 import { clientKeyFromHeaders } from '../../../adapters/rate-limiter'
-import { RL_ATTEST_CHALLENGE } from '../../../logic/rate-limit-rules'
+import { RL_ATTEST_CHALLENGE, withFallbackCap } from '../../../logic/rate-limit-rules'
 
 // POST /attest/ios/challenge — issue a random one-shot challenge that the
 // client uses as part of the App Attest enrollment ceremony.
@@ -10,14 +10,18 @@ import { RL_ATTEST_CHALLENGE } from '../../../logic/rate-limit-rules'
 // usage. The limit is much higher than legitimate use — registration is
 // one-shot per install.
 export async function attestIosChallengeHandler(
-  context: HandlerContextWithPath<'attestationState' | 'rateLimiter', '/attest/ios/challenge'>
+  context: HandlerContextWithPath<'attestationState' | 'rateLimiter' | 'logs', '/attest/ios/challenge'>
 ) {
   const {
-    components: { attestationState, rateLimiter },
+    components: { attestationState, rateLimiter, logs },
     request
   } = context
-  const ipKey = clientKeyFromHeaders(request.headers)
-  const rl = rateLimiter.check(RL_ATTEST_CHALLENGE, `attest:challenge:${ipKey}`, 'attest:challenge')
+  const { key: ipKey, isFallback } = clientKeyFromHeaders(request.headers, logs.getLogger('rate-limit'))
+  const rl = rateLimiter.check(
+    withFallbackCap(RL_ATTEST_CHALLENGE, isFallback),
+    `attest:challenge:${ipKey}`,
+    'attest:challenge'
+  )
   if (!rl.allowed) {
     return {
       status: 429,

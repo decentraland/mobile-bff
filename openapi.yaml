@@ -33,6 +33,10 @@ tags:
     description: Health check endpoints
   - name: Deletion
     description: Account deletion management endpoints
+  - name: Attestation
+    description: Platform attestation (iOS App Attest, Android Play Integrity)
+  - name: Wallets
+    description: Wallet operations gated by platform attestation
 
 paths:
   /ping:
@@ -251,6 +255,278 @@ paths:
                 ok: false
                 error: Internal server error
 
+  /attest/ios/challenge:
+    post:
+      tags:
+        - Attestation
+      summary: Issue an iOS App Attest challenge
+      description: |
+        Returns a one-shot, random challenge the client must use as part of
+        the iOS App Attest enrollment ceremony. The challenge is short-lived
+        (5 min TTL) and consumed once by `POST /attest/ios/register`.
+
+        Anonymous endpoint. Rate limited per client IP — legitimate use is
+        one call per install.
+      operationId: attestIosChallenge
+      security: []
+      responses:
+        '200':
+          description: Challenge issued successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttestChallengeResponse'
+              example:
+                challenge: "yW8ZK6mqOg-2k1NN3xCm5sMG9aBlj8sgQ-2xTNQXdaY"
+                expires_at: "2026-01-01T00:05:00.000Z"
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /attest/ios/register:
+    post:
+      tags:
+        - Attestation
+      summary: Complete iOS App Attest registration
+      description: |
+        Finishes the App Attest enrollment ceremony. The server verifies the
+        attestation object against the previously-issued challenge, extracts
+        the leaf public key, and stores it for future assertion verification.
+
+        Anonymous endpoint. Rate limited per client IP — legitimate use is
+        one call per install.
+      operationId: attestIosRegister
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AttestRegisterRequest'
+      responses:
+        '200':
+          description: Key registered successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttestRegisterResponse'
+              example:
+                registered: true
+                key_id_prefix: "abc12345"
+        '400':
+          description: Invalid request body, expired challenge, or attestation verification failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FlatErrorResponse'
+              examples:
+                invalidBody:
+                  summary: Missing or malformed fields
+                  value:
+                    error: "key_id, attestation_object, challenge are required strings"
+                expiredChallenge:
+                  summary: Challenge unknown or expired
+                  value:
+                    error: "challenge unknown or expired"
+                attestationFailed:
+                  summary: App Attest verification failed
+                  value:
+                    error: "aaguid mismatch"
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /attest/check:
+    post:
+      tags:
+        - Attestation
+      summary: Report a platform attestation verdict
+      description: |
+        Non-gating verdict endpoint. The client sends the SAME headers and
+        raw body it would use for `/wallets/sign-message`; the server runs
+        the platform attestation verification and reports the outcome.
+
+        **Always returns 200** (except on rate-limit) — analytics downstream
+        parses the body shape to compute pass rates. Failing here is
+        informational, not user-facing.
+
+        For iOS, send the `x-attest-key-id`, `x-attest-assertion`, and
+        `x-attest-nonce` headers. For Android, send the
+        `x-attest-integrity-token` header.
+
+        Anonymous endpoint. Rate limited per client IP — verify() on Android
+        triggers a paid call to Google Play Integrity.
+      operationId: attestCheck
+      security: []
+      parameters:
+        - in: header
+          name: x-attest-platform
+          required: true
+          schema:
+            type: string
+            enum: [ios, android]
+        - in: header
+          name: x-attest-key-id
+          required: false
+          schema: { type: string }
+          description: iOS only — base64url App Attest key id
+        - in: header
+          name: x-attest-assertion
+          required: false
+          schema: { type: string }
+          description: iOS only — base64url App Attest assertion
+        - in: header
+          name: x-attest-nonce
+          required: false
+          schema: { type: string }
+          description: iOS only — base64url nonce hashed with the request body
+        - in: header
+          name: x-attest-integrity-token
+          required: false
+          schema: { type: string }
+          description: Android only — Play Integrity JWS token
+      requestBody:
+        required: false
+        description: |
+          Opaque payload — its bytes are hashed alongside the nonce/token
+          to bind the attestation to this exact request.
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Verdict computed (success OR failure — check the `ok` field)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttestCheckResponse'
+              examples:
+                ok:
+                  summary: Successful verification
+                  value:
+                    ok: true
+                    platform: ios
+                    code: OK
+                    key_id_prefix: "abc12345"
+                    elapsed_ms: 47
+                missingHeaders:
+                  summary: iOS headers missing
+                  value:
+                    ok: false
+                    platform: ios
+                    code: ATTESTATION_IOS_MISSING_HEADERS
+                    error: "x-attest-key-id, x-attest-assertion, x-attest-nonce all required"
+                    elapsed_ms: 1
+                counterReplay:
+                  summary: iOS counter replay
+                  value:
+                    ok: false
+                    platform: ios
+                    code: ATTESTATION_IOS_COUNTER_REPLAY
+                    error: "counter advanced by a concurrent request"
+                    key_id_prefix: "abc12345"
+                    elapsed_ms: 32
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /wallets/sign-message:
+    post:
+      tags:
+        - Wallets
+      summary: Sign a message via Thirdweb (attestation-gated)
+      description: |
+        Thin proxy to Thirdweb's `POST /v1/wallets/sign-message`.
+
+        The user's `Authorization: Bearer <jwt>` is forwarded untouched; the
+        server-only `x-secret-key` is injected by the BFF so it never ships
+        in a client build.
+
+        **Attestation gate**: clients must send the standard `x-attest-*`
+        headers (see `/attest/check`). A failed verdict returns **401** with
+        the attestation `code` in the body — clients can branch on it
+        (e.g. `ATTESTATION_IOS_KEY_NOT_REGISTERED` → re-enrol).
+
+        On a successful gate, the request is forwarded and the upstream
+        response body is returned byte-for-byte (Content-Type preserved).
+
+        Anonymous endpoint. Rate limited per client IP — each call burns
+        an attestation verification and (on success) a paid Thirdweb call.
+      operationId: walletsSignMessage
+      security:
+        - bearerJwt: []
+      parameters:
+        - in: header
+          name: x-attest-platform
+          required: true
+          schema:
+            type: string
+            enum: [ios, android]
+      requestBody:
+        required: true
+        description: Forwarded verbatim to Thirdweb's sign-message endpoint.
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+              example:
+                chainId: 137
+                message: "hello"
+      responses:
+        '200':
+          description: Signed message — body forwarded byte-for-byte from Thirdweb
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+              example:
+                signature: "0xdeadbeef..."
+        '401':
+          description: Missing/invalid bearer JWT, or attestation gate failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttestationGateError'
+              examples:
+                missingBearer:
+                  summary: No Authorization header
+                  value:
+                    error: "missing Authorization: Bearer <jwt>"
+                attestationFailed:
+                  summary: Attestation gate failed
+                  value:
+                    error: "key_id has not completed registration — call /attest/ios/register first"
+                    code: ATTESTATION_IOS_KEY_NOT_REGISTERED
+                    platform: ios
+        '400':
+          description: Upstream rejected request (sanitized — only `error`, `code`, `message` forwarded)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpstreamError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          description: Upstream temporarily unavailable (any 5xx from Thirdweb, or fetch error)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpstreamError'
+              examples:
+                upstreamUnavailable:
+                  value:
+                    error: "upstream temporarily unavailable"
+        '504':
+          description: Upstream timeout (5 s cap exceeded). Distinct from generic 4xx so clients can retry with backoff.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpstreamError'
+              example:
+                error: "upstream timed out"
+                code: UPSTREAM_TIMEOUT
+
 components:
   securitySchemes:
     signedFetch:
@@ -266,6 +542,29 @@ components:
         - `x-identity-auth-chain-2`: Request signature with method, path, and timestamp
         - `x-identity-timestamp`: Unix timestamp of the request
         - `x-identity-metadata`: JSON metadata including intent
+    bearerJwt:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Bearer JWT obtained from the user's wallet/identity provider. Forwarded
+        verbatim to Thirdweb on `/wallets/sign-message`.
+
+  responses:
+    RateLimited:
+      description: |
+        Rate limit exceeded for this client IP. Retry after the number of
+        seconds in the `Retry-After` header.
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying
+          schema: { type: integer, minimum: 1 }
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string, example: "rate limit exceeded" }
 
   schemas:
     DeletionRequest:
@@ -383,6 +682,135 @@ components:
           type: string
           description: Additional error details (present for signed fetch errors)
           example: This endpoint requires a signed fetch request. See ADR-44.
+
+    FlatErrorResponse:
+      type: object
+      description: |
+        Bare error shape used by anonymous endpoints (attestation, sign-message).
+        Distinct from `ErrorResponse` because these endpoints do not include
+        the `ok: false` envelope used by signed-fetch deletion endpoints.
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          example: invalid JSON body
+
+    AttestChallengeResponse:
+      type: object
+      required:
+        - challenge
+        - expires_at
+      properties:
+        challenge:
+          type: string
+          description: base64url-encoded random challenge (32 bytes)
+        expires_at:
+          type: string
+          format: date-time
+          description: ISO timestamp after which the challenge can no longer be consumed
+
+    AttestRegisterRequest:
+      type: object
+      required:
+        - key_id
+        - attestation_object
+        - challenge
+      properties:
+        key_id:
+          type: string
+          description: base64url-encoded App Attest key id
+        attestation_object:
+          type: string
+          description: base64url-encoded App Attest attestation object (CBOR)
+        challenge:
+          type: string
+          description: The exact `challenge` returned by `/attest/ios/challenge`
+
+    AttestRegisterResponse:
+      type: object
+      required:
+        - registered
+        - key_id_prefix
+      properties:
+        registered:
+          type: boolean
+          example: true
+        key_id_prefix:
+          type: string
+          description: First 8 base64url characters of the registered key_id (for log correlation)
+          example: "abc12345"
+
+    AttestCheckResponse:
+      type: object
+      required:
+        - ok
+        - platform
+        - code
+        - elapsed_ms
+      properties:
+        ok:
+          type: boolean
+          description: True only when `code` is "OK"
+        platform:
+          type: string
+          enum: [ios, android, unknown]
+        code:
+          type: string
+          description: |
+            "OK" on success, otherwise an `ATTESTATION_*` code identifying
+            the failure mode. iOS codes start with `ATTESTATION_IOS_*`,
+            android codes with `ATTESTATION_ANDROID_*`.
+          example: OK
+        error:
+          type: string
+          description: Human-readable description of a non-OK code
+        verdicts:
+          type: array
+          description: Android only — the `deviceRecognitionVerdict` array from Play Integrity
+          items:
+            type: string
+        details:
+          description: Platform-specific extras (shape may vary)
+        key_id_prefix:
+          type: string
+          description: iOS only — first 8 base64url chars of the key id
+        elapsed_ms:
+          type: integer
+          description: Wall-clock time spent inside the verifier
+
+    AttestationGateError:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+          description: |
+            ATTESTATION_* code identifying the failure mode. Absent when the
+            failure was unrelated to attestation (e.g. missing bearer).
+        platform:
+          type: string
+          enum: [ios, android, unknown]
+        details:
+          description: Platform-specific extras
+
+    UpstreamError:
+      type: object
+      description: |
+        Sanitized error shape returned when forwarding to Thirdweb fails or
+        is rejected. Only a curated subset of upstream error fields (`error`,
+        `code`, `message`) is exposed — anything else (request ids, traces,
+        adapter internals) is dropped server-side.
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+        message:
+          type: string
 
     HealthResponse:
       type: object

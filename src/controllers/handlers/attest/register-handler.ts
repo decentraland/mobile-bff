@@ -1,7 +1,7 @@
 import { HandlerContextWithPath } from '../../../types'
 import { AppAttestError } from '../../../adapters/app-attest'
 import { clientKeyFromHeaders } from '../../../adapters/rate-limiter'
-import { RL_ATTEST_REGISTER } from '../../../logic/rate-limit-rules'
+import { RL_ATTEST_REGISTER, withFallbackCap } from '../../../logic/rate-limit-rules'
 
 type RegisterBody = {
   key_id?: unknown
@@ -29,8 +29,12 @@ export async function attestIosRegisterHandler(
   } = context
   const logger = logs.getLogger('attest-ios-register')
 
-  const ipKey = clientKeyFromHeaders(request.headers)
-  const rl = rateLimiter.check(RL_ATTEST_REGISTER, `attest:register:${ipKey}`, 'attest:register')
+  const { key: ipKey, isFallback } = clientKeyFromHeaders(request.headers, logs.getLogger('rate-limit'))
+  const rl = rateLimiter.check(
+    withFallbackCap(RL_ATTEST_REGISTER, isFallback),
+    `attest:register:${ipKey}`,
+    'attest:register'
+  )
   if (!rl.allowed) {
     return {
       status: 429,

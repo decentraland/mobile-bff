@@ -12,3 +12,20 @@ export const RL_ATTEST_CHALLENGE: RateLimitRule = { windowMs: 60_000, max: 30 }
 export const RL_ATTEST_REGISTER: RateLimitRule = { windowMs: 60_000, max: 10 }
 export const RL_ATTEST_CHECK: RateLimitRule = { windowMs: 60_000, max: 60 }
 export const RL_SIGN_MESSAGE: RateLimitRule = { windowMs: 60_000, max: 60 }
+
+// Divisor applied to a rule's `max` when the caller IP could not be
+// resolved (no x-forwarded-for / x-real-ip). All such callers share a
+// single bucket, so the effective cap is global — we tighten it so a
+// misconfigured deployment degrades to "very few requests get through"
+// instead of "the first N consume the full per-endpoint cap and the rest
+// see 429". 10× tighter is arbitrary but matches the rough scale of
+// per-IP vs shared traffic we expect in practice.
+const FALLBACK_CAP_DIVISOR = 10
+
+// Returns a rule with `max` lowered when the caller could not be
+// attributed to a specific IP. Use when the rate-limit key came from the
+// `isFallback: true` branch of `clientKeyFromHeaders`.
+export function withFallbackCap(rule: RateLimitRule, isFallback: boolean): RateLimitRule {
+  if (!isFallback) return rule
+  return { windowMs: rule.windowMs, max: Math.max(1, Math.floor(rule.max / FALLBACK_CAP_DIVISOR)) }
+}

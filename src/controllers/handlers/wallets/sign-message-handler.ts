@@ -1,6 +1,6 @@
 import { HandlerContextWithPath } from '../../../types'
 import { clientKeyFromHeaders } from '../../../adapters/rate-limiter'
-import { RL_SIGN_MESSAGE } from '../../../logic/rate-limit-rules'
+import { RL_SIGN_MESSAGE, withFallbackCap } from '../../../logic/rate-limit-rules'
 
 // POST /wallets/sign-message — thin proxy to Thirdweb's sign-message, gated by
 // platform attestation. The user's `Authorization: Bearer <jwt>` flows
@@ -31,8 +31,12 @@ export async function signMessageHandler(
   } = context
   const logger = logs.getLogger('sign-message')
 
-  const ipKey = clientKeyFromHeaders(request.headers)
-  const rl = rateLimiter.check(RL_SIGN_MESSAGE, `sign-message:${ipKey}`, 'wallets:sign-message')
+  const { key: ipKey, isFallback } = clientKeyFromHeaders(request.headers, logs.getLogger('rate-limit'))
+  const rl = rateLimiter.check(
+    withFallbackCap(RL_SIGN_MESSAGE, isFallback),
+    `sign-message:${ipKey}`,
+    'wallets:sign-message'
+  )
   if (!rl.allowed) {
     const retryHeaders: Record<string, string> = { 'Retry-After': String(rl.retryAfterSec) }
     return {
