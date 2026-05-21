@@ -100,7 +100,8 @@ describe('sign-message-handler', () => {
       const ctx = createContext({ body: '{"foo":"bar"}' })
       const res = await signMessageHandler(ctx as any)
       expect(res.status).toBe(200)
-      expect(res.body).toBe('{"signature":"0xdeadbeef"}')
+      expect(Buffer.isBuffer(res.body)).toBe(true)
+      expect((res.body as Buffer).toString('utf8')).toBe('{"signature":"0xdeadbeef"}')
       expect(mockProxy.forwardSignMessage).toHaveBeenCalledWith({
         authorization: 'Bearer test-jwt',
         rawBody: expect.any(Buffer)
@@ -128,12 +129,12 @@ describe('sign-message-handler', () => {
       mockProxy.forwardSignMessage.mockResolvedValue({
         status: 400,
         contentType: 'application/json',
-        body: '{"error":"bad chain"}'
+        body: Buffer.from('{"error":"bad chain"}', 'utf8')
       })
       const ctx = createContext()
       const res = await signMessageHandler(ctx as any)
       expect(res.status).toBe(400)
-      expect(res.body).toBe('{"error":"bad chain"}')
+      expect((res.body as Buffer).toString('utf8')).toBe('{"error":"bad chain"}')
     })
   })
 })

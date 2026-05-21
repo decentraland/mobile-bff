@@ -37,18 +37,26 @@ export async function attestIosRegisterHandler(
     return { status: 400, body: { error: 'challenge unknown or expired' } }
   }
 
+  const keyIdPrefix = key_id.slice(0, 8)
   try {
     const { publicKeyPem } = appAttest.verifyRegistration({
       keyIdB64u: key_id,
       attestationObjectB64u: attestation_object,
       challengeBytes
     })
-    await attestationState.registerKey(key_id, publicKeyPem)
-    logger.info('ios key registered', { key_id_prefix: key_id.slice(0, 8) })
-    return { status: 200, body: { registered: true } }
+    const { inserted } = await attestationState.registerKey(key_id, publicKeyPem)
+    if (!inserted) {
+      // Overwrite of an existing row — counter just got reset. Surface it so
+      // we can correlate with any subsequent COUNTER_REPLAY noise from the
+      // same key_id.
+      logger.warn('ios key re-registered, counter reset', { key_id_prefix: keyIdPrefix })
+    } else {
+      logger.info('ios key registered', { key_id_prefix: keyIdPrefix })
+    }
+    return { status: 200, body: { registered: true, key_id_prefix: keyIdPrefix } }
   } catch (e: any) {
     const msg = e instanceof AppAttestError ? e.message : `unexpected: ${e?.message || e}`
-    logger.warn('ios key registration failed', { key_id_prefix: key_id.slice(0, 8), error: msg })
+    logger.warn('ios key registration failed', { key_id_prefix: keyIdPrefix, error: msg })
     return { status: 400, body: { error: msg } }
   }
 }

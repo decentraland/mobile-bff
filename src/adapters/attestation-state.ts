@@ -23,10 +23,17 @@ export type RegisteredKey = {
   counter: number
 }
 
+export type RegisterKeyResult = {
+  // true on a fresh INSERT, false when ON CONFLICT updated an existing row.
+  // Re-registration shouldn't happen in normal App Attest flow (attestation
+  // is one-shot per key), so callers warn-log when this returns false.
+  inserted: boolean
+}
+
 export type IAttestationStateComponent = {
   issueChallenge(): Promise<{ challenge: string; expiresAt: string }>
   consumeChallenge(challenge: string): Promise<Buffer | null>
-  registerKey(keyId: string, publicKeyPem: string): Promise<void>
+  registerKey(keyId: string, publicKeyPem: string): Promise<RegisterKeyResult>
   getRegisteredKey(keyId: string): Promise<RegisteredKey | null>
   // CAS update: only writes if newCounter > current counter, returns whether
   // the write actually happened. Returning `false` means a concurrent request
@@ -43,6 +50,10 @@ export async function createAttestationStateComponent({
     const challenge = challengeBytes.toString('base64url')
     const expiresAtMs = Date.now() + CHALLENGE_TTL_MS
     const expiresAt = new Date(expiresAtMs)
+    // Opportunistic GC: the issue path is anonymous and unauthenticated, so
+    // we piggyback expired-row cleanup on every call rather than relying on
+    // an external sweep. The expires_at index keeps this cheap.
+    await pg.query(SQL`DELETE FROM attest_challenges WHERE expires_at < NOW()`)
     await pg.query(SQL`
       INSERT INTO attest_challenges (challenge, challenge_bytes, expires_at)
       VALUES (${challenge}, ${challengeBytes}, ${expiresAt})
@@ -65,19 +76,28 @@ export async function createAttestationStateComponent({
     return Buffer.from(row.challenge_bytes)
   }
 
-  async function registerKey(keyId: string, publicKeyPem: string): Promise<void> {
+  async function registerKey(keyId: string, publicKeyPem: string): Promise<RegisterKeyResult> {
     // ON CONFLICT DO UPDATE: if a client re-registers the same key_id
     // (shouldn't happen in normal flow — App Attest attestation is one-shot
     // per key — but harmless to overwrite), we reset the counter to 0 to
     // match the freshly-attested key.
-    await pg.query(SQL`
+    //
+    // `xmax = 0` on the RETURNING row is the Postgres idiom for "this was
+    // an INSERT, not an UPDATE": xmax is unset on a freshly-inserted tuple,
+    // and ON CONFLICT DO UPDATE sets it. We surface that distinction so the
+    // caller can warn-log overwrites — they can mean a client bug or, more
+    // worryingly, an attacker resetting the counter on a key they control.
+    const result = await pg.query<{ inserted: boolean }>(SQL`
       INSERT INTO attest_keys (key_id, public_key_pem, counter, last_used_at)
       VALUES (${keyId}, ${publicKeyPem}, 0, NOW())
       ON CONFLICT (key_id) DO UPDATE SET
         public_key_pem = EXCLUDED.public_key_pem,
         counter = 0,
         last_used_at = NOW()
+      RETURNING (xmax = 0) AS inserted
     `)
+    const inserted = result.rows[0]?.inserted ?? true
+    return { inserted }
   }
 
   async function getRegisteredKey(keyId: string): Promise<RegisteredKey | null> {

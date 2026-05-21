@@ -15,11 +15,20 @@ import { google, playintegrity_v1 } from 'googleapis'
 
 import { AppComponents } from '../types'
 
-// Five minutes of clock skew tolerance. The token is body-bound by SHA256, so
-// a stale replay still has to match the exact request body; the freshness
-// window only limits opportunistic re-use on mobile networks with slow
-// round-trips.
+// Five minutes of past clock skew tolerance. The token is body-bound by
+// SHA256, so a stale replay still has to match the exact request body; the
+// freshness window only limits opportunistic re-use on mobile networks with
+// slow round-trips.
 const FRESHNESS_MS = 5 * 60 * 1000
+// Future-dated tokens shouldn't happen in normal flow (the Play Integrity
+// service times tokens itself), so we only accept ~30s of forward skew rather
+// than the full FRESHNESS_MS window. Wider future tolerance just makes it
+// easier to replay a leaked token before its natural expiry.
+const FUTURE_SKEW_MS = 30_000
+
+// Hard timeout on the upstream decodeIntegrityToken call. Without it a hung
+// Google Play Integrity backend would pin a request slot indefinitely.
+const DECODE_TIMEOUT_MS = 5_000
 
 export class PlayIntegrityError extends Error {
   code: string
@@ -71,10 +80,13 @@ export async function createPlayIntegrityComponent({
   }): Promise<{ payload: playintegrity_v1.Schema$TokenPayloadExternal }> {
     let decoded
     try {
-      decoded = await client.v1.decodeIntegrityToken({
-        packageName,
-        requestBody: { integrityToken }
-      })
+      decoded = await client.v1.decodeIntegrityToken(
+        {
+          packageName,
+          requestBody: { integrityToken }
+        },
+        { timeout: DECODE_TIMEOUT_MS }
+      )
     } catch (e: any) {
       throw new PlayIntegrityError(
         'ATTESTATION_ANDROID_INVALID_TOKEN',
@@ -119,12 +131,23 @@ export async function createPlayIntegrityComponent({
       )
     }
 
-    // Freshness — tokens older than FRESHNESS_MS are rejected.
+    // Freshness — tokens older than FRESHNESS_MS in the past, or more than
+    // FUTURE_SKEW_MS in the future, are rejected. Asymmetric tolerance: past
+    // skew is normal on slow networks, future timestamps are not — they'd
+    // either indicate device clock drift (the device shouldn't be issuing
+    // future-dated tokens) or a deliberate replay attempt.
     const tsMs = Number(reqDetails.timestampMillis)
-    if (!Number.isFinite(tsMs) || Math.abs(Date.now() - tsMs) > FRESHNESS_MS) {
+    if (!Number.isFinite(tsMs)) {
       throw new PlayIntegrityError(
         'ATTESTATION_ANDROID_TOKEN_STALE',
-        `token timestampMillis=${reqDetails.timestampMillis} is outside ±${FRESHNESS_MS}ms window`
+        `token timestampMillis=${reqDetails.timestampMillis} is not a finite number`
+      )
+    }
+    const ageMs = Date.now() - tsMs
+    if (ageMs > FRESHNESS_MS || ageMs < -FUTURE_SKEW_MS) {
+      throw new PlayIntegrityError(
+        'ATTESTATION_ANDROID_TOKEN_STALE',
+        `token timestampMillis=${reqDetails.timestampMillis} outside window (past=${FRESHNESS_MS}ms, future=${FUTURE_SKEW_MS}ms)`
       )
     }
 

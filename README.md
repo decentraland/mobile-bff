@@ -295,6 +295,8 @@ Thin proxy in front of Thirdweb's `POST /v1/wallets/sign-message` plus a platfor
 
 **Attestation gates sign-message**: the client must send the standard `x-attest-*` headers (the same ones consumed by `/attest/check`). A failed verdict returns HTTP 401 with the attestation `code` in the body so the client can decide whether to retry (e.g. re-enroll on `ATTESTATION_IOS_KEY_NOT_REGISTERED`). `/attest/check` always returns 200 and is intended as an analytics report endpoint.
 
+**Threat model — what attestation proves and does not prove**: a passing attestation verdict only proves the request came from a genuine, unmodified iOS/Android build of our app on a non-rooted device. It does not prove _which user_ is signing. The signing user identity comes from the `Authorization: Bearer <jwt>` validated by Thirdweb downstream. If an attacker exfiltrates another user's JWT and pairs it with a legitimate device's attestation headers, they can sign as the JWT owner. The body-binding (App Attest `clientDataHash` and Play Integrity `requestHash`) ensures the headers are tied to the exact request body, but the `Authorization` header is not part of that hash.
+
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/wallets/sign-message` | Thirdweb sign-message proxy. Gated by platform attestation; 401 on failure. |
@@ -418,6 +420,17 @@ npm run migrate
 │ requested_at        │
 │ status              │
 └─────────────────────┘
+
+
+┌─────────────────────┐       ┌─────────────────────┐
+│  attest_challenges  │       │     attest_keys     │
+├─────────────────────┤       ├─────────────────────┤
+│ challenge   (PK)    │       │ key_id      (PK)    │
+│ challenge_bytes     │       │ public_key_pem      │
+│ expires_at          │       │ counter   bigint    │
+└─────────────────────┘       │ created_at          │
+                              │ last_used_at        │
+                              └─────────────────────┘
 ```
 
 ### Tables
@@ -430,3 +443,5 @@ npm run migrate
 - `bans` - Ban records (for places, groups, scenes, or worlds)
 - `ban_positions` - Parcel coordinates for scene bans
 - `deletion_requests` - Account deletion requests
+- `attest_challenges` - Short-lived (5 min TTL) one-shot challenges for App Attest enrollment
+- `attest_keys` - Long-lived iOS App Attest registrations (one row per install, monotonic counter for replay detection)

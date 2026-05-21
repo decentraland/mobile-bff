@@ -31,10 +31,21 @@ const AAGUID_PROD = Buffer.concat([Buffer.from('appattest', 'utf8'), Buffer.allo
 
 const APPLE_ROOT_X509 = new crypto.X509Certificate(APPLE_APP_ATTEST_ROOT_CA_PEM)
 
+// Granular error codes — surfaced to the client through the
+// attestation-verifier outcome so the client (and analytics) can branch on
+// the failure mode without parsing free-form messages.
+export type AppAttestErrorCode =
+  | 'ATTESTATION_IOS_BAD_CBOR'
+  | 'ATTESTATION_IOS_BAD_SIGNATURE'
+  | 'ATTESTATION_IOS_COUNTER_REPLAY'
+  | 'ATTESTATION_IOS_BAD_ASSERTION'
+
 export class AppAttestError extends Error {
-  constructor(message: string) {
+  code: AppAttestErrorCode
+  constructor(code: AppAttestErrorCode, message: string) {
     super(message)
     this.name = 'AppAttestError'
+    this.code = code
   }
 }
 
@@ -79,18 +90,18 @@ export async function createAppAttestComponent({
     try {
       decoded = cborDecode(attObjBytes)
     } catch (e: any) {
-      throw new AppAttestError(`attestation_object is not valid CBOR: ${e.message}`)
+      throw new AppAttestError('ATTESTATION_IOS_BAD_CBOR', `attestation_object is not valid CBOR: ${e.message}`)
     }
 
     if (!decoded || decoded.fmt !== 'apple-appattest') {
-      throw new AppAttestError(`unexpected fmt: ${decoded && decoded.fmt}`)
+      throw new AppAttestError('ATTESTATION_IOS_BAD_ASSERTION', `unexpected fmt: ${decoded && decoded.fmt}`)
     }
 
     const attStmt = decoded.attStmt
     const authData = bufferOf(decoded.authData, 'authData')
     const x5c = attStmt && attStmt.x5c
     if (!Array.isArray(x5c) || x5c.length === 0) {
-      throw new AppAttestError('attStmt.x5c missing or empty')
+      throw new AppAttestError('ATTESTATION_IOS_BAD_ASSERTION', 'attStmt.x5c missing or empty')
     }
 
     // Chain verification: each cert is signed by the next, last one chains up
@@ -105,40 +116,50 @@ export async function createAppAttestComponent({
     const expectedNonce = sha256(Buffer.concat([authData, challengeHash]))
     const certNonce = extractAppleNonce(leafDer)
     if (!certNonce.equals(expectedNonce)) {
-      throw new AppAttestError('Apple nonce extension does not match SHA256(authData || SHA256(challenge))')
+      throw new AppAttestError(
+        'ATTESTATION_IOS_BAD_ASSERTION',
+        'Apple nonce extension does not match SHA256(authData || SHA256(challenge))'
+      )
     }
 
     const keyIdBytes = Buffer.from(keyIdB64u, 'base64url')
     const jwk = leafCert.publicKey.export({ format: 'jwk' }) as { kty?: string; crv?: string; x?: string; y?: string }
     if (jwk.kty !== 'EC' || jwk.crv !== 'P-256') {
-      throw new AppAttestError(`expected EC P-256 leaf key, got ${jwk.kty}/${jwk.crv}`)
+      throw new AppAttestError('ATTESTATION_IOS_BAD_ASSERTION', `expected EC P-256 leaf key, got ${jwk.kty}/${jwk.crv}`)
     }
     const xBytes = Buffer.from(jwk.x!, 'base64url')
     const yBytes = Buffer.from(jwk.y!, 'base64url')
     if (xBytes.length !== 32 || yBytes.length !== 32) {
-      throw new AppAttestError('leaf EC public key components not 32 bytes')
+      throw new AppAttestError('ATTESTATION_IOS_BAD_ASSERTION', 'leaf EC public key components not 32 bytes')
     }
     const uncompressedPoint = Buffer.concat([Buffer.from([0x04]), xBytes, yBytes])
     const publicKeyHash = sha256(uncompressedPoint)
     if (!publicKeyHash.equals(keyIdBytes)) {
-      throw new AppAttestError('SHA256(leaf public key) does not equal the provided key_id')
+      throw new AppAttestError(
+        'ATTESTATION_IOS_BAD_ASSERTION',
+        'SHA256(leaf public key) does not equal the provided key_id'
+      )
     }
 
     const parsed = parseAuthData(authData, { expectAttestedCredential: true })
     if (!parsed.credentialId || !parsed.credentialId.equals(keyIdBytes)) {
-      throw new AppAttestError('authData credentialId does not equal the provided key_id')
+      throw new AppAttestError(
+        'ATTESTATION_IOS_BAD_ASSERTION',
+        'authData credentialId does not equal the provided key_id'
+      )
     }
 
     const expectedAaguid = env === 'production' ? AAGUID_PROD : AAGUID_DEV
     if (!parsed.aaguid!.equals(expectedAaguid)) {
       throw new AppAttestError(
+        'ATTESTATION_IOS_BAD_ASSERTION',
         `aaguid mismatch for APP_ATTEST_ENV=${env} (got 0x${parsed.aaguid!.toString('hex')})`
       )
     }
 
     const expectedRpIdHash = sha256(Buffer.from(expectedAppId, 'utf8'))
     if (!parsed.rpIdHash.equals(expectedRpIdHash)) {
-      throw new AppAttestError('authData RP ID hash does not match appId')
+      throw new AppAttestError('ATTESTATION_IOS_BAD_ASSERTION', 'authData RP ID hash does not match appId')
     }
 
     const publicKeyPem = leafCert.publicKey.export({ format: 'pem', type: 'spki' }) as string
@@ -163,13 +184,13 @@ export async function createAppAttestComponent({
     try {
       decoded = cborDecode(assertionBytes)
     } catch (e: any) {
-      throw new AppAttestError(`assertion is not valid CBOR: ${e.message}`)
+      throw new AppAttestError('ATTESTATION_IOS_BAD_CBOR', `assertion is not valid CBOR: ${e.message}`)
     }
 
     const signature = bufferOf(decoded && decoded.signature, 'signature')
     const authData = bufferOf(decoded && decoded.authenticatorData, 'authenticatorData')
     if (authData.length < 37) {
-      throw new AppAttestError('assertion authenticatorData too short')
+      throw new AppAttestError('ATTESTATION_IOS_BAD_ASSERTION', 'assertion authenticatorData too short')
     }
 
     // clientDataHash = SHA256(raw request body || client-supplied nonce)
@@ -188,17 +209,20 @@ export async function createAppAttestComponent({
     verifier.update(nonce)
     const verified = verifier.verify(storedPublicKeyPem, signature)
     if (!verified) {
-      throw new AppAttestError('assertion signature invalid')
+      throw new AppAttestError('ATTESTATION_IOS_BAD_SIGNATURE', 'assertion signature invalid')
     }
 
     const expectedRpIdHash = sha256(Buffer.from(expectedAppId, 'utf8'))
     if (!authData.subarray(0, 32).equals(expectedRpIdHash)) {
-      throw new AppAttestError('assertion RP ID hash does not match appId')
+      throw new AppAttestError('ATTESTATION_IOS_BAD_ASSERTION', 'assertion RP ID hash does not match appId')
     }
 
     const newCounter = authData.readUInt32BE(33)
     if (newCounter <= storedCounter) {
-      throw new AppAttestError(`counter replay (stored=${storedCounter}, received=${newCounter})`)
+      throw new AppAttestError(
+        'ATTESTATION_IOS_COUNTER_REPLAY',
+        `counter replay (stored=${storedCounter}, received=${newCounter})`
+      )
     }
 
     return { newCounter }
@@ -214,7 +238,7 @@ function sha256(buf: Buffer): Buffer {
 function bufferOf(val: unknown, label: string): Buffer {
   if (Buffer.isBuffer(val)) return val
   if (val instanceof Uint8Array) return Buffer.from(val)
-  throw new AppAttestError(`${label} missing or not bytes`)
+  throw new AppAttestError('ATTESTATION_IOS_BAD_ASSERTION', `${label} missing or not bytes`)
 }
 
 function verifyCertChain(chain: crypto.X509Certificate[], root: crypto.X509Certificate): void {
@@ -222,17 +246,23 @@ function verifyCertChain(chain: crypto.X509Certificate[], root: crypto.X509Certi
     const child = chain[i]
     const issuer = chain[i + 1]
     if (!child.checkIssued(issuer) || !child.verify(issuer.publicKey)) {
-      throw new AppAttestError(`cert chain broken at index ${i} (issuer mismatch or bad signature)`)
+      throw new AppAttestError(
+        'ATTESTATION_IOS_BAD_ASSERTION',
+        `cert chain broken at index ${i} (issuer mismatch or bad signature)`
+      )
     }
   }
   const last = chain[chain.length - 1]
   if (!last.checkIssued(root) || !last.verify(root.publicKey)) {
-    throw new AppAttestError('last cert in x5c is not signed by Apple App Attest Root CA')
+    throw new AppAttestError(
+      'ATTESTATION_IOS_BAD_ASSERTION',
+      'last cert in x5c is not signed by Apple App Attest Root CA'
+    )
   }
   const now = new Date()
   for (const cert of chain) {
     if (new Date(cert.validFrom) > now || new Date(cert.validTo) < now) {
-      throw new AppAttestError(`cert outside validity window: ${cert.subject}`)
+      throw new AppAttestError('ATTESTATION_IOS_BAD_ASSERTION', `cert outside validity window: ${cert.subject}`)
     }
   }
 }
@@ -241,7 +271,7 @@ function parseAuthData(
   buf: Buffer,
   { expectAttestedCredential }: { expectAttestedCredential: boolean }
 ): { rpIdHash: Buffer; flags: number; counter: number; aaguid: Buffer | null; credentialId: Buffer | null } {
-  if (buf.length < 37) throw new AppAttestError('authData too short')
+  if (buf.length < 37) throw new AppAttestError('ATTESTATION_IOS_BAD_ASSERTION', 'authData too short')
   const rpIdHash = buf.subarray(0, 32)
   const flags = buf[32]
   const counter = buf.readUInt32BE(33)
@@ -249,12 +279,12 @@ function parseAuthData(
   let credentialId: Buffer | null = null
   if (expectAttestedCredential) {
     if (buf.length < 55) {
-      throw new AppAttestError('authData missing attested credential data')
+      throw new AppAttestError('ATTESTATION_IOS_BAD_ASSERTION', 'authData missing attested credential data')
     }
     aaguid = buf.subarray(37, 53)
     const credLen = buf.readUInt16BE(53)
     if (buf.length < 55 + credLen) {
-      throw new AppAttestError('authData truncated credentialId')
+      throw new AppAttestError('ATTESTATION_IOS_BAD_ASSERTION', 'authData truncated credentialId')
     }
     credentialId = buf.subarray(55, 55 + credLen)
   }
@@ -270,23 +300,23 @@ function extractAppleNonce(certDer: Buffer): Buffer {
   try {
     asn1 = forge.asn1.fromDer(forge.util.createBuffer(certDer.toString('binary'), 'raw'))
   } catch (e: any) {
-    throw new AppAttestError(`leaf cert ASN.1 parse failed: ${e.message}`)
+    throw new AppAttestError('ATTESTATION_IOS_BAD_ASSERTION', `leaf cert ASN.1 parse failed: ${e.message}`)
   }
 
   const tbsCert = asn1 && asn1.value && asn1.value[0]
   if (!tbsCert || !Array.isArray(tbsCert.value)) {
-    throw new AppAttestError('leaf cert has no TBSCertificate')
+    throw new AppAttestError('ATTESTATION_IOS_BAD_ASSERTION', 'leaf cert has no TBSCertificate')
   }
 
   const extensionsBlock = tbsCert.value.find(
     (n: any) => n.tagClass === forge.asn1.Class.CONTEXT_SPECIFIC && n.type === 3
   )
   if (!extensionsBlock) {
-    throw new AppAttestError('leaf cert has no extensions block')
+    throw new AppAttestError('ATTESTATION_IOS_BAD_ASSERTION', 'leaf cert has no extensions block')
   }
   const extensionsSeq = extensionsBlock.value && extensionsBlock.value[0]
   if (!extensionsSeq || !Array.isArray(extensionsSeq.value)) {
-    throw new AppAttestError('leaf cert extensions block malformed')
+    throw new AppAttestError('ATTESTATION_IOS_BAD_ASSERTION', 'leaf cert extensions block malformed')
   }
 
   for (const ext of extensionsSeq.value) {
@@ -301,10 +331,13 @@ function extractAppleNonce(certDer: Buffer): Buffer {
     const tagged: any = inner && (inner as any).value && (inner as any).value[0]
     const nonceOctet: any = tagged && tagged.value && tagged.value[0]
     if (!nonceOctet || typeof nonceOctet.value !== 'string') {
-      throw new AppAttestError('nonce extension has unexpected ASN.1 shape')
+      throw new AppAttestError('ATTESTATION_IOS_BAD_ASSERTION', 'nonce extension has unexpected ASN.1 shape')
     }
     return Buffer.from(nonceOctet.value, 'binary')
   }
 
-  throw new AppAttestError(`leaf certificate is missing extension ${APPLE_NONCE_OID}`)
+  throw new AppAttestError(
+    'ATTESTATION_IOS_BAD_ASSERTION',
+    `leaf certificate is missing extension ${APPLE_NONCE_OID}`
+  )
 }

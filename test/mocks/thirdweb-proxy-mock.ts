@@ -7,7 +7,7 @@ export function createThirdwebProxyJestMockComponent(
     forwardSignMessage: jest.fn().mockResolvedValue({
       status: 200,
       contentType: 'application/json',
-      body: '{"signature":"0xdeadbeef"}'
+      body: Buffer.from('{"signature":"0xdeadbeef"}', 'utf8')
     }),
     ...overrides
   }

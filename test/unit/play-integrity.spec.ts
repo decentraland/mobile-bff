@@ -167,6 +167,17 @@ describe('play-integrity adapter', () => {
       })
     })
 
+    it('rejects tokens dated more than ~30s in the future', async () => {
+      const twoMinutesAhead = String(Date.now() + 2 * 60 * 1000)
+      mockDecodeIntegrityToken.mockResolvedValue(
+        tokenPayload({ requestDetails: { timestampMillis: twoMinutesAhead } }, rawBody)
+      )
+      const adapter = await createPlayIntegrityComponent({ config: buildConfig() } as any)
+      await expect(adapter.verifyIntegrityToken({ integrityToken: 'tok', rawBody })).rejects.toMatchObject({
+        code: 'ATTESTATION_ANDROID_TOKEN_STALE'
+      })
+    })
+
     it('rejects when appRecognitionVerdict is not PLAY_RECOGNIZED', async () => {
       mockDecodeIntegrityToken.mockResolvedValue(
         tokenPayload({ appIntegrity: { appRecognitionVerdict: 'UNRECOGNIZED_VERSION' } }, rawBody)

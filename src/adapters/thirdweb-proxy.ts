@@ -10,15 +10,21 @@
 // On 5xx, we return a generic payload to the client and log the upstream
 // status + body server-side. On 4xx, we forward upstream's body since it's
 // usually actionable (bad chain id, missing field, etc.).
+//
+// `body` is a Buffer of the exact upstream bytes (or our locally-crafted
+// JSON on error). The handler returns it as-is and wkc http-server writes
+// Buffers verbatim, so the wire payload is byte-identical to upstream and
+// the framework never re-encodes it.
 
 import { AppComponents } from '../types'
 
 const DEFAULT_UPSTREAM = 'https://api.thirdweb.com/v1/wallets/sign-message'
+const UPSTREAM_TIMEOUT_MS = 5_000
 
 export type ThirdwebProxyResponse = {
   status: number
   contentType: string | null
-  body: string
+  body: Buffer
 }
 
 export type IThirdwebProxyComponent = {
@@ -34,6 +40,14 @@ export async function createThirdwebProxyComponent({
   const clientId = await config.requireString('THIRDWEB_CLIENT_ID')
   const upstreamUrl = (await config.getString('THIRDWEB_API_BASE_URL')) || DEFAULT_UPSTREAM
   const logger = logs.getLogger('thirdweb-proxy')
+
+  function jsonError(status: number, message: string): ThirdwebProxyResponse {
+    return {
+      status,
+      contentType: 'application/json',
+      body: Buffer.from(JSON.stringify({ error: message }), 'utf8')
+    }
+  }
 
   async function forwardSignMessage({
     authorization,
@@ -52,21 +66,24 @@ export async function createThirdwebProxyComponent({
           'x-secret-key': secretKey,
           'x-client-id': clientId
         },
-        body: rawBody
-      })
-      const text = await upstream.text()
+        body: rawBody,
+        // Hard cap — without this a hung upstream pins a request slot
+        // indefinitely. The wkc fetch component aborts and throws when this
+        // fires, which is caught below.
+        timeout: UPSTREAM_TIMEOUT_MS
+      } as any)
+      const bodyBytes = Buffer.from(await upstream.arrayBuffer())
       if (upstream.status >= 500) {
-        logger.warn('upstream 5xx', { status: upstream.status, bodyPreview: text.slice(0, 200) })
-        return {
-          status: 502,
-          contentType: 'application/json',
-          body: JSON.stringify({ error: 'upstream temporarily unavailable' })
-        }
+        logger.warn('upstream 5xx', {
+          status: upstream.status,
+          bodyPreview: bodyBytes.toString('utf8').slice(0, 200)
+        })
+        return jsonError(502, 'upstream temporarily unavailable')
       }
-      return { status: upstream.status, contentType: upstream.headers.get('content-type'), body: text }
+      return { status: upstream.status, contentType: upstream.headers.get('content-type'), body: bodyBytes }
     } catch (err: any) {
       logger.error('upstream request failed', { error: err?.message || String(err) })
-      return { status: 502, contentType: 'application/json', body: JSON.stringify({ error: 'upstream request failed' }) }
+      return jsonError(502, 'upstream request failed')
     }
   }
 

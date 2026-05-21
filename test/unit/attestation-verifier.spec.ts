@@ -98,48 +98,48 @@ describe('attestation-verifier', () => {
       expect(out.code).toBe('ATTESTATION_IOS_COUNTER_REPLAY')
     })
 
-    it('maps "counter replay" AppAttestError to COUNTER_REPLAY code', async () => {
+    it('propagates COUNTER_REPLAY code from AppAttestError', async () => {
       const state = createAttestationStateJestMockComponent()
       state.getRegisteredKey.mockResolvedValue({ publicKeyPem: 'PEM', counter: 10 })
       const appAttest = createAppAttestJestMockComponent()
       appAttest.verifyAssertion.mockImplementation(() => {
-        throw new AppAttestError('counter replay (stored=10, received=5)')
+        throw new AppAttestError('ATTESTATION_IOS_COUNTER_REPLAY', 'counter replay (stored=10, received=5)')
       })
       const { verifier } = await buildVerifier({ state, appAttest })
       const out = await verifier.verify({ headers: mkHeaders(iosHeaders), rawBody: Buffer.from('') })
       expect(out.code).toBe('ATTESTATION_IOS_COUNTER_REPLAY')
     })
 
-    it('maps "not valid CBOR" AppAttestError to BAD_CBOR code', async () => {
+    it('propagates BAD_CBOR code from AppAttestError', async () => {
       const state = createAttestationStateJestMockComponent()
       state.getRegisteredKey.mockResolvedValue({ publicKeyPem: 'PEM', counter: 0 })
       const appAttest = createAppAttestJestMockComponent()
       appAttest.verifyAssertion.mockImplementation(() => {
-        throw new AppAttestError('assertion is not valid CBOR: bad token')
+        throw new AppAttestError('ATTESTATION_IOS_BAD_CBOR', 'assertion is not valid CBOR: bad token')
       })
       const { verifier } = await buildVerifier({ state, appAttest })
       const out = await verifier.verify({ headers: mkHeaders(iosHeaders), rawBody: Buffer.from('') })
       expect(out.code).toBe('ATTESTATION_IOS_BAD_CBOR')
     })
 
-    it('maps "signature invalid" AppAttestError to BAD_SIGNATURE code', async () => {
+    it('propagates BAD_SIGNATURE code from AppAttestError', async () => {
       const state = createAttestationStateJestMockComponent()
       state.getRegisteredKey.mockResolvedValue({ publicKeyPem: 'PEM', counter: 0 })
       const appAttest = createAppAttestJestMockComponent()
       appAttest.verifyAssertion.mockImplementation(() => {
-        throw new AppAttestError('assertion signature invalid')
+        throw new AppAttestError('ATTESTATION_IOS_BAD_SIGNATURE', 'assertion signature invalid')
       })
       const { verifier } = await buildVerifier({ state, appAttest })
       const out = await verifier.verify({ headers: mkHeaders(iosHeaders), rawBody: Buffer.from('') })
       expect(out.code).toBe('ATTESTATION_IOS_BAD_SIGNATURE')
     })
 
-    it('falls back to BAD_ASSERTION for unmapped AppAttestError messages', async () => {
+    it('falls back to BAD_ASSERTION for non-AppAttestError throws', async () => {
       const state = createAttestationStateJestMockComponent()
       state.getRegisteredKey.mockResolvedValue({ publicKeyPem: 'PEM', counter: 0 })
       const appAttest = createAppAttestJestMockComponent()
       appAttest.verifyAssertion.mockImplementation(() => {
-        throw new AppAttestError('something else went wrong')
+        throw new Error('something else went wrong')
       })
       const { verifier } = await buildVerifier({ state, appAttest })
       const out = await verifier.verify({ headers: mkHeaders(iosHeaders), rawBody: Buffer.from('') })

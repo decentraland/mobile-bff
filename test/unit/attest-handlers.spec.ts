@@ -86,7 +86,7 @@ describe('attest handlers', () => {
     it('returns 400 with the underlying error message on AppAttestError', async () => {
       const { context } = createContext(
         { key_id: 'k', attestation_object: 'a', challenge: 'c' },
-        { verifyThrows: new AppAttestError('aaguid mismatch') }
+        { verifyThrows: new AppAttestError('ATTESTATION_IOS_BAD_ASSERTION', 'aaguid mismatch') }
       )
       const res = await attestIosRegisterHandler(context as any)
       expect(res.status).toBe(400)
@@ -102,8 +102,33 @@ describe('attest handlers', () => {
       mocks.appAttest.verifyRegistration.mockReturnValue({ publicKeyPem: 'PEM' })
       const res = await attestIosRegisterHandler(context as any)
       expect(res.status).toBe(200)
-      expect(res.body).toEqual({ registered: true })
+      expect(res.body).toEqual({ registered: true, key_id_prefix: 'k' })
       expect(mocks.state.registerKey).toHaveBeenCalledWith('k', 'PEM')
+    })
+
+    it('returns key_id_prefix and warn-logs when an existing row is overwritten', async () => {
+      const { context, mocks } = createContext({
+        key_id: 'key-id-1234567890',
+        attestation_object: 'a',
+        challenge: 'c'
+      })
+      mocks.appAttest.verifyRegistration.mockReturnValue({ publicKeyPem: 'PEM' })
+      mocks.state.registerKey.mockResolvedValue({ inserted: false })
+      const warn = jest.fn()
+      ;(mocks.logs.getLogger as jest.Mock).mockReturnValue({
+        info: jest.fn(),
+        warn,
+        error: jest.fn(),
+        debug: jest.fn(),
+        log: jest.fn()
+      })
+      const res = await attestIosRegisterHandler(context as any)
+      expect(res.status).toBe(200)
+      expect((res.body as any).key_id_prefix).toBe('key-id-1')
+      expect(warn).toHaveBeenCalledWith(
+        'ios key re-registered, counter reset',
+        expect.objectContaining({ key_id_prefix: 'key-id-1' })
+      )
     })
 
     it('wraps unexpected (non-AppAttestError) failures', async () => {

@@ -99,7 +99,7 @@ export async function createAttestationVerifierComponent({
         logger.info('ios attest ok', { key_id_prefix: keyIdPrefix })
         return { ok: true, platform: 'ios', code: 'OK', keyIdPrefix }
       } catch (e: any) {
-        const code = mapAppAttestErrorToCode(e)
+        const code = e instanceof AppAttestError ? e.code : 'ATTESTATION_IOS_BAD_ASSERTION'
         const error: string = e?.message || String(e)
         logger.warn('ios attest failed', { key_id_prefix: keyIdPrefix, code, error })
         return { ok: false, platform: 'ios', code, error, keyIdPrefix }
@@ -141,13 +141,4 @@ export async function createAttestationVerifierComponent({
   }
 
   return { verify }
-}
-
-function mapAppAttestErrorToCode(e: unknown): string {
-  if (!(e instanceof AppAttestError)) return 'ATTESTATION_IOS_BAD_ASSERTION'
-  const msg = e.message
-  if (/counter replay/.test(msg)) return 'ATTESTATION_IOS_COUNTER_REPLAY'
-  if (/not valid CBOR/.test(msg)) return 'ATTESTATION_IOS_BAD_CBOR'
-  if (/signature invalid/.test(msg)) return 'ATTESTATION_IOS_BAD_SIGNATURE'
-  return 'ATTESTATION_IOS_BAD_ASSERTION'
 }
