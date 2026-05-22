@@ -329,7 +329,7 @@ Session-token errors at `/wallets/sign-message` carry `ATTESTATION_SESSION_MISSI
 | `THIRDWEB_CLIENT_ID` | Thirdweb client id (sent alongside the secret key). |
 | `THIRDWEB_API_BASE_URL` | Optional upstream override; defaults to the public Thirdweb API. |
 | `APP_ATTEST_APP_ID` | Apple appId for the iOS app, in the form `<TEAM_ID>.<bundle.id>`. |
-| `APP_ATTEST_ENV` | `development` (sandbox-attested keys) or `production` (App Store builds). |
+| `APP_ATTEST_ENV` | `development` (sandbox-attested keys only), `production` (App Store / TestFlight only), or `any` (accept either AAGUID). If unset: defaults to `production` when `ENV=prd`, otherwise `any` — so a single non-prod backend serves both local Xcode dev builds and TestFlight-distributed builds without per-deploy config. |
 | `PLAY_INTEGRITY_PACKAGE_NAME` | Android package name (must match the verified token). |
 | `PLAY_INTEGRITY_REQUIRED_VERDICTS` | Comma-separated `deviceRecognitionVerdict` values that must all be present. |
 | `PLAY_INTEGRITY_SA_JSON` | Base64 of the GCP service-account JSON. Generate with `base64 -i sa.json \| tr -d '\n'`. |

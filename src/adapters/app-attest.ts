@@ -67,7 +67,10 @@ export class AppAttestError extends Error {
   }
 }
 
-export type AppAttestEnv = 'development' | 'production'
+// 'any' accepts either AAGUID — used so a single backend can serve both
+// local Xcode dev builds (sandbox-attested keys) and TestFlight/App Store
+// builds (production-attested keys) without per-deploy configuration.
+export type AppAttestEnv = 'development' | 'production' | 'any'
 
 export type IAppAttestComponent = {
   issueChallenge(): { challenge: string; expiresAt: string }
@@ -89,9 +92,14 @@ export async function createAppAttestComponent({
   // to undefined before applying the ENV-derived fallback.
   const appAttestEnvRaw = (await config.getString('APP_ATTEST_ENV')) || undefined
   const deployEnv = (await config.getString('ENV')) || undefined
-  const envRaw = appAttestEnvRaw ?? (deployEnv === 'prd' ? 'production' : 'development')
-  if (envRaw !== 'development' && envRaw !== 'production') {
-    throw new Error(`APP_ATTEST_ENV must be 'development' or 'production', got '${envRaw}'`)
+  // prd: production only — TestFlight/App Store builds attest with the
+  // production AAGUID and we don't want sandbox-attested keys passing.
+  // Anything else (dev, stg, local): 'any' — same backend serves both
+  // local Xcode dev builds and TestFlight-distributed builds without
+  // per-deploy config.
+  const envRaw = appAttestEnvRaw ?? (deployEnv === 'prd' ? 'production' : 'any')
+  if (envRaw !== 'development' && envRaw !== 'production' && envRaw !== 'any') {
+    throw new Error(`APP_ATTEST_ENV must be 'development', 'production', or 'any', got '${envRaw}'`)
   }
   const env: AppAttestEnv = envRaw
 
@@ -223,8 +231,11 @@ export async function createAppAttestComponent({
       )
     }
 
-    const expectedAaguid = env === 'production' ? AAGUID_PROD : AAGUID_DEV
-    if (!parsed.aaguid!.equals(expectedAaguid)) {
+    const aaguidOk =
+      env === 'any'
+        ? parsed.aaguid!.equals(AAGUID_PROD) || parsed.aaguid!.equals(AAGUID_DEV)
+        : parsed.aaguid!.equals(env === 'production' ? AAGUID_PROD : AAGUID_DEV)
+    if (!aaguidOk) {
       throw new AppAttestError(
         'ATTESTATION_IOS_BAD_ASSERTION',
         `aaguid mismatch for APP_ATTEST_ENV=${env} (got 0x${parsed.aaguid!.toString('hex')})`
