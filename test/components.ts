@@ -23,6 +23,24 @@ export const test = createRunner<TestComponents>({
 async function initComponents(): Promise<TestComponents> {
   // Use test database
   process.env.PG_COMPONENT_PSQL_DATABASE = 'mobile_test'
+  // Attestation session secret: production deploys must set their own, but
+  // the integration test runner needs *some* value that passes the 32-char
+  // length check at startup. This deterministic test value is fine because
+  // the integration tests don't exercise the /attest/session token flow.
+  process.env.ATTESTATION_SESSION_SECRET =
+    process.env.ATTESTATION_SESSION_SECRET || 'test-attestation-session-secret-for-integration-only'
+  // Play Integrity service-account JSON: `.env.default` ships this empty so
+  // it documents the var without leaking creds, but createPlayIntegrityComponent
+  // eagerly base64-decodes + JSON.parses it at construction. The integration
+  // tests don't exercise the Android verdict flow, so a syntactically valid
+  // placeholder is enough — google.auth.GoogleAuth only validates the key
+  // when actually fetching a token.
+  process.env.PLAY_INTEGRITY_SA_JSON =
+    process.env.PLAY_INTEGRITY_SA_JSON ||
+    Buffer.from(
+      JSON.stringify({ client_email: 'integration-test@example.com', private_key: 'integration-test-key' }),
+      'utf8'
+    ).toString('base64')
 
   const components = await originalInitComponents()
 

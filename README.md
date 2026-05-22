@@ -285,9 +285,38 @@ Ban types:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/deletion-request` | Request account deletion (signedFetch) |
-| GET | `/deletion-status` | Get deletion request status (signedFetch) |
-| DELETE | `/deletion-request` | Cancel deletion request (signedFetch) |
+| POST | `/deletion` | Request account deletion (signedFetch) |
+| GET | `/deletion` | Get deletion request status (signedFetch) |
+| DELETE | `/deletion` | Cancel deletion request (signedFetch) |
+
+### Wallets & Attestation
+
+Thin proxy in front of Thirdweb's `POST /v1/wallets/sign-message` plus a platform-attestation gate that issues a short-lived session token. The proxy forwards the user's `Authorization: Bearer <jwt>` verbatim and injects the server-only `x-secret-key`.
+
+**Flow**: the client runs platform attestation once and exchanges it for a session token at `POST /attest/session`. Subsequent `/wallets/sign-message` calls send only `x-attest-session: <token>` — no per-request attestation, no per-request Play Integrity / App Attest verification. A failed verdict at session-issuance returns HTTP 401 with the attestation `code` in the body so the client can decide how to retry.
+
+The server keeps **no attestation state**. Challenges are HMAC-signed (5 min TTL, stateless). iOS clients generate a fresh App Attest key per session (Secure Enclave, ~200ms). Session tokens are HMAC-signed too; rotating `ATTESTATION_SESSION_SECRET` invalidates every outstanding token.
+
+**Threat model — what attestation proves and does not prove**: a passing attestation verdict only proves the request came from a genuine, unmodified iOS/Android build of our app on a non-rooted device. It does not prove _which user_ is signing. The signing user identity comes from the `Authorization: Bearer <jwt>` validated by Thirdweb downstream. If an attacker exfiltrates another user's JWT and pairs it with a valid session token (or a legitimate device's headers at session-issuance), they can sign as the JWT owner. The session token is the long-lived (48h default) credential; treat it as a bearer secret.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/attest/ios/challenge` | Mint a stateless HMAC-signed challenge for iOS App Attest. Returns `{ challenge, expires_at }`. |
+| POST | `/attest/session` | Verify the platform attestation and return `{ token, expires_at }`. 401 on failure with the attestation `code` in the body. |
+| POST | `/wallets/sign-message` | Thirdweb sign-message proxy. Requires `x-attest-session`; returns 401 if the token is missing, malformed, or expired. |
+
+`POST /attest/session` request shape:
+
+- iOS: `x-attest-platform: ios` header + JSON body `{ key_id, attestation_object, challenge }` (all base64url; `challenge` is what `/attest/ios/challenge` returned).
+- Android: `x-attest-platform: android` header + `x-attest-integrity-token: <raw Play Integrity token>`. The raw request body is the nonce the token was bound to via `requestHash`.
+
+On failure, `ok=false` and `code` carries one of:
+
+- iOS: `ATTESTATION_IOS_BAD_BODY`, `ATTESTATION_IOS_BAD_CHALLENGE`, `ATTESTATION_IOS_BAD_CBOR`, `ATTESTATION_IOS_BAD_ASSERTION`
+- Android: `ATTESTATION_ANDROID_INVALID_TOKEN`, `ATTESTATION_ANDROID_HASH_MISMATCH`, `ATTESTATION_ANDROID_TOKEN_STALE`, `ATTESTATION_ANDROID_VERDICT_FAILED`, `ATTESTATION_ANDROID_PACKAGE_MISMATCH`
+- Generic: `ATTESTATION_UNKNOWN_PLATFORM`, `ATTESTATION_MISSING`
+
+Session-token errors at `/wallets/sign-message` carry `ATTESTATION_SESSION_MISSING`, `ATTESTATION_SESSION_MALFORMED`, `ATTESTATION_SESSION_BAD_SIGNATURE`, `ATTESTATION_SESSION_EXPIRED`, or `ATTESTATION_SESSION_BAD_VERSION`.
 
 ## Environment Variables
 
@@ -296,6 +325,16 @@ Ban types:
 | `PG_COMPONENT_PSQL_*` | PostgreSQL connection settings |
 | `ALLOWED_USERS` | Comma-separated wallet addresses allowed to use backoffice endpoints |
 | `SLACK_WEBHOOK_URL` | Webhook for deletion request notifications |
+| `THIRDWEB_SECRET_KEY` | Server-only Thirdweb API key for the sign-message proxy. |
+| `THIRDWEB_CLIENT_ID` | Thirdweb client id (sent alongside the secret key). |
+| `THIRDWEB_API_BASE_URL` | Optional upstream override; defaults to the public Thirdweb API. |
+| `APP_ATTEST_APP_ID` | Apple appId for the iOS app, in the form `<TEAM_ID>.<bundle.id>`. |
+| `APP_ATTEST_ENV` | `development` (sandbox-attested keys only), `production` (App Store / TestFlight only), or `any` (accept either AAGUID). If unset: defaults to `production` when `ENV=prd`, otherwise `any` — so a single non-prod backend serves both local Xcode dev builds and TestFlight-distributed builds without per-deploy config. |
+| `PLAY_INTEGRITY_PACKAGE_NAME` | Android package name (must match the verified token). |
+| `PLAY_INTEGRITY_REQUIRED_VERDICTS` | Comma-separated `deviceRecognitionVerdict` values that must all be present. |
+| `PLAY_INTEGRITY_SA_JSON` | Base64 of the GCP service-account JSON. Generate with `base64 -i sa.json \| tr -d '\n'`. |
+| `ATTESTATION_SESSION_SECRET` | 256-bit secret. HMAC key for both session tokens (issued by `/attest/session`) and stateless challenges (issued by `/attest/ios/challenge`). Generate with `openssl rand -base64 32`. Rotating it invalidates every outstanding session token and challenge. |
+| `ATTESTATION_SESSION_TTL_MS` | Session-token TTL in ms. Default 48h. Longer TTL = fewer attestations but wider replay window if a token leaks. |
 
 ## Database
 
@@ -374,6 +413,8 @@ npm run migrate
 │ requested_at        │
 │ status              │
 └─────────────────────┘
+
+
 ```
 
 ### Tables
@@ -386,3 +427,5 @@ npm run migrate
 - `bans` - Ban records (for places, groups, scenes, or worlds)
 - `ban_positions` - Parcel coordinates for scene bans
 - `deletion_requests` - Account deletion requests
+
+The attestation flow is stateless — challenges are HMAC-signed and session tokens are HMAC-signed, so no DB tables back it.

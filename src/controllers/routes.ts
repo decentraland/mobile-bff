@@ -52,6 +52,15 @@ import { deletePlaceGroupHandler } from "./handlers/backoffice/place-groups/dele
 import { getAppVersionsHandler } from "./handlers/app-versions/get-app-versions-handler"
 import { updateAppVersionsHandler } from "./handlers/backoffice/app-versions/update-app-versions-handler"
 
+// Wallets (Thirdweb thin proxy)
+// TODO: re-enable sign-message endpoint once the TTL and handshake flow are better defined.
+// import { signMessageHandler } from "./handlers/wallets/sign-message-handler"
+import { whoamiHandler } from "./handlers/wallets/whoami-handler"
+
+// Attestation (App Attest / Play Integrity)
+import { attestIosChallengeHandler } from "./handlers/attest/challenge-handler"
+import { attestSessionHandler } from "./handlers/attest/session-handler"
+
 // We return the entire router because it will be easier to test than a whole server
 export async function setupRouter(globalContext: GlobalContext): Promise<Router<GlobalContext>> {
   const router = new Router<GlobalContext>()
@@ -98,6 +107,27 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
   // Only active when TEST_AUTH_EMAIL is configured.
   router.post("/test-auth/send-code", testAuthSendCodeHandler)
   router.post("/test-auth/verify-code", testAuthVerifyCodeHandler)
+
+  // ============== WALLETS / ATTESTATION ==============
+  // TODO: re-enable sign-message endpoint once the TTL and handshake flow
+  // for this flow are better defined.
+  // Thirdweb sign-message thin proxy. Gated by an attestation session
+  // token obtained from POST /attest/session.
+  // router.post("/wallets/sign-message", signMessageHandler)
+
+  // Decode-only: returns the JWT's exp/iat so clients can preflight whether
+  // their session is still good. No attestation, no upstream call.
+  router.get("/wallets/whoami", whoamiHandler)
+
+  // iOS-only challenge endpoint: returns a stateless HMAC-signed blob the
+  // client uses as input to App Attest. Android does not need a server
+  // challenge — Play Integrity binds to the request body via requestHash.
+  router.post("/attest/ios/challenge", attestIosChallengeHandler)
+
+  // Verify the platform attestation and issue a session token. The token
+  // is sent verbatim on subsequent /sign-message calls instead of running
+  // attestation per request.
+  router.post("/attest/session", attestSessionHandler)
 
   // ============== BACKOFFICE ENDPOINTS ==============
   // require signed fetch + ALLOWED_USERS

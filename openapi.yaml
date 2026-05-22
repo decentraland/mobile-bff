@@ -33,6 +33,10 @@ tags:
     description: Health check endpoints
   - name: Deletion
     description: Account deletion management endpoints
+  - name: Attestation
+    description: Platform attestation (iOS App Attest, Android Play Integrity)
+  - name: Wallets
+    description: Wallet operations gated by platform attestation
 
 paths:
   /ping:
@@ -251,6 +255,231 @@ paths:
                 ok: false
                 error: Internal server error
 
+  /attest/ios/challenge:
+    post:
+      tags:
+        - Attestation
+      summary: Issue an iOS App Attest challenge
+      description: |
+        Returns a stateless HMAC-signed challenge the client uses as input
+        to App Attest. The challenge is short-lived (5 min TTL) — the server
+        keeps no row; verification on the way back recomputes the HMAC.
+
+        Anonymous endpoint. Rate limited per client IP — legitimate use is
+        one call per session token issuance.
+      operationId: attestIosChallenge
+      security: []
+      responses:
+        '200':
+          description: Challenge issued successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttestChallengeResponse'
+              example:
+                challenge: "yW8ZK6mqOg-2k1NN3xCm5sMG9aBlj8sgQ-2xTNQXdaY"
+                expires_at: "2026-01-01T00:05:00.000Z"
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /attest/session:
+    post:
+      tags:
+        - Attestation
+      summary: Issue a session token after a successful platform attestation
+      description: |
+        Verifies the platform attestation and, on success, returns a session
+        token the client replays on subsequent `/wallets/sign-message` calls.
+        One attestation per session — no per-request Play Integrity / App
+        Attest verification.
+
+        Request shape is platform-specific:
+
+        - **iOS**: `x-attest-platform: ios` + JSON body
+          `{ key_id, attestation_object, challenge }` (all base64url; the
+          `challenge` is what `/attest/ios/challenge` returned). The client
+          generates a fresh App Attest key per session.
+        - **Android**: `x-attest-platform: android` + the Play Integrity JWS
+          token in `x-attest-integrity-token`. The raw request body is the
+          nonce the token was bound to via `requestHash`.
+
+        On failure, returns **401** with the attestation `code` in the body
+        so the client can branch (re-mint challenge on
+        `ATTESTATION_IOS_BAD_CHALLENGE`, retry on `ATTESTATION_ANDROID_*`).
+
+        Anonymous endpoint. Rate limited per client IP — each call burns one
+        upstream Play Integrity verdict on Android (or full cert-chain
+        verification on iOS).
+      operationId: attestSession
+      security: []
+      parameters:
+        - in: header
+          name: x-attest-platform
+          required: true
+          schema:
+            type: string
+            enum: [ios, android]
+        - in: header
+          name: x-attest-integrity-token
+          required: false
+          schema: { type: string }
+          description: Android only — Play Integrity JWS token
+      requestBody:
+        required: true
+        description: |
+          iOS: JSON body with `{ key_id, attestation_object, challenge }`.
+          Android: opaque payload — its bytes are hashed into the Play
+          Integrity `requestHash` so the upstream verdict is bound to this
+          exact request.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/AttestSessionIosRequest'
+                - type: object
+                  additionalProperties: true
+                  description: Android — arbitrary JSON whose bytes are the Play Integrity nonce
+      responses:
+        '200':
+          description: Session token issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttestSessionResponse'
+              example:
+                token: "eyJ2IjoxLCJwbGF0Zm9ybSI6ImlvcyIsImlhdCI6MTcwMDAwMDAwMDAwMCwiZXhwIjoxNzAwMTcyODAwMDAwLCJqdGkiOiJhYmMifQ.ZmFrZS1tYWMtdGFnLWZvci1leGFtcGxlLW9ubHk"
+                expires_at: "2026-01-03T00:00:00.000Z"
+        '401':
+          description: Attestation verification failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttestationGateError'
+              examples:
+                badChallenge:
+                  summary: iOS challenge invalid or expired
+                  value:
+                    error: "challenge is invalid, tampered, or expired — request a fresh one from /attest/ios/challenge"
+                    code: ATTESTATION_IOS_BAD_CHALLENGE
+                    platform: ios
+                badAssertion:
+                  summary: iOS attestation rejected
+                  value:
+                    error: "aaguid mismatch for APP_ATTEST_ENV=production"
+                    code: ATTESTATION_IOS_BAD_ASSERTION
+                    platform: ios
+                androidVerdict:
+                  summary: Android device integrity verdicts insufficient
+                  value:
+                    error: "missing required verdicts: MEETS_STRONG_INTEGRITY"
+                    code: ATTESTATION_ANDROID_VERDICT_FAILED
+                    platform: android
+                    details:
+                      missing: [MEETS_STRONG_INTEGRITY]
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /wallets/sign-message:
+    post:
+      tags:
+        - Wallets
+      summary: Sign a message via Thirdweb (session-token gated)
+      description: |
+        Thin proxy to Thirdweb's `POST /v1/wallets/sign-message`.
+
+        The user's `Authorization: Bearer <jwt>` is forwarded untouched; the
+        server-only `x-secret-key` is injected by the BFF so it never ships
+        in a client build.
+
+        **Session-token gate**: clients must send `x-attest-session: <token>`
+        obtained from `POST /attest/session`. A missing, malformed, or
+        expired token returns **401** with the session `code` in the body
+        — clients re-run `/attest/session` and retry.
+
+        On a successful gate, the request is forwarded and the upstream
+        response body is returned byte-for-byte (Content-Type preserved).
+
+        Rate limited per client IP — each call hits a paid Thirdweb endpoint.
+      operationId: walletsSignMessage
+      security:
+        - bearerJwt: []
+      parameters:
+        - in: header
+          name: x-attest-session
+          required: true
+          schema:
+            type: string
+          description: Session token issued by `POST /attest/session`.
+      requestBody:
+        required: true
+        description: Forwarded verbatim to Thirdweb's sign-message endpoint.
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+              example:
+                chainId: 137
+                message: "hello"
+      responses:
+        '200':
+          description: Signed message — body forwarded byte-for-byte from Thirdweb
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+              example:
+                signature: "0xdeadbeef..."
+        '401':
+          description: Missing/invalid bearer JWT, or session-token gate failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttestationGateError'
+              examples:
+                missingBearer:
+                  summary: No Authorization header
+                  value:
+                    error: "missing Authorization: Bearer <jwt>"
+                missingSession:
+                  summary: No session header
+                  value:
+                    error: "missing x-attest-session header — obtain one from POST /attest/session"
+                    code: ATTESTATION_SESSION_MISSING
+                expiredSession:
+                  summary: Session token expired
+                  value:
+                    error: "token expired"
+                    code: ATTESTATION_SESSION_EXPIRED
+        '400':
+          description: Upstream rejected request (sanitized — only `error`, `code`, `message` forwarded)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpstreamError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          description: Upstream temporarily unavailable (any 5xx from Thirdweb, or fetch error)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpstreamError'
+              examples:
+                upstreamUnavailable:
+                  value:
+                    error: "upstream temporarily unavailable"
+        '504':
+          description: Upstream timeout (5 s cap exceeded). Distinct from generic 4xx so clients can retry with backoff.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpstreamError'
+              example:
+                error: "upstream timed out"
+                code: UPSTREAM_TIMEOUT
+
 components:
   securitySchemes:
     signedFetch:
@@ -266,6 +495,29 @@ components:
         - `x-identity-auth-chain-2`: Request signature with method, path, and timestamp
         - `x-identity-timestamp`: Unix timestamp of the request
         - `x-identity-metadata`: JSON metadata including intent
+    bearerJwt:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Bearer JWT obtained from the user's wallet/identity provider. Forwarded
+        verbatim to Thirdweb on `/wallets/sign-message`.
+
+  responses:
+    RateLimited:
+      description: |
+        Rate limit exceeded for this client IP. Retry after the number of
+        seconds in the `Retry-After` header.
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying
+          schema: { type: integer, minimum: 1 }
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string, example: "rate limit exceeded" }
 
   schemas:
     DeletionRequest:
@@ -383,6 +635,103 @@ components:
           type: string
           description: Additional error details (present for signed fetch errors)
           example: This endpoint requires a signed fetch request. See ADR-44.
+
+    FlatErrorResponse:
+      type: object
+      description: |
+        Bare error shape used by anonymous endpoints (attestation, sign-message).
+        Distinct from `ErrorResponse` because these endpoints do not include
+        the `ok: false` envelope used by signed-fetch deletion endpoints.
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          example: invalid JSON body
+
+    AttestChallengeResponse:
+      type: object
+      required:
+        - challenge
+        - expires_at
+      properties:
+        challenge:
+          type: string
+          description: |
+            base64url-encoded 40-byte blob: 16 random bytes || 8-byte
+            big-endian unix-ms expiry || 16-byte HMAC-SHA256 tag. The client
+            decodes this blob and passes the bytes to App Attest verbatim.
+        expires_at:
+          type: string
+          format: date-time
+          description: ISO timestamp after which `/attest/session` will reject this challenge
+
+    AttestSessionIosRequest:
+      type: object
+      required:
+        - key_id
+        - attestation_object
+        - challenge
+      properties:
+        key_id:
+          type: string
+          description: base64url-encoded App Attest key id (fresh per session)
+        attestation_object:
+          type: string
+          description: base64url-encoded App Attest attestation object (CBOR)
+        challenge:
+          type: string
+          description: The exact `challenge` returned by `/attest/ios/challenge`
+
+    AttestSessionResponse:
+      type: object
+      required:
+        - token
+        - expires_at
+      properties:
+        token:
+          type: string
+          description: |
+            Opaque session token of the form `<payloadB64u>.<tagB64u>`.
+            Send verbatim in the `x-attest-session` header on
+            `/wallets/sign-message`.
+        expires_at:
+          type: string
+          format: date-time
+          description: ISO timestamp after which the token will be rejected
+
+    AttestationGateError:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+          description: |
+            ATTESTATION_* code identifying the failure mode. Absent when the
+            failure was unrelated to attestation (e.g. missing bearer).
+        platform:
+          type: string
+          enum: [ios, android, unknown]
+        details:
+          description: Platform-specific extras
+
+    UpstreamError:
+      type: object
+      description: |
+        Sanitized error shape returned when forwarding to Thirdweb fails or
+        is rejected. Only a curated subset of upstream error fields (`error`,
+        `code`, `message`) is exposed — anything else (request ids, traces,
+        adapter internals) is dropped server-side.
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+        message:
+          type: string
 
     HealthResponse:
       type: object
