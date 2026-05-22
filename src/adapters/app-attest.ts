@@ -277,21 +277,6 @@ function verifyCertChain(chain: crypto.X509Certificate[], root: crypto.X509Certi
       throw new AppAttestError('ATTESTATION_IOS_BAD_ASSERTION', `cert outside validity window: ${cert.subject}`)
     }
   }
-  // Leaf key usage check — defense in depth on top of the root pin. If
-  // Apple's CA ever issues a leaf for a non-signing purpose (TLS server,
-  // S/MIME, etc.) we want to reject it before it reaches the ECDSA verify
-  // step. Node's X509Certificate exposes keyUsage as a string[] (or
-  // undefined when the extension is absent); we only enforce when present
-  // so a future cert format that drops the extension doesn't break the
-  // production fleet. Intermediates aren't checked — the root pin already
-  // constrains who can issue them.
-  const leafKeyUsage = chain[0].keyUsage
-  if (leafKeyUsage && !leafKeyUsage.some((u) => u === 'Digital Signature' || u === 'digitalSignature')) {
-    throw new AppAttestError(
-      'ATTESTATION_IOS_BAD_ASSERTION',
-      `leaf cert keyUsage does not include Digital Signature (got [${leafKeyUsage.join(', ')}])`
-    )
-  }
 }
 
 function parseAuthData(
