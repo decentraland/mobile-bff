@@ -52,7 +52,11 @@ export async function createPlayIntegrityComponent({
   config
 }: Pick<AppComponents, 'config'>): Promise<IPlayIntegrityComponent> {
   const packageName = await config.requireString('PLAY_INTEGRITY_PACKAGE_NAME')
-  const requiredVerdictsRaw = (await config.getString('PLAY_INTEGRITY_REQUIRED_VERDICTS')) ?? 'MEETS_STRONG_INTEGRITY'
+  // Default is MEETS_DEVICE_INTEGRITY: STRONG_INTEGRITY requires hardware-backed
+  // attestation which a large share of real devices in the field don't have, so
+  // taking it as the default would lock out legitimate users. Ops can raise the
+  // bar by setting PLAY_INTEGRITY_REQUIRED_VERDICTS=MEETS_STRONG_INTEGRITY.
+  const requiredVerdictsRaw = (await config.getString('PLAY_INTEGRITY_REQUIRED_VERDICTS')) ?? 'MEETS_DEVICE_INTEGRITY'
   const requiredVerdicts = requiredVerdictsRaw
     .split(',')
     .map((s) => s.trim())

@@ -371,11 +371,11 @@ paths:
                 androidVerdict:
                   summary: Android device integrity verdicts insufficient
                   value:
-                    error: "missing required verdicts: MEETS_STRONG_INTEGRITY"
+                    error: "missing required verdicts: MEETS_DEVICE_INTEGRITY"
                     code: ATTESTATION_ANDROID_VERDICT_FAILED
                     platform: android
                     details:
-                      missing: [MEETS_STRONG_INTEGRITY]
+                      missing: [MEETS_DEVICE_INTEGRITY]
         '429':
           $ref: '#/components/responses/RateLimited'
 
