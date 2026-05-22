@@ -54,6 +54,7 @@ import { updateAppVersionsHandler } from "./handlers/backoffice/app-versions/upd
 
 // Wallets (Thirdweb thin proxy)
 import { signMessageHandler } from "./handlers/wallets/sign-message-handler"
+import { whoamiHandler } from "./handlers/wallets/whoami-handler"
 
 // Attestation (App Attest / Play Integrity)
 import { attestIosChallengeHandler } from "./handlers/attest/challenge-handler"
@@ -110,6 +111,10 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
   // Thirdweb sign-message thin proxy. Gated by an attestation session
   // token obtained from POST /attest/session.
   router.post("/wallets/sign-message", signMessageHandler)
+
+  // Decode-only: returns the JWT's exp/iat so clients can preflight whether
+  // their session is still good. No attestation, no upstream call.
+  router.get("/wallets/whoami", whoamiHandler)
 
   // iOS-only challenge endpoint: returns a stateless HMAC-signed blob the
   // client uses as input to App Attest. Android does not need a server
