@@ -53,7 +53,8 @@ import { getAppVersionsHandler } from "./handlers/app-versions/get-app-versions-
 import { updateAppVersionsHandler } from "./handlers/backoffice/app-versions/update-app-versions-handler"
 
 // Wallets (Thirdweb thin proxy)
-import { signMessageHandler } from "./handlers/wallets/sign-message-handler"
+// TODO: re-enable sign-message endpoint once the TTL and handshake flow are better defined.
+// import { signMessageHandler } from "./handlers/wallets/sign-message-handler"
 import { whoamiHandler } from "./handlers/wallets/whoami-handler"
 
 // Attestation (App Attest / Play Integrity)
@@ -108,9 +109,11 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
   router.post("/test-auth/verify-code", testAuthVerifyCodeHandler)
 
   // ============== WALLETS / ATTESTATION ==============
+  // TODO: re-enable sign-message endpoint once the TTL and handshake flow
+  // for this flow are better defined.
   // Thirdweb sign-message thin proxy. Gated by an attestation session
   // token obtained from POST /attest/session.
-  router.post("/wallets/sign-message", signMessageHandler)
+  // router.post("/wallets/sign-message", signMessageHandler)
 
   // Decode-only: returns the JWT's exp/iat so clients can preflight whether
   // their session is still good. No attestation, no upstream call.
