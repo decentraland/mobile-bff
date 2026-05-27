@@ -52,6 +52,9 @@ import { deletePlaceGroupHandler } from "./handlers/backoffice/place-groups/dele
 import { getAppVersionsHandler } from "./handlers/app-versions/get-app-versions-handler"
 import { updateAppVersionsHandler } from "./handlers/backoffice/app-versions/update-app-versions-handler"
 
+// Downloads handler (public) - hardcoded download counts per platform
+import { getDownloadsHandler } from "./handlers/downloads/get-downloads-handler"
+
 // Wallets (Thirdweb thin proxy)
 // TODO: re-enable sign-message endpoint once the TTL and handshake flow are better defined.
 // import { signMessageHandler } from "./handlers/wallets/sign-message-handler"
@@ -101,6 +104,9 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
 
   // App Versions (mobile clients use this to enforce minimum/recommended app versions)
   router.get("/app-versions", getAppVersionsHandler)
+
+  // Downloads (hardcoded download counts per platform)
+  router.get("/downloads", getDownloadsHandler)
 
   // ============== TEST AUTH ENDPOINTS ==============
   // Used by Apple App Store reviewers to test login with a controlled OTP code.
