@@ -1,4 +1,4 @@
-FROM node:20-alpine as builderenv
+FROM node:24-alpine as builderenv
 
 WORKDIR /app
 
@@ -19,7 +19,7 @@ RUN npm prune --production
 
 ########################## END OF BUILD STAGE ##########################
 
-FROM node:20-alpine
+FROM node:24-alpine
 
 # NODE_ENV is used to configure some runtime options, like JSON logger
 ENV NODE_ENV production
