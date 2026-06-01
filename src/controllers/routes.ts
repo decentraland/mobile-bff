@@ -61,6 +61,13 @@ import { whoamiHandler } from "./handlers/wallets/whoami-handler"
 import { attestIosChallengeHandler } from "./handlers/attest/challenge-handler"
 import { attestSessionHandler } from "./handlers/attest/session-handler"
 
+// IAP (Apple StoreKit consumable credits)
+import { iapQuoteHandler } from "./handlers/iap/quote-handler"
+import { iapVerifyHandler } from "./handlers/iap/verify-handler"
+import { iapBalanceHandler } from "./handlers/iap/balance-handler"
+import { iapHistoryHandler } from "./handlers/iap/history-handler"
+import { iapWebhookHandler } from "./handlers/iap/webhook-handler"
+
 // We return the entire router because it will be easier to test than a whole server
 export async function setupRouter(globalContext: GlobalContext): Promise<Router<GlobalContext>> {
   const router = new Router<GlobalContext>()
@@ -128,6 +135,21 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
   // is sent verbatim on subsequent /sign-message calls instead of running
   // attestation per request.
   router.post("/attest/session", attestSessionHandler)
+
+  // ============== IAP (Apple StoreKit consumable credits) ==============
+  // quote / verify / balance require signed fetch (wallet = verification.auth).
+  // The webhook is public — Apple posts an Apple-signed JWS we verify inline.
+
+  // Pre-purchase gate: enforces daily + total caps BEFORE StoreKit charges.
+  router.post("/iap/apple/quote", signedFetch, iapQuoteHandler)
+  // Verify a transaction JWS and credit the wallet (idempotent).
+  router.post("/iap/apple/verify", signedFetch, iapVerifyHandler)
+  // Current credit balance for the authenticated wallet.
+  router.get("/iap/balance", signedFetch, iapBalanceHandler)
+  // Credit transaction history for the authenticated wallet.
+  router.get("/iap/history", signedFetch, iapHistoryHandler)
+  // App Store Server Notifications V2 (refunds / backstop).
+  router.post("/apple/webhook", iapWebhookHandler)
 
   // ============== BACKOFFICE ENDPOINTS ==============
   // require signed fetch + ALLOWED_USERS
