@@ -24,6 +24,8 @@ import { IAttestationVerifierComponent } from './adapters/attestation-verifier'
 import { IAttestationSessionComponent } from './adapters/attestation-session'
 import { IThirdwebProxyComponent } from './adapters/thirdweb-proxy'
 import { IRateLimiterComponent } from './adapters/rate-limiter'
+import { IAppleStoreKitComponent } from './adapters/apple-storekit'
+import { IIapDbComponent } from './adapters/iap-db'
 
 export type GlobalContext = {
   components: BaseComponents
@@ -53,6 +55,8 @@ export type BaseComponents = {
   attestationSession: IAttestationSessionComponent
   thirdwebProxy: IThirdwebProxyComponent
   rateLimiter: IRateLimiterComponent
+  appleStoreKit: IAppleStoreKitComponent
+  iapDb: IIapDbComponent
 }
 
 // components used in runtime
