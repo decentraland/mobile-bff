@@ -127,11 +127,11 @@ describe('get-destinations-handler', () => {
         mockPlacesDb.getAllPlaces.mockResolvedValue(places)
         mockDestinationsApi.getForPlaces.mockResolvedValue(createDestinationsResponse([]))
 
-        const context = createContext('http://localhost/destinations?tag=featured&order_by=most_active&limit=5&offset=10')
+        const context = createContext('http://localhost/destinations?tag=featured&order_by=like_score&limit=5&offset=10')
         const response = await getDestinationsHandler(context as any)
 
         expect(response.status).toBe(200)
-        expect(mockDestinationsApi.getForPlaces).toHaveBeenCalledWith(places, 'order_by=most_active&limit=5&offset=10', {})
+        expect(mockDestinationsApi.getForPlaces).toHaveBeenCalledWith(places, 'order_by=like_score&limit=5&offset=10', {})
       })
     })
 
@@ -164,12 +164,12 @@ describe('get-destinations-handler', () => {
       ]
       mockDestinationsApi.proxyQuery.mockResolvedValue(createDestinationsResponse(destinations))
 
-      const context = createContext('http://localhost/destinations?limit=10&order_by=most_active')
+      const context = createContext('http://localhost/destinations?limit=10&order_by=like_score')
       const response = await getDestinationsHandler(context as any)
 
       expect(response.status).toBe(200)
       expect(response.body).toEqual({ ok: true, data: destinations, total: 2 })
-      expect(mockDestinationsApi.proxyQuery).toHaveBeenCalledWith('limit=10&order_by=most_active', {})
+      expect(mockDestinationsApi.proxyQuery).toHaveBeenCalledWith('limit=10&order_by=like_score', {})
     })
 
     it('should call proxyQuery with empty string when no query params', async () => {
@@ -190,6 +190,77 @@ describe('get-destinations-handler', () => {
 
       expect(response.status).toBe(200)
       expect(response.body).toEqual({ ok: false, data: [], total: 0 })
+    })
+  })
+
+  // TEMP workaround (decentraland/godot-explorer#1827): for order_by=most_active
+  // we fetch the full candidate window upstream, re-rank by user_count desc, drop
+  // empty scenes, then slice to the requested page locally.
+  describe('most_active re-ranking', () => {
+    it('should fetch the full window upstream (offset=0, limit=100) regardless of client paging', async () => {
+      mockDestinationsApi.proxyQuery.mockResolvedValue(createDestinationsResponse([]))
+
+      const context = createContext('http://localhost/destinations?limit=5&offset=10&order_by=most_active')
+      await getDestinationsHandler(context as any)
+
+      expect(mockDestinationsApi.proxyQuery).toHaveBeenCalledWith('limit=100&offset=0&order_by=most_active', {})
+    })
+
+    it('should rank by user_count desc and drop scenes with 0 users', async () => {
+      const destinations = [
+        createTestDestination({ id: 'low', base_position: '1,1', user_count: 2 }),
+        createTestDestination({ id: 'empty', base_position: '2,2', user_count: 0 }),
+        createTestDestination({ id: 'high', base_position: '3,3', user_count: 9 }),
+        createTestDestination({ id: 'none', base_position: '4,4' })
+      ]
+      mockDestinationsApi.proxyQuery.mockResolvedValue(createDestinationsResponse(destinations))
+
+      const context = createContext('http://localhost/destinations?order_by=most_active')
+      const response = await getDestinationsHandler(context as any)
+
+      expect(response.status).toBe(200)
+      const body = response.body as { ok: boolean; data: any[]; total: number }
+      expect(body.total).toBe(2)
+      expect(body.data.map((d) => d.id)).toEqual(['high', 'low'])
+    })
+
+    it('should slice the ranked results to the requested page', async () => {
+      const destinations = [
+        createTestDestination({ id: 'a', base_position: '1,1', user_count: 5 }),
+        createTestDestination({ id: 'b', base_position: '2,2', user_count: 4 }),
+        createTestDestination({ id: 'c', base_position: '3,3', user_count: 3 })
+      ]
+      mockDestinationsApi.proxyQuery.mockResolvedValue(createDestinationsResponse(destinations))
+
+      const context = createContext('http://localhost/destinations?order_by=most_active&limit=1&offset=1')
+      const response = await getDestinationsHandler(context as any)
+
+      expect(response.status).toBe(200)
+      const body = response.body as { ok: boolean; data: any[]; total: number }
+      // total reflects the full ranked set; data is the requested slice
+      expect(body.total).toBe(3)
+      expect(body.data.map((d) => d.id)).toEqual(['b'])
+    })
+
+    it('should re-rank tag-mode results too', async () => {
+      const places = [createTestPlace({ id: 'p1', basePosition: '1,1' })]
+      const destinations = [
+        createTestDestination({ id: 'low', base_position: '1,1', user_count: 1 }),
+        createTestDestination({ id: 'empty', base_position: '2,2', user_count: 0 }),
+        createTestDestination({ id: 'high', base_position: '3,3', user_count: 7 })
+      ]
+      mockPlacesDb.getAllPlaces.mockResolvedValue(places)
+      mockDestinationsApi.getForPlaces.mockResolvedValue(createDestinationsResponse(destinations))
+
+      const context = createContext('http://localhost/destinations?tag=featured&order_by=most_active')
+      const response = await getDestinationsHandler(context as any)
+
+      expect(response.status).toBe(200)
+      const body = response.body as { ok: boolean; data: any[]; total: number }
+      expect(body.total).toBe(2)
+      expect(body.data.map((d) => d.id)).toEqual(['high', 'low'])
+      // upstream still receives the widened window
+      expect(mockDestinationsApi.getForPlaces).toHaveBeenCalledWith(places, 'order_by=most_active&offset=0&limit=100', {})
     })
   })
 
