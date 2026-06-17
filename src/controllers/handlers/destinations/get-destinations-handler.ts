@@ -28,6 +28,19 @@ function rankByConnectedUsers(response: DestinationsResponse, offset: number, li
   }
 }
 
+function sortByConnectedUsers(response: DestinationsResponse, offset: number, limit: number): DestinationsResponse {
+  // Like rankByConnectedUsers but WITHOUT filtering out 0-user destinations
+  // (used for search queries where we want all matching results)
+  const sorted = response.data
+    .sort((a: Destination, b: Destination) => Number(b.user_count ?? 0) - Number(a.user_count ?? 0))
+
+  return {
+    ok: true,
+    data: sorted.slice(offset, offset + limit),
+    total: sorted.length
+  }
+}
+
 export async function getDestinationsHandler(
   context: HandlerContextWithPath<'placesDb' | 'destinationsApi' | 'logs', '/destinations'>
 ) {
@@ -49,15 +62,24 @@ export async function getDestinationsHandler(
   try {
     const searchParams = new URL(url.toString()).searchParams
     const tagParam = searchParams.get('tag')
+    const searchQuery = searchParams.get('search')
 
     // TEMP (#1827): for most_active we re-rank the whole candidate set by
     // user_count, so fetch the full window upstream and slice locally.
-    const isMostActive = searchParams.get('order_by') === MOST_ACTIVE
+    // EXCEPTION: when search is present, skip the most_active filtering
+    // (foundation returns 0 results for search+most_active due to hardcoded
+    // filter, so we need to fetch without order_by and sort in-memory instead)
+    const orderBy = searchParams.get('order_by')
+    const isMostActive = orderBy === MOST_ACTIVE && !searchQuery
     const clientOffset = Math.max(0, parseInt(searchParams.get('offset') || '0', 10) || 0)
     const clientLimit = parseInt(searchParams.get('limit') || '100', 10) || 100
     if (isMostActive) {
       searchParams.set('offset', '0')
       searchParams.set('limit', String(MOST_ACTIVE_FETCH_LIMIT))
+    } else if (orderBy === MOST_ACTIVE && searchQuery) {
+      // When search is present with most_active, remove order_by from upstream
+      // request (to get all results) and we'll sort by user_count in-memory
+      searchParams.delete('order_by')
     }
 
     let response: DestinationsResponse
@@ -83,6 +105,9 @@ export async function getDestinationsHandler(
 
     if (isMostActive) {
       response = rankByConnectedUsers(response, clientOffset, clientLimit)
+    } else if (orderBy === MOST_ACTIVE && searchQuery) {
+      // For search+most_active: sort by user_count but don't filter out 0-user results
+      response = sortByConnectedUsers(response, clientOffset, clientLimit)
     }
 
     return { status: 200, body: response }

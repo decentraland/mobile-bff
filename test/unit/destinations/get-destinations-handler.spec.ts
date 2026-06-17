@@ -196,6 +196,7 @@ describe('get-destinations-handler', () => {
   // TEMP workaround (decentraland/godot-explorer#1827): for order_by=most_active
   // we fetch the full candidate window upstream, re-rank by user_count desc, drop
   // empty scenes, then slice to the requested page locally.
+  // EXCEPTION: when search is present, we sort but DON'T filter out 0-user results.
   describe('most_active re-ranking', () => {
     it('should fetch the full window upstream (offset=0, limit=100) regardless of client paging', async () => {
       mockDestinationsApi.proxyQuery.mockResolvedValue(createDestinationsResponse([]))
@@ -261,6 +262,47 @@ describe('get-destinations-handler', () => {
       expect(body.data.map((d) => d.id)).toEqual(['high', 'low'])
       // upstream still receives the widened window
       expect(mockDestinationsApi.getForPlaces).toHaveBeenCalledWith(places, 'order_by=most_active&offset=0&limit=100', {})
+    })
+
+    it('should NOT filter out 0-user results when search is present', async () => {
+      const destinations = [
+        createTestDestination({ id: 'museum-low', base_position: '1,1', user_count: 2, title: 'Museum A' }),
+        createTestDestination({ id: 'museum-empty', base_position: '2,2', user_count: 0, title: 'Museum B' }),
+        createTestDestination({ id: 'museum-high', base_position: '3,3', user_count: 9, title: 'Museum C' })
+      ]
+      mockDestinationsApi.proxyQuery.mockResolvedValue(createDestinationsResponse(destinations))
+
+      const context = createContext('http://localhost/destinations?order_by=most_active&search=museum')
+      const response = await getDestinationsHandler(context as any)
+
+      expect(response.status).toBe(200)
+      const body = response.body as { ok: boolean; data: any[]; total: number }
+      // Should include ALL search results (including 0-user)
+      expect(body.total).toBe(3)
+      // Should be sorted by user_count desc
+      expect(body.data.map((d) => d.id)).toEqual(['museum-high', 'museum-low', 'museum-empty'])
+      // Should have removed order_by from upstream request (to avoid foundation filtering)
+      expect(mockDestinationsApi.proxyQuery).toHaveBeenCalledWith('search=museum', {})
+    })
+
+    it('should sort by user_count when search + most_active are both present (tag mode)', async () => {
+      const places = [createTestPlace({ id: 'p1', basePosition: '1,1' })]
+      const destinations = [
+        createTestDestination({ id: 'empty', base_position: '1,1', user_count: 0, title: 'Empty Place' }),
+        createTestDestination({ id: 'busy', base_position: '2,2', user_count: 5, title: 'Busy Place' })
+      ]
+      mockPlacesDb.getAllPlaces.mockResolvedValue(places)
+      mockDestinationsApi.getForPlaces.mockResolvedValue(createDestinationsResponse(destinations))
+
+      const context = createContext('http://localhost/destinations?tag=allowed_ios&search=place&order_by=most_active')
+      const response = await getDestinationsHandler(context as any)
+
+      expect(response.status).toBe(200)
+      const body = response.body as { ok: boolean; data: any[]; total: number }
+      expect(body.total).toBe(2)
+      expect(body.data.map((d) => d.id)).toEqual(['busy', 'empty'])
+      // Should NOT pass order_by to upstream when search is present
+      expect(mockDestinationsApi.getForPlaces).toHaveBeenCalledWith(places, 'search=place', {})
     })
   })
 
