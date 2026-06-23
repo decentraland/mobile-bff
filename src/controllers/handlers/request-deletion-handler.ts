@@ -3,10 +3,11 @@ import { HandlerContextWithPath } from '../../types'
 import { extractAuthChain } from '../../logic/auth'
 
 export async function requestDeletionHandler(
-  context: HandlerContextWithPath<'db' | 'slack' | 'logs', '/deletion'> & DecentralandSignatureContext<any>
+  context: HandlerContextWithPath<'db' | 'slack' | 'logs' | 'magic', '/deletion'> &
+    DecentralandSignatureContext<any>
 ) {
   const {
-    components: { db, slack, logs },
+    components: { db, slack, logs, magic },
     verification,
     request
   } = context
@@ -25,16 +26,21 @@ export async function requestDeletionHandler(
     const deletionRequest = await db.createDeletionRequest(userAddress)
     logger.info('Deletion request created', { userAddress })
 
-    // Extract auth chain from headers
     const headers: Record<string, string> = {}
     request.headers.forEach((value, key) => {
       headers[key.toLowerCase()] = value
     })
     const authChain = extractAuthChain(headers)
 
-    // Send Slack notification (fire and forget)
-    slack.sendDeletionRequestNotification(userAddress, authChain).catch((err) => {
-      logger.error('Failed to send Slack notification', { error: err.message })
+    // Fire-and-forget so the user gets an immediate response; Slack is the team's monitoring channel for the Magic outcome.
+    ;(async () => {
+      const magicResult = await magic.requestDeletion(userAddress)
+      await slack.sendDeletionRequestNotification(userAddress, authChain, magicResult)
+    })().catch((err) => {
+      logger.error('Background Magic/Slack pipeline failed', {
+        error: err.message,
+        userAddress
+      })
     })
 
     return {
@@ -44,7 +50,8 @@ export async function requestDeletionHandler(
         data: {
           userAddress: deletionRequest.userAddress,
           requestedAt: deletionRequest.requestedAt,
-          status: deletionRequest.status
+          status: deletionRequest.status,
+          magic: { status: 'queued' }
         }
       }
     }

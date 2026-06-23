@@ -26,6 +26,7 @@ import { createAttestationVerifierComponent } from './adapters/attestation-verif
 import { createAttestationSessionComponent } from './adapters/attestation-session'
 import { createThirdwebProxyComponent } from './adapters/thirdweb-proxy'
 import { createRateLimiterComponent } from './adapters/rate-limiter'
+import { createMagicComponent } from './adapters/magic'
 
 // Initialize all the components of the app
 export async function initComponents(): Promise<AppComponents> {
@@ -73,6 +74,7 @@ export async function initComponents(): Promise<AppComponents> {
   const attestationSession = await createAttestationSessionComponent({ config })
   const thirdwebProxy = await createThirdwebProxyComponent({ config, fetch, logs, metrics })
   const rateLimiter = await createRateLimiterComponent({ metrics })
+  const magic = await createMagicComponent({ config, fetch, logs })
 
   await instrumentHttpServerWithPromClientRegistry({ metrics, server, config, registry: metrics.registry! })
 
@@ -99,7 +101,8 @@ export async function initComponents(): Promise<AppComponents> {
     attestationVerifier,
     attestationSession,
     thirdwebProxy,
-    rateLimiter
+    rateLimiter,
+    magic
   }
 }
 

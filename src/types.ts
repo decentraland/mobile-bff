@@ -24,6 +24,7 @@ import { IAttestationVerifierComponent } from './adapters/attestation-verifier'
 import { IAttestationSessionComponent } from './adapters/attestation-session'
 import { IThirdwebProxyComponent } from './adapters/thirdweb-proxy'
 import { IRateLimiterComponent } from './adapters/rate-limiter'
+import { IMagicComponent } from './adapters/magic'
 
 export type GlobalContext = {
   components: BaseComponents
@@ -53,6 +54,7 @@ export type BaseComponents = {
   attestationSession: IAttestationSessionComponent
   thirdwebProxy: IThirdwebProxyComponent
   rateLimiter: IRateLimiterComponent
+  magic: IMagicComponent
 }
 
 // components used in runtime
