@@ -1,4 +1,5 @@
 import { AppComponents } from '../types'
+import { drainResponse } from '../logic/fetch-utils'
 
 export type MagicDeletionStatus = 'processed' | 'not_found' | 'error'
 
@@ -33,9 +34,13 @@ export async function createMagicComponent({
       }
     })
 
-    if (response.status === 404) return undefined
+    if (response.status === 404) {
+      await drainResponse(response)
+      return undefined
+    }
     if (!response.ok) {
       logger.warn('Magic user lookup failed', { status: response.status, publicAddress })
+      await drainResponse(response)
       return undefined
     }
 
@@ -69,6 +74,7 @@ export async function createMagicComponent({
           status: response.status,
           publicAddress
         })
+        await drainResponse(response)
         return { status: 'error', email, error: `HTTP ${response.status}` }
       }
 

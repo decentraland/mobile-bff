@@ -1,6 +1,8 @@
-import { ILoggerComponent, IFetchComponent, IConfigComponent } from '@well-known-components/interfaces'
+import { ILoggerComponent, IConfigComponent } from '@well-known-components/interfaces'
+import { IFetchComponent } from '@dcl/core-commons'
 import { Place } from './places-db'
 import { ICacheComponent } from './cache'
+import { drainResponse } from '../logic/fetch-utils'
 
 export type Destination = {
   id: string
@@ -241,6 +243,7 @@ export async function createDestinationsApiComponent(
           }
         } else {
           logger.warn('Places API error', { status: placesResult.response.status })
+          await drainResponse(placesResult.response)
         }
       }
 
@@ -254,6 +257,7 @@ export async function createDestinationsApiComponent(
           }
         } else {
           logger.warn('Worlds API error', { status: worldsResult.response.status })
+          await drainResponse(worldsResult.response)
         }
       }
 

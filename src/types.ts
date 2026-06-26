@@ -1,11 +1,5 @@
-import type {
-  IConfigComponent,
-  ILoggerComponent,
-  IHttpServerComponent,
-  IBaseComponent,
-  IMetricsComponent,
-  IFetchComponent
-} from '@well-known-components/interfaces'
+import type { IConfigComponent, ILoggerComponent, IBaseComponent, IMetricsComponent } from '@well-known-components/interfaces'
+import type { IHttpServerComponent, IFetchComponent } from '@dcl/core-commons'
 import { IPgComponent } from '@dcl/pg-component'
 import { metricDeclarations } from './metrics'
 import { IDbComponent } from './adapters/db'

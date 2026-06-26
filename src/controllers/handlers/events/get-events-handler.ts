@@ -1,8 +1,10 @@
 import { HandlerContextWithPath } from '../../../types'
 import { Place } from '../../../adapters/places-db'
 import { ICacheComponent } from '../../../adapters/cache'
-import { IFetchComponent, ILoggerComponent } from '@well-known-components/interfaces'
+import { ILoggerComponent } from '@well-known-components/interfaces'
+import { IFetchComponent } from '@dcl/core-commons'
 import { IPlacesDbComponent } from '../../../adapters/places-db'
+import { drainResponse } from '../../../logic/fetch-utils'
 
 export type Event = {
   id: string
@@ -114,6 +116,7 @@ async function fetchEventsForPlaces(
 
     if (!response.ok) {
       logger.warn('Events API error', { status: response.status })
+      await drainResponse(response)
       return { ok: false, data: [], total: 0 }
     }
 
