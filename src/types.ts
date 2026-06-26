@@ -6,7 +6,7 @@ import type {
   IMetricsComponent,
   IFetchComponent
 } from '@well-known-components/interfaces'
-import { IPgComponent } from '@well-known-components/pg-component'
+import { IPgComponent } from '@dcl/pg-component'
 import { metricDeclarations } from './metrics'
 import { IDbComponent } from './adapters/db'
 import { ISlackComponent } from './adapters/slack'
