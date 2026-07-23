@@ -54,7 +54,10 @@ import { updateAppVersionsHandler } from "./handlers/backoffice/app-versions/upd
 
 // Feature Flags handlers
 import { getFeatureFlagsHandler } from "./handlers/feature-flags/get-feature-flags-handler"
-import { updateFeatureFlagsHandler } from "./handlers/backoffice/feature-flags/update-feature-flags-handler"
+import { getBackofficeFeatureFlagsHandler } from "./handlers/backoffice/feature-flags/get-feature-flags-handler"
+import { createFeatureFlagHandler } from "./handlers/backoffice/feature-flags/create-feature-flag-handler"
+import { updateFeatureFlagHandler } from "./handlers/backoffice/feature-flags/update-feature-flag-handler"
+import { deleteFeatureFlagHandler } from "./handlers/backoffice/feature-flags/delete-feature-flag-handler"
 
 // Wallets (Thirdweb thin proxy)
 // TODO: re-enable sign-message endpoint once the TTL and handshake flow are better defined.
@@ -166,7 +169,10 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
   router.put("/backoffice/app-versions", signedFetch, updateAppVersionsHandler)
 
   // Feature Flags management
-  router.put("/backoffice/feature-flags", signedFetch, updateFeatureFlagsHandler)
+  router.get("/backoffice/feature-flags", signedFetch, getBackofficeFeatureFlagsHandler)
+  router.post("/backoffice/feature-flags", signedFetch, createFeatureFlagHandler)
+  router.put("/backoffice/feature-flags/:name", signedFetch, updateFeatureFlagHandler)
+  router.delete("/backoffice/feature-flags/:name", signedFetch, deleteFeatureFlagHandler)
 
   return router
 }

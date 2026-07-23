@@ -50,8 +50,17 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
   beforeEach(restoreSeededState)
 
   async function restoreSeededState() {
-    await pg.query("UPDATE feature_flags SET enabled = false, updated_by = NULL WHERE name = 'pulse'")
-    await pg.query("UPDATE feature_flags SET enabled = true, updated_by = NULL WHERE name = 'dual-channel'")
+    await pg.query("DELETE FROM feature_flags WHERE name NOT IN ('pulse', 'dual-channel')")
+    await pg.query(`
+      UPDATE feature_flags SET enabled = false, updated_by = NULL,
+        description = 'Enable the ENet/UDP avatar-relay transport (Pulse) in godot-explorer'
+      WHERE name = 'pulse'
+    `)
+    await pg.query(`
+      UPDATE feature_flags SET enabled = true, updated_by = NULL,
+        description = 'Keep sending movement over LiveKit while Pulse is established'
+      WHERE name = 'dual-channel'
+    `)
   }
 
   async function getDbConnectionString(config: any): Promise<string> {
@@ -68,47 +77,112 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
   }
 
   describe('getAll', () => {
-    it('should return the seeded flags', async () => {
+    it('should return the seeded flags as a boolean map', async () => {
       const flags = await featureFlagsDb.getAll()
 
       expect(flags).toEqual({ pulse: false, 'dual-channel': true })
     })
   })
 
-  describe('update', () => {
-    it('should flip only the named flag and return the full map', async () => {
-      const flags = await featureFlagsDb.update({ pulse: true }, TEST_ADDRESS)
+  describe('getAllDetailed', () => {
+    it('should return the seeded flags with descriptions, sorted by name', async () => {
+      const flags = await featureFlagsDb.getAllDetailed()
 
-      expect(flags).toEqual({ pulse: true, 'dual-channel': true })
+      expect(flags.map(f => f.name)).toEqual(['dual-channel', 'pulse'])
+      expect(flags[1]).toMatchObject({
+        name: 'pulse',
+        enabled: false,
+        updatedBy: null
+      })
+      expect(flags[1].description).toContain('Pulse')
+      expect(new Date(flags[1].updatedAt).getTime()).not.toBeNaN()
     })
+  })
 
-    it('should update several flags atomically', async () => {
-      const flags = await featureFlagsDb.update({ pulse: true, 'dual-channel': false }, TEST_ADDRESS)
-
-      expect(flags).toEqual({ pulse: true, 'dual-channel': false })
-    })
-
-    it('should record who updated the flag and bump updated_at', async () => {
-      const before = await pg.query("SELECT updated_at FROM feature_flags WHERE name = 'pulse'")
-
-      await featureFlagsDb.update({ pulse: true }, TEST_ADDRESS)
-
-      const after = await pg.query("SELECT updated_at, updated_by FROM feature_flags WHERE name = 'pulse'")
-      expect(after.rows[0].updated_by).toBe(TEST_ADDRESS)
-      expect(new Date(after.rows[0].updated_at).getTime()).toBeGreaterThanOrEqual(
-        new Date(before.rows[0].updated_at).getTime()
+  describe('create', () => {
+    it('should insert a new flag and return it', async () => {
+      const flag = await featureFlagsDb.create(
+        { name: 'shiny-thing', enabled: true, description: 'A test flag' },
+        TEST_ADDRESS
       )
+
+      expect(flag).toMatchObject({
+        name: 'shiny-thing',
+        enabled: true,
+        description: 'A test flag',
+        updatedBy: TEST_ADDRESS
+      })
+
+      const map = await featureFlagsDb.getAll()
+      expect(map['shiny-thing']).toBe(true)
     })
 
-    it('should not touch flags that are not in the changes', async () => {
-      await featureFlagsDb.update({ pulse: true }, TEST_ADDRESS)
+    it('should throw a unique violation for a duplicate name', async () => {
+      await expect(
+        featureFlagsDb.create({ name: 'pulse', enabled: false, description: null }, TEST_ADDRESS)
+      ).rejects.toMatchObject({ code: '23505' })
+    })
+
+    it('should be rejected by the db CHECK constraint for a non-kebab-case name', async () => {
+      // Handler validation is the first line of defense; the CHECK constraint is the backstop
+      await expect(
+        featureFlagsDb.create({ name: 'NOT_VALID', enabled: false, description: null }, TEST_ADDRESS)
+      ).rejects.toMatchObject({ code: '23514' })
+    })
+  })
+
+  describe('update', () => {
+    it('should update enabled only and record the author', async () => {
+      const flag = await featureFlagsDb.update('pulse', { enabled: true }, TEST_ADDRESS)
+
+      expect(flag).toMatchObject({ name: 'pulse', enabled: true, updatedBy: TEST_ADDRESS })
+      expect(flag!.description).toContain('Pulse')
+    })
+
+    it('should update the description without touching enabled', async () => {
+      const flag = await featureFlagsDb.update('pulse', { description: 'New words' }, TEST_ADDRESS)
+
+      expect(flag).toMatchObject({ name: 'pulse', enabled: false, description: 'New words' })
+    })
+
+    it('should clear the description with null', async () => {
+      const flag = await featureFlagsDb.update('pulse', { description: null }, TEST_ADDRESS)
+
+      expect(flag!.description).toBeNull()
+    })
+
+    it('should return null for a missing flag', async () => {
+      const flag = await featureFlagsDb.update('not-a-flag', { enabled: true }, TEST_ADDRESS)
+
+      expect(flag).toBeNull()
+    })
+
+    it('should not touch other flags', async () => {
+      await featureFlagsDb.update('pulse', { enabled: true }, TEST_ADDRESS)
 
       const untouched = await pg.query("SELECT updated_by FROM feature_flags WHERE name = 'dual-channel'")
       expect(untouched.rows[0].updated_by).toBeNull()
     })
 
-    it('should reject an empty changes map instead of emitting invalid SQL', async () => {
-      await expect(featureFlagsDb.update({}, TEST_ADDRESS)).rejects.toThrow('at least one flag change')
+    it('should reject an empty changes object', async () => {
+      await expect(featureFlagsDb.update('pulse', {}, TEST_ADDRESS)).rejects.toThrow('at least one change')
+    })
+  })
+
+  describe('delete', () => {
+    it('should delete an existing flag and return true', async () => {
+      await featureFlagsDb.create({ name: 'doomed', enabled: false, description: null }, TEST_ADDRESS)
+
+      const deleted = await featureFlagsDb.delete('doomed')
+
+      expect(deleted).toBe(true)
+      expect(await featureFlagsDb.getAll()).not.toHaveProperty('doomed')
+    })
+
+    it('should return false for a missing flag', async () => {
+      const deleted = await featureFlagsDb.delete('not-a-flag')
+
+      expect(deleted).toBe(false)
     })
   })
 })

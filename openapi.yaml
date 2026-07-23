@@ -517,17 +517,40 @@ paths:
                 error: Internal server error
 
   /backoffice/feature-flags:
-    put:
+    get:
       tags:
         - Feature Flags
-      summary: Update feature flags (backoffice)
+      summary: List feature flags with details (backoffice)
       description: |
-        Partially updates feature flags. Only the flags present in the request body are
-        changed; the response always contains the full post-update map.
-
-        Unknown flag names are rejected — new flags are introduced via database migration.
+        Returns every flag with its description and audit trail (who changed it last, when).
         Requires signed fetch (ADR-44) and the signer address in `ALLOWED_USERS`.
-      operationId: updateFeatureFlags
+      operationId: getBackofficeFeatureFlags
+      security:
+        - signedFetch: []
+      responses:
+        '200':
+          description: Feature flags retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeatureFlagsDetailedResponse'
+        '401':
+          $ref: '#/components/responses/FeatureFlagUnauthorized'
+        '403':
+          $ref: '#/components/responses/FeatureFlagForbidden'
+        '500':
+          $ref: '#/components/responses/FeatureFlagServerError'
+
+    post:
+      tags:
+        - Feature Flags
+      summary: Create a feature flag (backoffice)
+      description: |
+        Creates a new flag. Names must be kebab-case (lowercase letters, digits, dashes)
+        so they can double as godot-explorer deep-link params. `enabled` defaults to
+        `false`, `description` to null.
+        Requires signed fetch (ADR-44) and the signer address in `ALLOWED_USERS`.
+      operationId: createFeatureFlag
       security:
         - signedFetch: []
       requestBody:
@@ -535,61 +558,130 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UpdateFeatureFlagsRequest'
+              $ref: '#/components/schemas/CreateFeatureFlagRequest'
             example:
-              flags:
-                pulse: true
+              name: shiny-thing
+              enabled: false
+              description: Enables the shiny thing
+      responses:
+        '201':
+          description: Feature flag created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeatureFlagResponse'
+        '400':
+          description: Invalid body (missing/invalid name, non-boolean enabled, invalid description)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                ok: false
+                error: "'name' must be kebab-case (lowercase letters, digits and dashes, e.g. 'dual-channel')"
+        '401':
+          $ref: '#/components/responses/FeatureFlagUnauthorized'
+        '403':
+          $ref: '#/components/responses/FeatureFlagForbidden'
+        '409':
+          description: A flag with this name already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                ok: false
+                error: "Feature flag 'pulse' already exists"
+        '500':
+          $ref: '#/components/responses/FeatureFlagServerError'
+
+  /backoffice/feature-flags/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+        example: pulse
+    put:
+      tags:
+        - Feature Flags
+      summary: Update a feature flag (backoffice)
+      description: |
+        Updates a flag's enabled state and/or description. At least one field is required;
+        pass `description: null` to clear it. Records the signer as `updatedBy`.
+        Requires signed fetch (ADR-44) and the signer address in `ALLOWED_USERS`.
+      operationId: updateFeatureFlag
+      security:
+        - signedFetch: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateFeatureFlagRequest'
+            example:
+              enabled: true
       responses:
         '200':
-          description: Feature flags updated successfully
+          description: Feature flag updated
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/FeatureFlagsResponse'
-              example:
-                ok: true
-                data:
-                  flags:
-                    pulse: true
-                    dual-channel: true
+                $ref: '#/components/schemas/FeatureFlagResponse'
         '400':
-          description: Invalid request body (missing/empty flags object, non-boolean value, or unknown flag name)
+          description: Invalid body (no fields, non-boolean enabled, invalid description)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
               example:
                 ok: false
-                error: "Unknown feature flag: 'not-a-flag'"
+                error: "At least one of 'enabled' or 'description' is required"
         '401':
-          description: Unauthorized - Invalid or missing signed fetch
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-              examples:
-                unauthorized:
-                  $ref: '#/components/examples/UnauthorizedError'
-                signedFetchError:
-                  $ref: '#/components/examples/SignedFetchError'
+          $ref: '#/components/responses/FeatureFlagUnauthorized'
         '403':
-          description: Forbidden - signer address not in ALLOWED_USERS
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-              example:
-                ok: false
-                error: "Forbidden: User not in allowed list"
+          $ref: '#/components/responses/FeatureFlagForbidden'
+        '404':
+          $ref: '#/components/responses/FeatureFlagNotFound'
         '500':
-          description: Internal server error
+          $ref: '#/components/responses/FeatureFlagServerError'
+
+    delete:
+      tags:
+        - Feature Flags
+      summary: Delete a feature flag (backoffice)
+      description: |
+        Removes a flag entirely. Clients that were reading it fall back to their built-in
+        defaults. Requires signed fetch (ADR-44) and the signer address in `ALLOWED_USERS`.
+      operationId: deleteFeatureFlag
+      security:
+        - signedFetch: []
+      responses:
+        '200':
+          description: Feature flag deleted
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
-              example:
-                ok: false
-                error: Internal server error
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        example: pulse
+        '401':
+          $ref: '#/components/responses/FeatureFlagUnauthorized'
+        '403':
+          $ref: '#/components/responses/FeatureFlagForbidden'
+        '404':
+          $ref: '#/components/responses/FeatureFlagNotFound'
+        '500':
+          $ref: '#/components/responses/FeatureFlagServerError'
 
 components:
   securitySchemes:
@@ -615,6 +707,44 @@ components:
         verbatim to Thirdweb on `/wallets/sign-message`.
 
   responses:
+    FeatureFlagUnauthorized:
+      description: Unauthorized - Invalid or missing signed fetch
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            unauthorized:
+              $ref: '#/components/examples/UnauthorizedError'
+            signedFetchError:
+              $ref: '#/components/examples/SignedFetchError'
+    FeatureFlagForbidden:
+      description: Forbidden - signer address not in ALLOWED_USERS
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            ok: false
+            error: "Forbidden: User not in allowed list"
+    FeatureFlagNotFound:
+      description: No feature flag with this name
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            ok: false
+            error: "Feature flag 'not-a-flag' not found"
+    FeatureFlagServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            ok: false
+            error: Internal server error
     RateLimited:
       description: |
         Rate limit exceeded for this client IP. Retry after the number of
@@ -783,19 +913,96 @@ components:
                 pulse: false
                 dual-channel: true
 
-    UpdateFeatureFlagsRequest:
+    FeatureFlag:
       type: object
       required:
-        - flags
+        - name
+        - enabled
+        - description
+        - updatedAt
+        - updatedBy
       properties:
-        flags:
+        name:
+          type: string
+          description: Kebab-case flag name, doubles as the godot-explorer deep-link param
+          example: pulse
+        enabled:
+          type: boolean
+          example: false
+        description:
+          type: string
+          nullable: true
+          example: Enable the ENet/UDP avatar-relay transport (Pulse) in godot-explorer
+        updatedAt:
+          type: string
+          format: date-time
+          example: "2026-07-23T10:00:00.000Z"
+        updatedBy:
+          type: string
+          nullable: true
+          description: Wallet address of the last editor (null for untouched seeds)
+          example: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+
+    FeatureFlagsDetailedResponse:
+      type: object
+      required:
+        - ok
+        - data
+      properties:
+        ok:
+          type: boolean
+          example: true
+        data:
           type: object
-          description: Partial map of known flag names to their new enabled state
-          minProperties: 1
-          additionalProperties:
-            type: boolean
-          example:
-            pulse: true
+          required:
+            - flags
+          properties:
+            flags:
+              type: array
+              items:
+                $ref: '#/components/schemas/FeatureFlag'
+
+    FeatureFlagResponse:
+      type: object
+      required:
+        - ok
+        - data
+      properties:
+        ok:
+          type: boolean
+          example: true
+        data:
+          $ref: '#/components/schemas/FeatureFlag'
+
+    CreateFeatureFlagRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"
+          maxLength: 64
+          example: shiny-thing
+        enabled:
+          type: boolean
+          default: false
+        description:
+          type: string
+          maxLength: 500
+          nullable: true
+
+    UpdateFeatureFlagRequest:
+      type: object
+      minProperties: 1
+      properties:
+        enabled:
+          type: boolean
+        description:
+          type: string
+          maxLength: 500
+          nullable: true
+          description: Pass null to clear the description
 
     AttestChallengeResponse:
       type: object
