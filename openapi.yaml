@@ -37,6 +37,8 @@ tags:
     description: Platform attestation (iOS App Attest, Android Play Integrity)
   - name: Wallets
     description: Wallet operations gated by platform attestation
+  - name: Feature Flags
+    description: Runtime feature toggles consumed by the mobile clients (e.g. pulse, dual-channel)
 
 paths:
   /ping:
@@ -480,6 +482,115 @@ paths:
                 error: "upstream timed out"
                 code: UPSTREAM_TIMEOUT
 
+  /feature-flags:
+    get:
+      tags:
+        - Feature Flags
+      summary: Get all feature flags
+      description: |
+        Returns every feature flag as a `{ name: boolean }` map. Flag names match the
+        godot-explorer deep-link query params (e.g. `pulse`, `dual-channel`) so the
+        explorer can adopt this endpoint as its remote flags source.
+      operationId: getFeatureFlags
+      security: []
+      responses:
+        '200':
+          description: Feature flags retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeatureFlagsResponse'
+              example:
+                ok: true
+                data:
+                  flags:
+                    pulse: false
+                    dual-channel: true
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                ok: false
+                error: Internal server error
+
+  /backoffice/feature-flags:
+    put:
+      tags:
+        - Feature Flags
+      summary: Update feature flags (backoffice)
+      description: |
+        Partially updates feature flags. Only the flags present in the request body are
+        changed; the response always contains the full post-update map.
+
+        Unknown flag names are rejected — new flags are introduced via database migration.
+        Requires signed fetch (ADR-44) and the signer address in `ALLOWED_USERS`.
+      operationId: updateFeatureFlags
+      security:
+        - signedFetch: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateFeatureFlagsRequest'
+            example:
+              flags:
+                pulse: true
+      responses:
+        '200':
+          description: Feature flags updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeatureFlagsResponse'
+              example:
+                ok: true
+                data:
+                  flags:
+                    pulse: true
+                    dual-channel: true
+        '400':
+          description: Invalid request body (missing/empty flags object, non-boolean value, or unknown flag name)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                ok: false
+                error: "Unknown feature flag: 'not-a-flag'"
+        '401':
+          description: Unauthorized - Invalid or missing signed fetch
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                unauthorized:
+                  $ref: '#/components/examples/UnauthorizedError'
+                signedFetchError:
+                  $ref: '#/components/examples/SignedFetchError'
+        '403':
+          description: Forbidden - signer address not in ALLOWED_USERS
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                ok: false
+                error: "Forbidden: User not in allowed list"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                ok: false
+                error: Internal server error
+
 components:
   securitySchemes:
     signedFetch:
@@ -648,6 +759,43 @@ components:
         error:
           type: string
           example: invalid JSON body
+
+    FeatureFlagsResponse:
+      type: object
+      required:
+        - ok
+        - data
+      properties:
+        ok:
+          type: boolean
+          example: true
+        data:
+          type: object
+          required:
+            - flags
+          properties:
+            flags:
+              type: object
+              description: Map of flag name to enabled state
+              additionalProperties:
+                type: boolean
+              example:
+                pulse: false
+                dual-channel: true
+
+    UpdateFeatureFlagsRequest:
+      type: object
+      required:
+        - flags
+      properties:
+        flags:
+          type: object
+          description: Partial map of known flag names to their new enabled state
+          minProperties: 1
+          additionalProperties:
+            type: boolean
+          example:
+            pulse: true
 
     AttestChallengeResponse:
       type: object

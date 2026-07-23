@@ -18,6 +18,7 @@ import { IPlaceGroupsDbComponent } from './adapters/place-groups-db'
 import { ICacheComponent } from './adapters/cache'
 import { IDestinationsApiComponent } from './adapters/destinations-api'
 import { IAppVersionsDbComponent } from './adapters/app-versions-db'
+import { IFeatureFlagsDbComponent } from './adapters/feature-flags-db'
 import { IAppAttestComponent } from './adapters/app-attest'
 import { IPlayIntegrityComponent } from './adapters/play-integrity'
 import { IAttestationVerifierComponent } from './adapters/attestation-verifier'
@@ -48,6 +49,7 @@ export type BaseComponents = {
   cache: ICacheComponent
   destinationsApi: IDestinationsApiComponent
   appVersionsDb: IAppVersionsDbComponent
+  featureFlagsDb: IFeatureFlagsDbComponent
   appAttest: IAppAttestComponent
   playIntegrity: IPlayIntegrityComponent
   attestationVerifier: IAttestationVerifierComponent

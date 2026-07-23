@@ -59,6 +59,35 @@ These endpoints require signed requests and the wallet address must be in the `A
 | POST | `/backoffice/bans` | Create a ban (place, group, or world) |
 | DELETE | `/backoffice/bans/:id` | Remove a ban |
 
+### Feature Flags
+
+Runtime toggles consumed by the mobile clients. The flag names match the godot-explorer
+deep-link query params (e.g. `pulse`, `dual-channel`), so the explorer can adopt this
+endpoint as its remote flags source.
+
+#### Public
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/feature-flags` | Get all feature flags as a `{ name: boolean }` map |
+
+#### Backoffice (signedFetch + ALLOWED_USERS)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| PUT | `/backoffice/feature-flags` | Partially update flags: `{ "flags": { "pulse": true } }` |
+
+`GET /feature-flags` response:
+
+```json
+{ "ok": true, "data": { "flags": { "pulse": false, "dual-channel": true } } }
+```
+
+`PUT /backoffice/feature-flags` accepts a partial map of known flag names to booleans and
+returns the full post-update map in the same shape as the GET. Unknown flag names are
+rejected with `400` — new flags are introduced via a database migration on the
+`feature_flags` table.
+
 ### Request/Response Schemas
 
 #### Place Group Schema
