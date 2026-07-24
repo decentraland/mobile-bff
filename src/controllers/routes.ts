@@ -52,6 +52,13 @@ import { deletePlaceGroupHandler } from "./handlers/backoffice/place-groups/dele
 import { getAppVersionsHandler } from "./handlers/app-versions/get-app-versions-handler"
 import { updateAppVersionsHandler } from "./handlers/backoffice/app-versions/update-app-versions-handler"
 
+// Feature Flags handlers
+import { getFeatureFlagsHandler } from "./handlers/feature-flags/get-feature-flags-handler"
+import { getBackofficeFeatureFlagsHandler } from "./handlers/backoffice/feature-flags/get-feature-flags-handler"
+import { createFeatureFlagHandler } from "./handlers/backoffice/feature-flags/create-feature-flag-handler"
+import { updateFeatureFlagHandler } from "./handlers/backoffice/feature-flags/update-feature-flag-handler"
+import { deleteFeatureFlagHandler } from "./handlers/backoffice/feature-flags/delete-feature-flag-handler"
+
 // Wallets (Thirdweb thin proxy)
 // TODO: re-enable sign-message endpoint once the TTL and handshake flow are better defined.
 // import { signMessageHandler } from "./handlers/wallets/sign-message-handler"
@@ -101,6 +108,9 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
 
   // App Versions (mobile clients use this to enforce minimum/recommended app versions)
   router.get("/app-versions", getAppVersionsHandler)
+
+  // Feature Flags (runtime toggles consumed by the mobile clients, e.g. pulse / dual-channel)
+  router.get("/feature-flags", getFeatureFlagsHandler)
 
   // ============== TEST AUTH ENDPOINTS ==============
   // Used by Apple App Store reviewers to test login with a controlled OTP code.
@@ -157,6 +167,12 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
 
   // App Versions management
   router.put("/backoffice/app-versions", signedFetch, updateAppVersionsHandler)
+
+  // Feature Flags management
+  router.get("/backoffice/feature-flags", signedFetch, getBackofficeFeatureFlagsHandler)
+  router.post("/backoffice/feature-flags", signedFetch, createFeatureFlagHandler)
+  router.put("/backoffice/feature-flags/:name", signedFetch, updateFeatureFlagHandler)
+  router.delete("/backoffice/feature-flags/:name", signedFetch, deleteFeatureFlagHandler)
 
   return router
 }

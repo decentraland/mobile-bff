@@ -20,6 +20,7 @@ import { createPlaceGroupsDbComponent } from './adapters/place-groups-db'
 import { createCacheComponent } from './adapters/cache'
 import { createDestinationsApiComponent } from './adapters/destinations-api'
 import { createAppVersionsDbComponent } from './adapters/app-versions-db'
+import { createFeatureFlagsDbComponent } from './adapters/feature-flags-db'
 import { createAppAttestComponent } from './adapters/app-attest'
 import { createPlayIntegrityComponent } from './adapters/play-integrity'
 import { createAttestationVerifierComponent } from './adapters/attestation-verifier'
@@ -63,6 +64,7 @@ export async function initComponents(): Promise<AppComponents> {
   const cache = await createCacheComponent({ config })
   const destinationsApi = await createDestinationsApiComponent({ fetch, config, cache, logs })
   const appVersionsDb = await createAppVersionsDbComponent({ pg })
+  const featureFlagsDb = await createFeatureFlagsDbComponent({ pg })
   const appAttest = await createAppAttestComponent({ config })
   const playIntegrity = await createPlayIntegrityComponent({ config })
   const attestationVerifier = await createAttestationVerifierComponent({
@@ -96,6 +98,7 @@ export async function initComponents(): Promise<AppComponents> {
     cache,
     destinationsApi,
     appVersionsDb,
+    featureFlagsDb,
     appAttest,
     playIntegrity,
     attestationVerifier,

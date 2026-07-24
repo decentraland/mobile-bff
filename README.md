@@ -59,6 +59,37 @@ These endpoints require signed requests and the wallet address must be in the `A
 | POST | `/backoffice/bans` | Create a ban (place, group, or world) |
 | DELETE | `/backoffice/bans/:id` | Remove a ban |
 
+### Feature Flags
+
+Runtime toggles consumed by the mobile clients. The flag names match the godot-explorer
+deep-link query params (e.g. `pulse`, `dual-channel`), so the explorer can adopt this
+endpoint as its remote flags source. `pulse` and `dual-channel` are seeded by migration;
+additional flags can be created and managed at runtime through the backoffice endpoints
+(or the mobile-hub admin UI).
+
+#### Public
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/feature-flags` | Get all feature flags as a `{ name: boolean }` map |
+
+```json
+{ "ok": true, "data": { "flags": { "pulse": false, "dual-channel": true } } }
+```
+
+#### Backoffice (signedFetch + ALLOWED_USERS)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/backoffice/feature-flags` | List flags with description and audit info (`updatedAt`, `updatedBy`) |
+| POST | `/backoffice/feature-flags` | Create a flag: `{ "name": "shiny-thing", "enabled": false, "description": "..." }` |
+| PUT | `/backoffice/feature-flags/:name` | Update `enabled` and/or `description` (pass `null` to clear it) |
+| DELETE | `/backoffice/feature-flags/:name` | Delete a flag |
+
+Flag names must be kebab-case (`^[a-z0-9]+(-[a-z0-9]+)*$`, max 64 chars — enforced by the
+handlers and by a CHECK constraint) so every flag can double as a deep-link param.
+Duplicate names are rejected with `409`; every change records which wallet made it.
+
 ### Request/Response Schemas
 
 #### Place Group Schema
