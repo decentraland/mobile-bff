@@ -61,34 +61,39 @@ These endpoints require signed requests and the wallet address must be in the `A
 
 ### Feature Flags
 
-Runtime toggles consumed by the mobile clients. The flag names match the godot-explorer
-deep-link query params (e.g. `pulse`, `dual-channel`), so the explorer can adopt this
-endpoint as its remote flags source. `pulse` and `dual-channel` are seeded by migration;
-additional flags can be created and managed at runtime through the backoffice endpoints
-(or the mobile-hub admin UI).
+Runtime flags consumed by the mobile clients. Each flag has a `type` set at creation:
+`on-off` (the default, a boolean toggle), `text` (a string value) or `number` (a plain
+decimal like `1` or `0.1`). The flag names match the godot-explorer deep-link query
+params (e.g. `pulse`, `dual-channel`), so the explorer can adopt this endpoint as its
+remote flags source. `pulse`, `dual-channel`, `sentry-sample-rate` and
+`sentry-traces-sample-rate` are seeded by migration; additional flags can be created
+and managed at runtime through the backoffice endpoints (or the mobile-hub admin UI).
 
 #### Public
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/feature-flags` | Get all feature flags as a `{ name: boolean }` map |
+| GET | `/feature-flags` | Get all feature flags as a `{ name: value }` map (boolean, string or number by type) |
 
 ```json
-{ "ok": true, "data": { "flags": { "pulse": false, "dual-channel": true } } }
+{ "ok": true, "data": { "flags": { "pulse": false, "dual-channel": true, "sentry-sample-rate": 1, "sentry-traces-sample-rate": 0.1 } } }
 ```
 
 #### Backoffice (signedFetch + ALLOWED_USERS)
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/backoffice/feature-flags` | List flags with description and audit info (`updatedAt`, `updatedBy`) |
-| POST | `/backoffice/feature-flags` | Create a flag: `{ "name": "shiny-thing", "enabled": false, "description": "..." }` |
-| PUT | `/backoffice/feature-flags/:name` | Update `enabled` and/or `description` (pass `null` to clear it) |
+| GET | `/backoffice/feature-flags` | List flags with `type`, `value`, description and audit info (`updatedAt`, `updatedBy`) |
+| POST | `/backoffice/feature-flags` | Create a flag: `{ "name": "sentry-sample-rate", "type": "number", "value": 0.1 }` — on-off flags use `enabled` instead of `value` |
+| PUT | `/backoffice/feature-flags/:name` | Update `enabled` (on-off), `value` (text/number) and/or `description` (pass `null` to clear it) |
 | DELETE | `/backoffice/feature-flags/:name` | Delete a flag |
 
 Flag names must be kebab-case (`^[a-z0-9]+(-[a-z0-9]+)*$`, max 64 chars — enforced by the
 handlers and by a CHECK constraint) so every flag can double as a deep-link param.
 Duplicate names are rejected with `409`; every change records which wallet made it.
+A flag's `type` is immutable — delete and recreate the flag to change it. Number values
+accept JSON numbers or numeric strings (backoffice textfields) and are stored in
+canonical form (`"0.10"` → `0.1`); scientific notation is rejected.
 
 ### Request/Response Schemas
 

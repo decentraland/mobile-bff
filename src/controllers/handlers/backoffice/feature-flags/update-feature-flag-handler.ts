@@ -1,11 +1,12 @@
 import { DecentralandSignatureContext } from '@dcl/platform-crypto-middleware'
 import { HandlerContextWithPath } from '../../../../types'
 import { isAllowedUser } from '../../../../logic/allowed-users'
-import { validateFlagDescription } from '../../../../logic/feature-flags'
+import { validateFlagDescription, normalizeFlagValue } from '../../../../logic/feature-flags'
 import { UpdateFeatureFlagInput } from '../../../../adapters/feature-flags-db'
 
 type UpdateBody = {
   enabled?: unknown
+  value?: unknown
   description?: unknown
 }
 
@@ -35,8 +36,8 @@ export async function updateFeatureFlagHandler(
   try {
     const body = await request.json() as UpdateBody
 
-    if (body.enabled === undefined && body.description === undefined) {
-      return { status: 400, body: { ok: false, error: "At least one of 'enabled' or 'description' is required" } }
+    if (body.enabled === undefined && body.value === undefined && body.description === undefined) {
+      return { status: 400, body: { ok: false, error: "At least one of 'enabled', 'value' or 'description' is required" } }
     }
 
     if (body.enabled !== undefined && typeof body.enabled !== 'boolean') {
@@ -50,8 +51,30 @@ export async function updateFeatureFlagHandler(
       }
     }
 
+    const existing = await featureFlagsDb.getByName(name)
+    if (!existing) {
+      return { status: 404, body: { ok: false, error: `Feature flag '${name}' not found` } }
+    }
+
+    if (body.enabled !== undefined && existing.type !== 'on-off') {
+      return { status: 400, body: { ok: false, error: `'enabled' is only valid for on-off flags; '${name}' is a ${existing.type} flag` } }
+    }
+
+    let value: string | undefined
+    if (body.value !== undefined) {
+      if (existing.type === 'on-off') {
+        return { status: 400, body: { ok: false, error: `'value' is only valid for text and number flags; '${name}' is an on-off flag` } }
+      }
+      const normalized = normalizeFlagValue(existing.type, body.value)
+      if ('error' in normalized) {
+        return { status: 400, body: { ok: false, error: normalized.error } }
+      }
+      value = normalized.value
+    }
+
     const changes: UpdateFeatureFlagInput = {
       ...(body.enabled !== undefined ? { enabled: body.enabled as boolean } : {}),
+      ...(value !== undefined ? { value } : {}),
       ...(body.description !== undefined ? { description: body.description as string | null } : {})
     }
 

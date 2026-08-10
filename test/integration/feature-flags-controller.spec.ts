@@ -14,7 +14,9 @@ test('feature flags endpoints', function ({ components }) {
     // Values are runtime-mutable (other suites share the test db), so assert shape not values
     expect(body.data.flags).toMatchObject({
       pulse: expect.any(Boolean),
-      'dual-channel': expect.any(Boolean)
+      'dual-channel': expect.any(Boolean),
+      'sentry-sample-rate': expect.any(Number),
+      'sentry-traces-sample-rate': expect.any(Number)
     })
   })
 
@@ -46,9 +48,14 @@ test('backoffice feature flags endpoints with signed fetch', function ({ compone
 
   afterAll(async () => {
     // Leave the shared mobile_test database in its seeded state for other suites
-    await components.pg.query("DELETE FROM feature_flags WHERE name NOT IN ('pulse', 'dual-channel')")
+    await components.pg.query(`
+      DELETE FROM feature_flags
+      WHERE name NOT IN ('pulse', 'dual-channel', 'sentry-sample-rate', 'sentry-traces-sample-rate')
+    `)
     await components.pg.query("UPDATE feature_flags SET enabled = false, updated_by = NULL WHERE name = 'pulse'")
     await components.pg.query("UPDATE feature_flags SET enabled = true, updated_by = NULL WHERE name = 'dual-channel'")
+    await components.pg.query("UPDATE feature_flags SET value = '1', updated_by = NULL WHERE name = 'sentry-sample-rate'")
+    await components.pg.query("UPDATE feature_flags SET value = '0.1', updated_by = NULL WHERE name = 'sentry-traces-sample-rate'")
   })
 
   function makeSignedRequest(signer: Identity, method: string, path: string, body?: any) {
@@ -130,6 +137,54 @@ test('backoffice feature flags endpoints with signed fetch', function ({ compone
 
     const afterDelete = await components.localFetch.fetch('/feature-flags')
     expect((await afterDelete.json()).data.flags).not.toHaveProperty('integration-test-flag')
+  })
+
+  it('creates a number flag from a textfield string, updates it and exposes it as a number', async () => {
+    // Create — backoffice textfields submit strings; the API canonicalizes them
+    const createResponse = await makeSignedRequest(identity, 'POST', '/backoffice/feature-flags', {
+      name: 'integration-number-flag',
+      type: 'number',
+      value: '0.10'
+    })
+    const created = await createResponse.json()
+
+    expect(createResponse.status).toBe(201)
+    expect(created.data).toMatchObject({ name: 'integration-number-flag', type: 'number', value: 0.1 })
+
+    // Publicly visible as a number
+    const publicResponse = await components.localFetch.fetch('/feature-flags')
+    const publicBody = await publicResponse.json()
+    expect(publicBody.data.flags['integration-number-flag']).toBe(0.1)
+
+    // Update the value
+    const updateResponse = await makeSignedRequest(
+      identity, 'PUT', '/backoffice/feature-flags/integration-number-flag', { value: 1 }
+    )
+    const updated = await updateResponse.json()
+    expect(updateResponse.status).toBe(200)
+    expect(updated.data.value).toBe(1)
+
+    // Toggling enabled on a number flag is rejected
+    const enabledResponse = await makeSignedRequest(
+      identity, 'PUT', '/backoffice/feature-flags/integration-number-flag', { enabled: true }
+    )
+    expect(enabledResponse.status).toBe(400)
+
+    // Delete
+    const deleteResponse = await makeSignedRequest(
+      identity, 'DELETE', '/backoffice/feature-flags/integration-number-flag'
+    )
+    expect(deleteResponse.status).toBe(200)
+  })
+
+  it('rejects a non-numeric value for a number flag with 400', async () => {
+    const response = await makeSignedRequest(identity, 'POST', '/backoffice/feature-flags', {
+      name: 'bad-number-flag',
+      type: 'number',
+      value: 'lots'
+    })
+
+    expect(response.status).toBe(400)
   })
 
   it('rejects a duplicate flag name with 409', async () => {
