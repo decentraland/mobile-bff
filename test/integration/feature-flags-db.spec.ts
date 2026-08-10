@@ -50,7 +50,10 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
   beforeEach(restoreSeededState)
 
   async function restoreSeededState() {
-    await pg.query("DELETE FROM feature_flags WHERE name NOT IN ('pulse', 'dual-channel')")
+    await pg.query(`
+      DELETE FROM feature_flags
+      WHERE name NOT IN ('pulse', 'dual-channel', 'sentry-sample-rate', 'sentry-traces-sample-rate')
+    `)
     await pg.query(`
       UPDATE feature_flags SET enabled = false, updated_by = NULL,
         description = 'Enable the ENet/UDP avatar-relay transport (Pulse) in godot-explorer'
@@ -61,6 +64,8 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
         description = 'Keep sending movement over LiveKit while Pulse is established'
       WHERE name = 'dual-channel'
     `)
+    await pg.query("UPDATE feature_flags SET value = '1', updated_by = NULL WHERE name = 'sentry-sample-rate'")
+    await pg.query("UPDATE feature_flags SET value = '0.1', updated_by = NULL WHERE name = 'sentry-traces-sample-rate'")
   }
 
   async function getDbConnectionString(config: any): Promise<string> {
@@ -77,10 +82,15 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
   }
 
   describe('getAll', () => {
-    it('should return the seeded flags as a boolean map', async () => {
+    it('should return the seeded flags as a typed map', async () => {
       const flags = await featureFlagsDb.getAll()
 
-      expect(flags).toEqual({ pulse: false, 'dual-channel': true })
+      expect(flags).toEqual({
+        pulse: false,
+        'dual-channel': true,
+        'sentry-sample-rate': 1,
+        'sentry-traces-sample-rate': 0.1
+      })
     })
   })
 
@@ -88,27 +98,49 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
     it('should return the seeded flags with descriptions, sorted by name', async () => {
       const flags = await featureFlagsDb.getAllDetailed()
 
-      expect(flags.map(f => f.name)).toEqual(['dual-channel', 'pulse'])
+      expect(flags.map(f => f.name)).toEqual([
+        'dual-channel',
+        'pulse',
+        'sentry-sample-rate',
+        'sentry-traces-sample-rate'
+      ])
       expect(flags[1]).toMatchObject({
         name: 'pulse',
+        type: 'on-off',
         enabled: false,
+        value: null,
         updatedBy: null
       })
       expect(flags[1].description).toContain('Pulse')
       expect(new Date(flags[1].updatedAt).getTime()).not.toBeNaN()
+      expect(flags[2]).toMatchObject({ name: 'sentry-sample-rate', type: 'number', value: 1 })
+    })
+  })
+
+  describe('getByName', () => {
+    it('should return a single flag with its typed value', async () => {
+      const flag = await featureFlagsDb.getByName('sentry-traces-sample-rate')
+
+      expect(flag).toMatchObject({ name: 'sentry-traces-sample-rate', type: 'number', value: 0.1 })
+    })
+
+    it('should return null for a missing flag', async () => {
+      expect(await featureFlagsDb.getByName('not-a-flag')).toBeNull()
     })
   })
 
   describe('create', () => {
-    it('should insert a new flag and return it', async () => {
+    it('should insert a new on-off flag and return it', async () => {
       const flag = await featureFlagsDb.create(
-        { name: 'shiny-thing', enabled: true, description: 'A test flag' },
+        { name: 'shiny-thing', type: 'on-off', enabled: true, value: null, description: 'A test flag' },
         TEST_ADDRESS
       )
 
       expect(flag).toMatchObject({
         name: 'shiny-thing',
+        type: 'on-off',
         enabled: true,
+        value: null,
         description: 'A test flag',
         updatedBy: TEST_ADDRESS
       })
@@ -117,16 +149,50 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
       expect(map['shiny-thing']).toBe(true)
     })
 
+    it('should insert a number flag and expose its parsed value', async () => {
+      const flag = await featureFlagsDb.create(
+        { name: 'spawn-radius', type: 'number', enabled: false, value: '2.5', description: null },
+        TEST_ADDRESS
+      )
+
+      expect(flag).toMatchObject({ name: 'spawn-radius', type: 'number', value: 2.5 })
+
+      const map = await featureFlagsDb.getAll()
+      expect(map['spawn-radius']).toBe(2.5)
+    })
+
+    it('should insert a text flag and expose its string value', async () => {
+      await featureFlagsDb.create(
+        { name: 'welcome-message', type: 'text', enabled: false, value: 'Hello there', description: null },
+        TEST_ADDRESS
+      )
+
+      const map = await featureFlagsDb.getAll()
+      expect(map['welcome-message']).toBe('Hello there')
+    })
+
     it('should throw a unique violation for a duplicate name', async () => {
       await expect(
-        featureFlagsDb.create({ name: 'pulse', enabled: false, description: null }, TEST_ADDRESS)
+        featureFlagsDb.create({ name: 'pulse', type: 'on-off', enabled: false, value: null, description: null }, TEST_ADDRESS)
       ).rejects.toMatchObject({ code: '23505' })
     })
 
     it('should be rejected by the db CHECK constraint for a non-kebab-case name', async () => {
       // Handler validation is the first line of defense; the CHECK constraint is the backstop
       await expect(
-        featureFlagsDb.create({ name: 'NOT_VALID', enabled: false, description: null }, TEST_ADDRESS)
+        featureFlagsDb.create({ name: 'NOT_VALID', type: 'on-off', enabled: false, value: null, description: null }, TEST_ADDRESS)
+      ).rejects.toMatchObject({ code: '23514' })
+    })
+
+    it('should be rejected by the db CHECK constraint when a number flag has a non-numeric value', async () => {
+      await expect(
+        featureFlagsDb.create({ name: 'bad-number', type: 'number', enabled: false, value: 'abc', description: null }, TEST_ADDRESS)
+      ).rejects.toMatchObject({ code: '23514' })
+    })
+
+    it('should be rejected by the db CHECK constraint when a text flag has no value', async () => {
+      await expect(
+        featureFlagsDb.create({ name: 'bad-text', type: 'text', enabled: false, value: null, description: null }, TEST_ADDRESS)
       ).rejects.toMatchObject({ code: '23514' })
     })
   })
@@ -151,6 +217,15 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
       expect(flag!.description).toBeNull()
     })
 
+    it('should update a number flag value', async () => {
+      const flag = await featureFlagsDb.update('sentry-sample-rate', { value: '0.5' }, TEST_ADDRESS)
+
+      expect(flag).toMatchObject({ name: 'sentry-sample-rate', type: 'number', value: 0.5, updatedBy: TEST_ADDRESS })
+
+      const map = await featureFlagsDb.getAll()
+      expect(map['sentry-sample-rate']).toBe(0.5)
+    })
+
     it('should return null for a missing flag', async () => {
       const flag = await featureFlagsDb.update('not-a-flag', { enabled: true }, TEST_ADDRESS)
 
@@ -171,7 +246,7 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
 
   describe('delete', () => {
     it('should delete an existing flag and return true', async () => {
-      await featureFlagsDb.create({ name: 'doomed', enabled: false, description: null }, TEST_ADDRESS)
+      await featureFlagsDb.create({ name: 'doomed', type: 'on-off', enabled: false, value: null, description: null }, TEST_ADDRESS)
 
       const deleted = await featureFlagsDb.delete('doomed')
 

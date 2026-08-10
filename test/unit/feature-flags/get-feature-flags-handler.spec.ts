@@ -29,6 +29,25 @@ describe('get-feature-flags-handler', () => {
     expect(response.body).toEqual({ ok: true, data: { flags: { pulse: false, 'dual-channel': true } } })
   })
 
+  it('should pass through text and number flag values untouched', async () => {
+    mockFeatureFlagsDb.getAll.mockResolvedValue({
+      pulse: false,
+      'sentry-sample-rate': 1,
+      'sentry-traces-sample-rate': 0.1,
+      'welcome-message': 'Hello there'
+    })
+
+    const response = await getFeatureFlagsHandler(createContext() as any)
+
+    expect(response.status).toBe(200)
+    expect(response.body.data.flags).toEqual({
+      pulse: false,
+      'sentry-sample-rate': 1,
+      'sentry-traces-sample-rate': 0.1,
+      'welcome-message': 'Hello there'
+    })
+  })
+
   it('should return 500 with the error envelope when the db fails', async () => {
     mockFeatureFlagsDb.getAll.mockRejectedValue(new Error('db down'))
 

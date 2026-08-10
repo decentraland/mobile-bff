@@ -1,11 +1,13 @@
 import { DecentralandSignatureContext } from '@dcl/platform-crypto-middleware'
 import { HandlerContextWithPath } from '../../../../types'
 import { isAllowedUser } from '../../../../logic/allowed-users'
-import { validateFlagName, validateFlagDescription } from '../../../../logic/feature-flags'
+import { validateFlagName, validateFlagDescription, validateFlagType, normalizeFlagValue, FlagType } from '../../../../logic/feature-flags'
 
 type CreateBody = {
   name?: unknown
+  type?: unknown
   enabled?: unknown
+  value?: unknown
   description?: unknown
 }
 
@@ -42,8 +44,32 @@ export async function createFeatureFlagHandler(
     }
     name = body.name as string
 
-    if (body.enabled !== undefined && typeof body.enabled !== 'boolean') {
-      return { status: 400, body: { ok: false, error: "'enabled' must be a boolean" } }
+    let type: FlagType = 'on-off'
+    if (body.type !== undefined) {
+      const typeError = validateFlagType(body.type)
+      if (typeError) {
+        return { status: 400, body: { ok: false, error: typeError } }
+      }
+      type = body.type as FlagType
+    }
+
+    let value: string | null = null
+    if (type === 'on-off') {
+      if (body.value !== undefined) {
+        return { status: 400, body: { ok: false, error: "'value' is only valid for text and number flags; on-off flags use 'enabled'" } }
+      }
+      if (body.enabled !== undefined && typeof body.enabled !== 'boolean') {
+        return { status: 400, body: { ok: false, error: "'enabled' must be a boolean" } }
+      }
+    } else {
+      if (body.enabled !== undefined) {
+        return { status: 400, body: { ok: false, error: "'enabled' is only valid for on-off flags; text and number flags use 'value'" } }
+      }
+      const normalized = normalizeFlagValue(type, body.value)
+      if ('error' in normalized) {
+        return { status: 400, body: { ok: false, error: normalized.error } }
+      }
+      value = normalized.value
     }
 
     if (body.description !== undefined) {
@@ -58,7 +84,7 @@ export async function createFeatureFlagHandler(
       : null
 
     const flag = await featureFlagsDb.create(
-      { name, enabled: body.enabled === true, description },
+      { name, type, enabled: body.enabled === true, value, description },
       userAddress
     )
 

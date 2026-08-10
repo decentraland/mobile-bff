@@ -106,12 +106,12 @@ describe('create-feature-flag-handler', () => {
     expect(response.body.error).toContain('500 characters')
   })
 
-  it('should create the flag with defaults (enabled=false, description=null) and return 201', async () => {
+  it('should create the flag with defaults (on-off, enabled=false, description=null) and return 201', async () => {
     const response = await createFeatureFlagHandler(createContext(ALLOWED_ADDRESS, { name: 'new-flag' }) as any)
 
     expect(response.status).toBe(201)
     expect(mockFeatureFlagsDb.create).toHaveBeenCalledWith(
-      { name: 'new-flag', enabled: false, description: null },
+      { name: 'new-flag', type: 'on-off', enabled: false, value: null, description: null },
       ALLOWED_ADDRESS
     )
     expect(response.body.ok).toBe(true)
@@ -125,7 +125,7 @@ describe('create-feature-flag-handler', () => {
 
     expect(response.status).toBe(201)
     expect(mockFeatureFlagsDb.create).toHaveBeenCalledWith(
-      { name: 'new-flag', enabled: true, description: 'A new toggle' },
+      { name: 'new-flag', type: 'on-off', enabled: true, value: null, description: 'A new toggle' },
       ALLOWED_ADDRESS
     )
   })
@@ -134,9 +134,91 @@ describe('create-feature-flag-handler', () => {
     await createFeatureFlagHandler(createContext(ALLOWED_ADDRESS, { name: 'new-flag', description: '   ' }) as any)
 
     expect(mockFeatureFlagsDb.create).toHaveBeenCalledWith(
-      { name: 'new-flag', enabled: false, description: null },
+      { name: 'new-flag', type: 'on-off', enabled: false, value: null, description: null },
       ALLOWED_ADDRESS
     )
+  })
+
+  describe('typed flags', () => {
+    it('should return 400 for an unknown type', async () => {
+      const response = await createFeatureFlagHandler(
+        createContext(ALLOWED_ADDRESS, { name: 'new-flag', type: 'toggle' }) as any
+      )
+
+      expect(response.status).toBe(400)
+      expect(response.body.error).toContain("'type' must be one of")
+      expect(mockFeatureFlagsDb.create).not.toHaveBeenCalled()
+    })
+
+    it('should return 400 when an on-off flag is given a value', async () => {
+      const response = await createFeatureFlagHandler(
+        createContext(ALLOWED_ADDRESS, { name: 'new-flag', value: 'hello' }) as any
+      )
+
+      expect(response.status).toBe(400)
+      expect(response.body.error).toContain("'value' is only valid for text and number flags")
+    })
+
+    it('should return 400 when a text/number flag is given enabled', async () => {
+      const response = await createFeatureFlagHandler(
+        createContext(ALLOWED_ADDRESS, { name: 'new-flag', type: 'number', value: 1, enabled: true }) as any
+      )
+
+      expect(response.status).toBe(400)
+      expect(response.body.error).toContain("'enabled' is only valid for on-off flags")
+    })
+
+    it('should return 400 when a text flag is missing its value', async () => {
+      const response = await createFeatureFlagHandler(
+        createContext(ALLOWED_ADDRESS, { name: 'new-flag', type: 'text' }) as any
+      )
+
+      expect(response.status).toBe(400)
+      expect(response.body.error).toContain("'value' must be a string")
+    })
+
+    it.each([['not-a-number'], ['1.2.3'], ['1e3'], [Infinity], [NaN], [true], [null]])(
+      'should return 400 when a number flag gets invalid value %p',
+      async (value) => {
+        const response = await createFeatureFlagHandler(
+          createContext(ALLOWED_ADDRESS, { name: 'sentry-sample-rate', type: 'number', value }) as any
+        )
+
+        expect(response.status).toBe(400)
+        expect(response.body.error).toContain('plain decimal number')
+        expect(mockFeatureFlagsDb.create).not.toHaveBeenCalled()
+      }
+    )
+
+    it('should create a text flag with its value', async () => {
+      const response = await createFeatureFlagHandler(
+        createContext(ALLOWED_ADDRESS, { name: 'welcome-message', type: 'text', value: 'Hello there' }) as any
+      )
+
+      expect(response.status).toBe(201)
+      expect(mockFeatureFlagsDb.create).toHaveBeenCalledWith(
+        { name: 'welcome-message', type: 'text', enabled: false, value: 'Hello there', description: null },
+        ALLOWED_ADDRESS
+      )
+    })
+
+    it.each([
+      [1, '1'],
+      [0.1, '0.1'],
+      ['0.10', '0.1'],
+      ['1', '1'],
+      [-2.5, '-2.5']
+    ])('should create a number flag storing %p as the canonical string %p', async (value, stored) => {
+      const response = await createFeatureFlagHandler(
+        createContext(ALLOWED_ADDRESS, { name: 'sentry-sample-rate', type: 'number', value }) as any
+      )
+
+      expect(response.status).toBe(201)
+      expect(mockFeatureFlagsDb.create).toHaveBeenCalledWith(
+        { name: 'sentry-sample-rate', type: 'number', enabled: false, value: stored, description: null },
+        ALLOWED_ADDRESS
+      )
+    })
   })
 
   it('should return 409 when the flag already exists', async () => {

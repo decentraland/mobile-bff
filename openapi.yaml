@@ -488,8 +488,9 @@ paths:
         - Feature Flags
       summary: Get all feature flags
       description: |
-        Returns every feature flag as a `{ name: boolean }` map. Flag names match the
-        godot-explorer deep-link query params (e.g. `pulse`, `dual-channel`) so the
+        Returns every feature flag as a `{ name: value }` map. On-off flags map to a
+        boolean, text flags to a string and number flags to a number. Flag names match
+        the godot-explorer deep-link query params (e.g. `pulse`, `dual-channel`) so the
         explorer can adopt this endpoint as its remote flags source.
       operationId: getFeatureFlags
       security: []
@@ -506,6 +507,8 @@ paths:
                   flags:
                     pulse: false
                     dual-channel: true
+                    sentry-sample-rate: 1
+                    sentry-traces-sample-rate: 0.1
         '500':
           description: Internal server error
           content:
@@ -547,9 +550,12 @@ paths:
       summary: Create a feature flag (backoffice)
       description: |
         Creates a new flag. Names must be kebab-case (lowercase letters, digits, dashes)
-        so they can double as godot-explorer deep-link params. `enabled` defaults to
-        `false`, `description` to null.
-        Requires signed fetch (ADR-44) and the signer address in `ALLOWED_USERS`.
+        so they can double as godot-explorer deep-link params. `type` defaults to
+        `on-off` and is immutable (delete and recreate to change it). On-off flags use
+        `enabled` (defaults to `false`); text and number flags require `value` instead.
+        Number values are plain decimals (e.g. `1`, `0.1`) accepted as JSON numbers or
+        numeric strings. Requires signed fetch (ADR-44) and the signer address in
+        `ALLOWED_USERS`.
       operationId: createFeatureFlag
       security:
         - signedFetch: []
@@ -560,9 +566,10 @@ paths:
             schema:
               $ref: '#/components/schemas/CreateFeatureFlagRequest'
             example:
-              name: shiny-thing
-              enabled: false
-              description: Enables the shiny thing
+              name: sentry-sample-rate
+              type: number
+              value: 0.1
+              description: Sentry error sample rate for godot-explorer
       responses:
         '201':
           description: Feature flag created
@@ -571,14 +578,14 @@ paths:
               schema:
                 $ref: '#/components/schemas/FeatureFlagResponse'
         '400':
-          description: Invalid body (missing/invalid name, non-boolean enabled, invalid description)
+          description: Invalid body (missing/invalid name, unknown type, wrong field for the flag type, invalid value or description)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
               example:
                 ok: false
-                error: "'name' must be kebab-case (lowercase letters, digits and dashes, e.g. 'dual-channel')"
+                error: "'value' must be a plain decimal number (e.g. 1, 0.1)"
         '401':
           $ref: '#/components/responses/FeatureFlagUnauthorized'
         '403':
@@ -608,8 +615,9 @@ paths:
         - Feature Flags
       summary: Update a feature flag (backoffice)
       description: |
-        Updates a flag's enabled state and/or description. At least one field is required;
-        pass `description: null` to clear it. Records the signer as `updatedBy`.
+        Updates a flag's enabled state (on-off flags), value (text/number flags) and/or
+        description. At least one field is required; pass `description: null` to clear it.
+        Records the signer as `updatedBy`.
         Requires signed fetch (ADR-44) and the signer address in `ALLOWED_USERS`.
       operationId: updateFeatureFlag
       security:
@@ -621,7 +629,7 @@ paths:
             schema:
               $ref: '#/components/schemas/UpdateFeatureFlagRequest'
             example:
-              enabled: true
+              value: 0.5
       responses:
         '200':
           description: Feature flag updated
@@ -630,14 +638,14 @@ paths:
               schema:
                 $ref: '#/components/schemas/FeatureFlagResponse'
         '400':
-          description: Invalid body (no fields, non-boolean enabled, invalid description)
+          description: Invalid body (no fields, wrong field for the flag type, invalid value or description)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
               example:
                 ok: false
-                error: "At least one of 'enabled' or 'description' is required"
+                error: "At least one of 'enabled', 'value' or 'description' is required"
         '401':
           $ref: '#/components/responses/FeatureFlagUnauthorized'
         '403':
@@ -906,18 +914,27 @@ components:
           properties:
             flags:
               type: object
-              description: Map of flag name to enabled state
+              description: |
+                Map of flag name to its value: boolean for on-off flags, string for
+                text flags, number for number flags
               additionalProperties:
-                type: boolean
+                oneOf:
+                  - type: boolean
+                  - type: string
+                  - type: number
               example:
                 pulse: false
                 dual-channel: true
+                sentry-sample-rate: 1
+                sentry-traces-sample-rate: 0.1
 
     FeatureFlag:
       type: object
       required:
         - name
+        - type
         - enabled
+        - value
         - description
         - updatedAt
         - updatedBy
@@ -926,9 +943,22 @@ components:
           type: string
           description: Kebab-case flag name, doubles as the godot-explorer deep-link param
           example: pulse
+        type:
+          type: string
+          enum: [on-off, text, number]
+          description: Immutable field type, set at creation
+          example: on-off
         enabled:
           type: boolean
+          description: Only meaningful for on-off flags
           example: false
+        value:
+          nullable: true
+          oneOf:
+            - type: string
+            - type: number
+          description: String for text flags, number for number flags, null for on-off flags
+          example: null
         description:
           type: string
           nullable: true
@@ -983,10 +1013,25 @@ components:
           type: string
           pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"
           maxLength: 64
-          example: shiny-thing
+          example: sentry-sample-rate
+        type:
+          type: string
+          enum: [on-off, text, number]
+          default: on-off
+          description: Immutable after creation (delete and recreate to change)
         enabled:
           type: boolean
           default: false
+          description: Only valid for on-off flags
+        value:
+          oneOf:
+            - type: string
+            - type: number
+          description: |
+            Required for text and number flags, rejected for on-off flags. Number
+            values must be plain decimals (e.g. 1, 0.1) and are accepted as JSON
+            numbers or numeric strings.
+          example: 0.1
         description:
           type: string
           maxLength: 500
@@ -998,6 +1043,12 @@ components:
       properties:
         enabled:
           type: boolean
+          description: Only valid for on-off flags
+        value:
+          oneOf:
+            - type: string
+            - type: number
+          description: Only valid for text and number flags
         description:
           type: string
           maxLength: 500

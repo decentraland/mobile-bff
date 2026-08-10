@@ -46,11 +46,11 @@ describe('update-feature-flag-handler', () => {
     expect(response.body).toEqual({ ok: false, error: 'Forbidden: User not in allowed list' })
   })
 
-  it('should return 400 when neither enabled nor description is provided', async () => {
+  it('should return 400 when no updatable field is provided', async () => {
     const response = await updateFeatureFlagHandler(createContext(ALLOWED_ADDRESS, 'pulse', {}) as any)
 
     expect(response.status).toBe(400)
-    expect(response.body).toEqual({ ok: false, error: "At least one of 'enabled' or 'description' is required" })
+    expect(response.body).toEqual({ ok: false, error: "At least one of 'enabled', 'value' or 'description' is required" })
     expect(mockFeatureFlagsDb.update).not.toHaveBeenCalled()
   })
 
@@ -80,6 +80,18 @@ describe('update-feature-flag-handler', () => {
   })
 
   it('should return 404 when the flag does not exist', async () => {
+    mockFeatureFlagsDb.getByName.mockResolvedValue(null)
+
+    const response = await updateFeatureFlagHandler(
+      createContext(ALLOWED_ADDRESS, 'not-a-flag', { enabled: true }) as any
+    )
+
+    expect(response.status).toBe(404)
+    expect(response.body).toEqual({ ok: false, error: "Feature flag 'not-a-flag' not found" })
+    expect(mockFeatureFlagsDb.update).not.toHaveBeenCalled()
+  })
+
+  it('should return 404 when the flag is deleted between the lookup and the update', async () => {
     mockFeatureFlagsDb.update.mockResolvedValue(null)
 
     const response = await updateFeatureFlagHandler(
@@ -88,6 +100,82 @@ describe('update-feature-flag-handler', () => {
 
     expect(response.status).toBe(404)
     expect(response.body).toEqual({ ok: false, error: "Feature flag 'not-a-flag' not found" })
+  })
+
+  describe('typed flags', () => {
+    it('should return 400 when setting enabled on a number flag', async () => {
+      mockFeatureFlagsDb.getByName.mockResolvedValue(
+        createTestFeatureFlag({ name: 'sentry-sample-rate', type: 'number', value: 1 })
+      )
+
+      const response = await updateFeatureFlagHandler(
+        createContext(ALLOWED_ADDRESS, 'sentry-sample-rate', { enabled: true }) as any
+      )
+
+      expect(response.status).toBe(400)
+      expect(response.body.error).toContain("'enabled' is only valid for on-off flags")
+      expect(mockFeatureFlagsDb.update).not.toHaveBeenCalled()
+    })
+
+    it('should return 400 when setting a value on an on-off flag', async () => {
+      const response = await updateFeatureFlagHandler(
+        createContext(ALLOWED_ADDRESS, 'pulse', { value: '0.5' }) as any
+      )
+
+      expect(response.status).toBe(400)
+      expect(response.body.error).toContain("'value' is only valid for text and number flags")
+      expect(mockFeatureFlagsDb.update).not.toHaveBeenCalled()
+    })
+
+    it('should return 400 for a non-numeric value on a number flag', async () => {
+      mockFeatureFlagsDb.getByName.mockResolvedValue(
+        createTestFeatureFlag({ name: 'sentry-sample-rate', type: 'number', value: 1 })
+      )
+
+      const response = await updateFeatureFlagHandler(
+        createContext(ALLOWED_ADDRESS, 'sentry-sample-rate', { value: 'lots' }) as any
+      )
+
+      expect(response.status).toBe(400)
+      expect(response.body.error).toContain('plain decimal number')
+    })
+
+    it('should update a number flag value, canonicalizing the input', async () => {
+      mockFeatureFlagsDb.getByName.mockResolvedValue(
+        createTestFeatureFlag({ name: 'sentry-sample-rate', type: 'number', value: 1 })
+      )
+
+      const response = await updateFeatureFlagHandler(
+        createContext(ALLOWED_ADDRESS, 'sentry-sample-rate', { value: '0.10' }) as any
+      )
+
+      expect(response.status).toBe(200)
+      expect(mockFeatureFlagsDb.update).toHaveBeenCalledWith('sentry-sample-rate', { value: '0.1' }, ALLOWED_ADDRESS)
+    })
+
+    it('should update a number flag value from a JSON number', async () => {
+      mockFeatureFlagsDb.getByName.mockResolvedValue(
+        createTestFeatureFlag({ name: 'sentry-sample-rate', type: 'number', value: 1 })
+      )
+
+      await updateFeatureFlagHandler(
+        createContext(ALLOWED_ADDRESS, 'sentry-sample-rate', { value: 0.25 }) as any
+      )
+
+      expect(mockFeatureFlagsDb.update).toHaveBeenCalledWith('sentry-sample-rate', { value: '0.25' }, ALLOWED_ADDRESS)
+    })
+
+    it('should update a text flag value', async () => {
+      mockFeatureFlagsDb.getByName.mockResolvedValue(
+        createTestFeatureFlag({ name: 'welcome-message', type: 'text', value: 'Hi' })
+      )
+
+      await updateFeatureFlagHandler(
+        createContext(ALLOWED_ADDRESS, 'welcome-message', { value: 'Hello there' }) as any
+      )
+
+      expect(mockFeatureFlagsDb.update).toHaveBeenCalledWith('welcome-message', { value: 'Hello there' }, ALLOWED_ADDRESS)
+    })
   })
 
   it('should update the enabled state and return the updated flag', async () => {
