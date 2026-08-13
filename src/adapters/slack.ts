@@ -1,4 +1,4 @@
-import { IFetchComponent } from '@well-known-components/interfaces'
+import type { IFetchComponent } from '@dcl/core-commons'
 import { AuthChain } from '@dcl/crypto'
 import { AppComponents } from '../types'
 import { MagicDeletionResult } from './magic'

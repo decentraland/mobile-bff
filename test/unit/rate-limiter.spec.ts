@@ -1,4 +1,4 @@
-import { createTestMetricsComponent } from '@well-known-components/metrics'
+import { createTestMetricsComponent } from '@dcl/metrics'
 
 import {
   __resetFallbackWarningForTests,

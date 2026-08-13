@@ -1,7 +1,7 @@
 import { createDotEnvConfigComponent } from '@well-known-components/env-config-provider'
 import { createLogComponent } from '@well-known-components/logger'
-import { createMetricsComponent } from '@well-known-components/metrics'
-import { createPgComponent, IPgComponent } from '@well-known-components/pg-component'
+import { createMetricsComponent } from '@dcl/metrics'
+import { createPgComponent, IPgComponent } from '@dcl/pg-component'
 import { metricDeclarations } from '../../src/metrics'
 import { createFeatureFlagsDbComponent, IFeatureFlagsDbComponent } from '../../src/adapters/feature-flags-db'
 
@@ -25,7 +25,6 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
 
     pg = await createPgComponent({ logs, config, metrics }, {
       migration: {
-        databaseUrl: await getDbConnectionString(config),
         dir: __dirname + '/../../dist/migrations',
         migrationsTable: 'pgmigrations',
         ignorePattern: '.*\\.map',
@@ -66,19 +65,6 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
     `)
     await pg.query("UPDATE feature_flags SET value = '1', updated_by = NULL WHERE name = 'sentry-sample-rate'")
     await pg.query("UPDATE feature_flags SET value = '0.1', updated_by = NULL WHERE name = 'sentry-traces-sample-rate'")
-  }
-
-  async function getDbConnectionString(config: any): Promise<string> {
-    let databaseUrl: string | undefined = await config.getString('PG_COMPONENT_PSQL_CONNECTION_STRING')
-    if (!databaseUrl) {
-      const dbUser = await config.requireString('PG_COMPONENT_PSQL_USER')
-      const dbDatabaseName = await config.requireString('PG_COMPONENT_PSQL_DATABASE')
-      const dbPort = await config.requireString('PG_COMPONENT_PSQL_PORT')
-      const dbHost = await config.requireString('PG_COMPONENT_PSQL_HOST')
-      const dbPassword = await config.requireString('PG_COMPONENT_PSQL_PASSWORD')
-      databaseUrl = `postgres://${dbUser}:${dbPassword}@${dbHost}:${dbPort}/${dbDatabaseName}`
-    }
-    return databaseUrl
   }
 
   describe('getAll', () => {

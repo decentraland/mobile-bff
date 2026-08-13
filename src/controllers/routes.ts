@@ -1,6 +1,4 @@
-import { Router } from "@well-known-components/http-server"
-import type { IHttpServerComponent } from "@well-known-components/interfaces"
-import type { IFetchComponent } from "@dcl/core-commons"
+import { Router } from "@dcl/http-server"
 import { wellKnownComponents as signedFetchMiddleware } from '@dcl/crypto-middleware'
 import { GlobalContext } from "../types"
 import { pingHandler } from "./handlers/ping-handler"
@@ -76,21 +74,14 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
 
   const { fetch } = globalContext.components
 
-  // @dcl/crypto-middleware is typed against @dcl/core-commons, which models fetch with Node's
-  // global (undici) types, while this repo's well-known-components packages model it with
-  // node-fetch's. They are structurally different types for the same runtime objects, so
-  // neither the fetch component going in nor the handler coming out is assignable. Both casts
-  // are confined here rather than repeated at the 24 router call sites below.
   const signedFetch = signedFetchMiddleware({
-    fetcher: fetch as unknown as IFetchComponent,
+    fetcher: fetch,
     optional: true,
     onError: (err: any) => ({
       error: err.message,
       message: 'This endpoint requires a signed fetch request. See ADR-44.'
     })
-  }) as unknown as IHttpServerComponent.IRequestHandler<
-    IHttpServerComponent.PathAwareContext<GlobalContext, string>
-  >
+  })
 
   router.get("/ping", pingHandler)
 

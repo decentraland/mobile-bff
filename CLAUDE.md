@@ -17,7 +17,15 @@ npx jest test/unit/ping-controller.spec.ts
 
 ## Architecture
 
-This project uses **hexagonal architecture** (ports and adapters) with `@well-known-components/*` libraries.
+This project uses **hexagonal architecture** (ports and adapters) with the `@dcl/*` component
+libraries from [core-components](https://github.com/decentraland/core-components) — `@dcl/http-server`,
+`@dcl/fetch-component`, `@dcl/metrics`, `@dcl/pg-component`, with shared types in `@dcl/core-commons`.
+Config, logging and the base component interfaces still come from `@well-known-components/*`.
+
+Import `IHttpServerComponent` and `IFetchComponent` from `@dcl/core-commons`, **not** from
+`@well-known-components/interfaces`: the two model `Request`/`Response` against different fetch
+typings (Node's global undici vs node-fetch), and mixing them makes components non-assignable even
+though the runtime objects are compatible.
 
 ### Layers
 
@@ -94,7 +102,9 @@ export async function myHandler(
 
 ### Database
 
-Uses PostgreSQL via `@well-known-components/pg-component`. Connection configured via environment variables:
+Uses PostgreSQL via `@dcl/pg-component`. Migrations run on a client from the component's own pool, so
+the `migration` options must **not** carry a `databaseUrl` — the component derives the connection from
+the same env vars below. Connection configured via environment variables:
 - `PG_COMPONENT_PSQL_HOST`, `PG_COMPONENT_PSQL_PORT`, `PG_COMPONENT_PSQL_DATABASE`
 - `PG_COMPONENT_PSQL_USER`, `PG_COMPONENT_PSQL_PASSWORD`
 - Or `PG_COMPONENT_PSQL_CONNECTION_STRING`
