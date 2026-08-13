@@ -1,4 +1,4 @@
-import { DecentralandSignatureContext } from '@dcl/platform-crypto-middleware'
+import { DecentralandSignatureContext } from '@dcl/crypto-middleware'
 import { HandlerContextWithPath } from '../../types'
 
 export async function getDeletionStatusHandler(

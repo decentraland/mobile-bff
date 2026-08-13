@@ -1,6 +1,13 @@
-import { AuthChain, Authenticator, AuthIdentity, IdentityType } from '@dcl/crypto'
+import {
+  AUTH_CHAIN_HEADER_PREFIX,
+  AUTH_METADATA_HEADER,
+  AUTH_TIMESTAMP_HEADER,
+  AuthChain,
+  Authenticator,
+  AuthIdentity,
+  IdentityType
+} from '@dcl/crypto'
 import { createUnsafeIdentity } from '@dcl/crypto/dist/crypto'
-import { AUTH_CHAIN_HEADER_PREFIX, AUTH_METADATA_HEADER, AUTH_TIMESTAMP_HEADER } from '@dcl/platform-crypto-middleware'
 
 export type Identity = { authChain: AuthIdentity; realAccount: IdentityType; ephemeralIdentity: IdentityType }
 

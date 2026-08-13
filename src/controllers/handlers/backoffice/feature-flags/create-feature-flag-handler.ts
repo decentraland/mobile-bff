@@ -1,4 +1,4 @@
-import { DecentralandSignatureContext } from '@dcl/platform-crypto-middleware'
+import { DecentralandSignatureContext } from '@dcl/crypto-middleware'
 import { HandlerContextWithPath } from '../../../../types'
 import { isAllowedUser } from '../../../../logic/allowed-users'
 import { validateFlagName, validateFlagDescription, validateFlagType, normalizeFlagValue, FlagType } from '../../../../logic/feature-flags'

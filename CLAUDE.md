@@ -82,7 +82,7 @@ WHERE (
 ### Handler Pattern with Signed Fetch
 
 ```ts
-import { DecentralandSignatureContext } from '@dcl/platform-crypto-middleware'
+import { DecentralandSignatureContext } from '@dcl/crypto-middleware'
 
 export async function myHandler(
   context: HandlerContextWithPath<'db' | 'logs', '/path'> & DecentralandSignatureContext<any>
