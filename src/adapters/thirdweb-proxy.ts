@@ -17,7 +17,7 @@
 // and wkc http-server writes Buffers verbatim, so 2xx wire payloads are
 // byte-identical to upstream and the framework never re-encodes them.
 
-import type { IFetchComponent } from '@well-known-components/interfaces'
+import type { RequestOptions } from '@dcl/core-commons'
 
 import { AppComponents } from '../types'
 
@@ -29,13 +29,11 @@ const UPSTREAM_TIMEOUT_MS = 5_000
 // adapter errors) is dropped server-side — it's still in our logs.
 const ALLOWED_ERROR_FIELDS = ['error', 'code', 'message'] as const
 
-// The wkc fetch-component honors an `abortController` option that the
-// public IFetchComponent type does not expose. We extend the parameter
-// type here instead of `as any`-casting at the call site. We use this
-// rather than the standard `signal` field because the node-fetch types
-// underneath IFetchComponent declare their own AbortSignal that doesn't
-// quite line up with the global one.
-type FetchInit = Parameters<IFetchComponent['fetch']>[1] & { abortController?: AbortController }
+// `@dcl/core-commons` declares `abortController` on RequestOptions directly, so the
+// option no longer has to be bolted onto the parameter type. We still pass it rather
+// than the standard `signal` field because the fetch component owns the retry loop and
+// needs the controller itself to abort across attempts.
+type FetchInit = RequestOptions
 
 export type ThirdwebProxyResponse = {
   status: number

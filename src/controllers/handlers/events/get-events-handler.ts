@@ -1,7 +1,8 @@
 import { HandlerContextWithPath } from '../../../types'
 import { Place } from '../../../adapters/places-db'
 import { ICacheComponent } from '../../../adapters/cache'
-import { IFetchComponent, ILoggerComponent } from '@well-known-components/interfaces'
+import { ILoggerComponent } from '@well-known-components/interfaces'
+import type { IFetchComponent } from '@dcl/core-commons'
 import { IPlacesDbComponent } from '../../../adapters/places-db'
 
 export type Event = {

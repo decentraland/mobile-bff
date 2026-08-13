@@ -1,4 +1,4 @@
-import { createTestMetricsComponent } from '@well-known-components/metrics'
+import { createTestMetricsComponent } from '@dcl/metrics'
 
 import { createAttestationVerifierComponent } from '../../src/adapters/attestation-verifier'
 import { AppAttestError } from '../../src/adapters/app-attest'

@@ -1,4 +1,5 @@
-import { ILoggerComponent, IFetchComponent, IConfigComponent } from '@well-known-components/interfaces'
+import { ILoggerComponent, IConfigComponent } from '@well-known-components/interfaces'
+import type { IFetchComponent } from '@dcl/core-commons'
 import { Place } from './places-db'
 import { ICacheComponent } from './cache'
 
