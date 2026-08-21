@@ -1,5 +1,5 @@
-import { Router } from "@well-known-components/http-server"
-import { wellKnownComponents as signedFetchMiddleware } from '@dcl/platform-crypto-middleware'
+import { Router } from "@dcl/http-server"
+import { wellKnownComponents as signedFetchMiddleware } from '@dcl/crypto-middleware'
 import { GlobalContext } from "../types"
 import { pingHandler } from "./handlers/ping-handler"
 import { requestDeletionHandler } from "./handlers/request-deletion-handler"

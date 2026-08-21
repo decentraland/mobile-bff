@@ -1,4 +1,4 @@
-import { IFetchComponent } from '@well-known-components/interfaces'
+import { IFetchComponent } from '@dcl/core-commons'
 
 export function createFetchMockComponent(): jest.Mocked<IFetchComponent> {
   return {

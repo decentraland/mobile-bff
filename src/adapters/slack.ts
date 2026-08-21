@@ -1,7 +1,8 @@
-import { IFetchComponent } from '@well-known-components/interfaces'
+import { IFetchComponent } from '@dcl/core-commons'
 import { AuthChain } from '@dcl/crypto'
 import { AppComponents } from '../types'
 import { MagicDeletionResult } from './magic'
+import { drainResponse } from '../logic/fetch-utils'
 
 export type ISlackComponent = {
   sendDeletionRequestNotification(
@@ -37,6 +38,9 @@ export async function createSlackComponent({
       if (!response.ok) {
         logger.error('Failed to send Slack notification', { status: response.status })
       }
+      // Fire-and-forget POST: we never read the body on either path, so drain
+      // it to release the socket back to the pool.
+      await drainResponse(response)
     } catch (error) {
       logger.error('Error sending Slack notification', { error: (error as Error).message })
     }
