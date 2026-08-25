@@ -39,6 +39,8 @@ tags:
     description: Wallet operations gated by platform attestation
   - name: Feature Flags
     description: Runtime feature toggles consumed by the mobile clients (e.g. pulse, dual-channel)
+  - name: Campaigns
+    description: Ad/referrer campaign token to target scene mapping, resolved by the client on boot
 
 paths:
   /ping:
@@ -691,6 +693,274 @@ paths:
         '500':
           $ref: '#/components/responses/FeatureFlagServerError'
 
+  /campaigns:
+    get:
+      tags:
+        - Campaigns
+      summary: Get the active campaign map
+      description: |
+        Returns every enabled campaign whose active window contains the current time, as a
+        `{ token: campaign }` map. Read by godot-explorer on boot to resolve the opaque
+        `?c=<token>` carried by an ad or referrer link into either an FTUE variant
+        (`mode: ftue`) or a direct boot into the target scene (`mode: bypass`).
+
+        The window is evaluated server-side, so a client with a skewed clock or a stale
+        cached map cannot resurrect an expired campaign. A client that cannot reach this
+        endpoint falls back to the default FTUE.
+      operationId: getCampaigns
+      security: []
+      responses:
+        '200':
+          description: Active campaigns retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CampaignsResponse'
+              example:
+                ok: true
+                data:
+                  campaigns:
+                    summer-26:
+                      mode: ftue
+                      target:
+                        type: genesis
+                        position: "-9,-9"
+                      title: Summer is here
+                      cta: Jump into Summer
+                      placeIds: []
+                    world-launch:
+                      mode: bypass
+                      target:
+                        type: world
+                        name: myworld.dcl.eth
+                      title: null
+                      cta: null
+                      placeIds: []
+        '500':
+          $ref: '#/components/responses/CampaignServerError'
+
+  /backoffice/campaigns:
+    get:
+      tags:
+        - Campaigns
+      summary: List all campaigns (backoffice)
+      description: |
+        Returns every campaign, enabled or not, in or out of its window, with its audit
+        fields. Requires signed fetch (ADR-44) and the signer address in `ALLOWED_USERS`.
+      operationId: getBackofficeCampaigns
+      security:
+        - signedFetch: []
+      responses:
+        '200':
+          description: Campaigns retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CampaignsDetailedResponse'
+        '401':
+          $ref: '#/components/responses/CampaignUnauthorized'
+        '403':
+          $ref: '#/components/responses/CampaignForbidden'
+        '500':
+          $ref: '#/components/responses/CampaignServerError'
+
+    post:
+      tags:
+        - Campaigns
+      summary: Create a campaign (backoffice)
+      description: |
+        Creates a campaign mapping. Tokens are kebab-case so they can travel as a
+        deep-link query param. The target is validated for format only — a `world`
+        target must match `^[a-zA-Z0-9]+\.dcl\.eth$`, which is exactly what the client
+        needs to take its join-world route; anything else would be treated as a realm URL
+        and would not resolve to the intended world.
+
+        `enabled` defaults to `false`: a new campaign is never live on creation.
+        Requires signed fetch (ADR-44) and the signer address in `ALLOWED_USERS`.
+      operationId: createCampaign
+      security:
+        - signedFetch: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCampaignRequest'
+            example:
+              token: summer-26
+              mode: ftue
+              targetType: genesis
+              targetPosition: "-9,-9"
+              title: Summer is here
+              cta: Jump into Summer
+              startsAt: '2026-09-01T00:00:00.000Z'
+              endsAt: '2026-09-30T00:00:00.000Z'
+              enabled: true
+      responses:
+        '201':
+          description: Campaign created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CampaignResponse'
+        '400':
+          description: Invalid body (bad token, unknown mode, invalid or mixed target, bad window, invalid placeIds)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                ok: false
+                error: "'targetPosition' must be a parcel like '-9,-9'"
+        '401':
+          $ref: '#/components/responses/CampaignUnauthorized'
+        '403':
+          $ref: '#/components/responses/CampaignForbidden'
+        '409':
+          description: A campaign with this token already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                ok: false
+                error: "Campaign 'summer-26' already exists"
+        '500':
+          $ref: '#/components/responses/CampaignServerError'
+
+  /backoffice/campaigns/{token}:
+    parameters:
+      - name: token
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"
+        example: summer-26
+    put:
+      tags:
+        - Campaigns
+      summary: Update a campaign (backoffice)
+      description: |
+        Partial update; at least one field is required. The three target fields are
+        constrained as a unit, so editing the target means sending `targetType` plus its
+        matching field — a half-target edit is rejected rather than merged. Editing only
+        one end of the active window is validated against the stored other end.
+        Requires signed fetch (ADR-44) and the signer address in `ALLOWED_USERS`.
+      operationId: updateCampaign
+      security:
+        - signedFetch: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCampaignRequest'
+            example:
+              enabled: false
+      responses:
+        '200':
+          description: Campaign updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CampaignResponse'
+        '400':
+          description: Invalid body (no fields, partial target edit, bad window, invalid values)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                ok: false
+                error: No valid fields to update
+        '401':
+          $ref: '#/components/responses/CampaignUnauthorized'
+        '403':
+          $ref: '#/components/responses/CampaignForbidden'
+        '404':
+          $ref: '#/components/responses/CampaignNotFound'
+        '500':
+          $ref: '#/components/responses/CampaignServerError'
+
+    delete:
+      tags:
+        - Campaigns
+      summary: Delete a campaign (backoffice)
+      description: |
+        Removes the mapping. Clients resolving this token fall back to the default FTUE.
+        The audit trail survives the deletion and stays readable at the audit endpoint.
+        Requires signed fetch (ADR-44) and the signer address in `ALLOWED_USERS`.
+      operationId: deleteCampaign
+      security:
+        - signedFetch: []
+      responses:
+        '200':
+          description: Campaign deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      token:
+                        type: string
+                        example: summer-26
+        '401':
+          $ref: '#/components/responses/CampaignUnauthorized'
+        '403':
+          $ref: '#/components/responses/CampaignForbidden'
+        '404':
+          $ref: '#/components/responses/CampaignNotFound'
+        '500':
+          $ref: '#/components/responses/CampaignServerError'
+
+  /backoffice/campaigns/{token}/audit:
+    parameters:
+      - name: token
+        in: path
+        required: true
+        schema:
+          type: string
+        example: summer-26
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+    get:
+      tags:
+        - Campaigns
+      summary: Read a campaign's audit trail (backoffice)
+      description: |
+        Who changed this mapping, what changed and when, newest first. The trail outlives
+        the campaign, so a deleted token still answers here.
+        Requires signed fetch (ADR-44) and the signer address in `ALLOWED_USERS`.
+      operationId: getCampaignAudit
+      security:
+        - signedFetch: []
+      responses:
+        '200':
+          description: Audit trail retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CampaignAuditResponse'
+        '401':
+          $ref: '#/components/responses/CampaignUnauthorized'
+        '403':
+          $ref: '#/components/responses/CampaignForbidden'
+        '500':
+          $ref: '#/components/responses/CampaignServerError'
+
 components:
   securitySchemes:
     signedFetch:
@@ -745,6 +1015,44 @@ components:
             ok: false
             error: "Feature flag 'not-a-flag' not found"
     FeatureFlagServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            ok: false
+            error: Internal server error
+    CampaignUnauthorized:
+      description: Unauthorized - Invalid or missing signed fetch
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            unauthorized:
+              $ref: '#/components/examples/UnauthorizedError'
+            signedFetchError:
+              $ref: '#/components/examples/SignedFetchError'
+    CampaignForbidden:
+      description: Forbidden - signer address not in ALLOWED_USERS
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            ok: false
+            error: "Forbidden: User not in allowed list"
+    CampaignNotFound:
+      description: No campaign with this token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            ok: false
+            error: "Campaign 'not-a-campaign' not found"
+    CampaignServerError:
       description: Internal server error
       content:
         application/json:
@@ -1163,6 +1471,259 @@ components:
                     - pass
                     - fail
                   example: pass
+
+    CampaignTarget:
+      type: object
+      description: Where the campaign sends the user. Exactly one shape, keyed by `type`.
+      oneOf:
+        - type: object
+          required: [type, position]
+          properties:
+            type:
+              type: string
+              enum: [genesis]
+            position:
+              type: string
+              pattern: "^-?[0-9]{1,4},-?[0-9]{1,4}$"
+              example: "-9,-9"
+        - type: object
+          required: [type, name]
+          properties:
+            type:
+              type: string
+              enum: [world]
+            name:
+              type: string
+              pattern: "^[a-zA-Z0-9]+\\.dcl\\.eth$"
+              example: myworld.dcl.eth
+
+    PublicCampaign:
+      type: object
+      required: [mode, target, placeIds]
+      properties:
+        mode:
+          type: string
+          enum: [ftue, bypass]
+          description: |
+            `ftue` renders the FTUE with campaign content and the target pinned first.
+            `bypass` skips the FTUE and boots straight into the target's loading screen.
+        target:
+          $ref: '#/components/schemas/CampaignTarget'
+        title:
+          type: string
+          nullable: true
+          description: FTUE copy override (`ftue` mode only)
+        cta:
+          type: string
+          nullable: true
+          description: FTUE call-to-action label override (`ftue` mode only)
+        placeIds:
+          type: array
+          description: Curated carousel. Empty means the default featured list with the target pinned first.
+          items:
+            type: string
+            format: uuid
+
+    CampaignsResponse:
+      type: object
+      required: [ok, data]
+      properties:
+        ok:
+          type: boolean
+          example: true
+        data:
+          type: object
+          required: [campaigns]
+          properties:
+            campaigns:
+              type: object
+              additionalProperties:
+                $ref: '#/components/schemas/PublicCampaign'
+
+    Campaign:
+      allOf:
+        - $ref: '#/components/schemas/PublicCampaign'
+        - type: object
+          required: [token, enabled, createdAt, updatedAt]
+          properties:
+            token:
+              type: string
+              example: summer-26
+            startsAt:
+              type: string
+              format: date-time
+              nullable: true
+            endsAt:
+              type: string
+              format: date-time
+              nullable: true
+            enabled:
+              type: boolean
+            createdAt:
+              type: string
+              format: date-time
+            updatedAt:
+              type: string
+              format: date-time
+            updatedBy:
+              type: string
+              nullable: true
+
+    CampaignsDetailedResponse:
+      type: object
+      required: [ok, data]
+      properties:
+        ok:
+          type: boolean
+          example: true
+        data:
+          type: object
+          required: [campaigns]
+          properties:
+            campaigns:
+              type: array
+              items:
+                $ref: '#/components/schemas/Campaign'
+
+    CampaignResponse:
+      type: object
+      required: [ok, data]
+      properties:
+        ok:
+          type: boolean
+          example: true
+        data:
+          $ref: '#/components/schemas/Campaign'
+
+    CreateCampaignRequest:
+      type: object
+      required: [token, targetType]
+      properties:
+        token:
+          type: string
+          pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"
+          maxLength: 64
+          example: summer-26
+        mode:
+          type: string
+          enum: [ftue, bypass]
+          default: ftue
+        targetType:
+          type: string
+          enum: [genesis, world]
+        targetPosition:
+          type: string
+          description: Required when `targetType` is `genesis`; must be absent otherwise.
+          example: "-9,-9"
+        targetWorld:
+          type: string
+          description: Required when `targetType` is `world`; must be absent otherwise.
+          example: myworld.dcl.eth
+        title:
+          type: string
+          maxLength: 120
+          nullable: true
+        cta:
+          type: string
+          maxLength: 40
+          nullable: true
+        placeIds:
+          type: array
+          maxItems: 10
+          items:
+            type: string
+            format: uuid
+        startsAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Open-ended when absent or null.
+        endsAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Open-ended when absent or null. Must be strictly after `startsAt`.
+        enabled:
+          type: boolean
+          default: false
+
+    UpdateCampaignRequest:
+      type: object
+      minProperties: 1
+      description: |
+        Partial update. Editing the target requires `targetType` plus its matching field.
+      properties:
+        mode:
+          type: string
+          enum: [ftue, bypass]
+        targetType:
+          type: string
+          enum: [genesis, world]
+        targetPosition:
+          type: string
+        targetWorld:
+          type: string
+        title:
+          type: string
+          nullable: true
+        cta:
+          type: string
+          nullable: true
+        placeIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+        startsAt:
+          type: string
+          format: date-time
+          nullable: true
+        endsAt:
+          type: string
+          format: date-time
+          nullable: true
+        enabled:
+          type: boolean
+
+    CampaignAuditEntry:
+      type: object
+      required: [id, token, action, actor, createdAt]
+      properties:
+        id:
+          type: integer
+        token:
+          type: string
+          example: summer-26
+        action:
+          type: string
+          enum: [create, update, delete]
+        changes:
+          type: object
+          nullable: true
+          description: Full row snapshot for create/delete, changed fields only for update.
+          additionalProperties: true
+        actor:
+          type: string
+          description: Signer address that made the change
+        createdAt:
+          type: string
+          format: date-time
+
+    CampaignAuditResponse:
+      type: object
+      required: [ok, data]
+      properties:
+        ok:
+          type: boolean
+          example: true
+        data:
+          type: object
+          required: [entries]
+          properties:
+            entries:
+              type: array
+              items:
+                $ref: '#/components/schemas/CampaignAuditEntry'
 
   examples:
     UnauthorizedError:

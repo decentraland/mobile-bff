@@ -59,6 +59,14 @@ import { createFeatureFlagHandler } from "./handlers/backoffice/feature-flags/cr
 import { updateFeatureFlagHandler } from "./handlers/backoffice/feature-flags/update-feature-flag-handler"
 import { deleteFeatureFlagHandler } from "./handlers/backoffice/feature-flags/delete-feature-flag-handler"
 
+// Campaign handlers (ad campaign token -> target scene mapping)
+import { getCampaignsHandler } from "./handlers/campaigns/get-campaigns-handler"
+import { getBackofficeCampaignsHandler } from "./handlers/backoffice/campaigns/get-campaigns-handler"
+import { createCampaignHandler } from "./handlers/backoffice/campaigns/create-campaign-handler"
+import { updateCampaignHandler } from "./handlers/backoffice/campaigns/update-campaign-handler"
+import { deleteCampaignHandler } from "./handlers/backoffice/campaigns/delete-campaign-handler"
+import { getCampaignAuditHandler } from "./handlers/backoffice/campaigns/get-campaign-audit-handler"
+
 // Wallets (Thirdweb thin proxy)
 // TODO: re-enable sign-message endpoint once the TTL and handshake flow are better defined.
 // import { signMessageHandler } from "./handlers/wallets/sign-message-handler"
@@ -111,6 +119,9 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
 
   // Feature Flags (runtime toggles consumed by the mobile clients, e.g. pulse / dual-channel)
   router.get("/feature-flags", getFeatureFlagsHandler)
+
+  // Campaigns (ad/referrer token -> target scene; resolved by the client on boot)
+  router.get("/campaigns", getCampaignsHandler)
 
   // ============== TEST AUTH ENDPOINTS ==============
   // Used by Apple App Store reviewers to test login with a controlled OTP code.
@@ -173,6 +184,13 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
   router.post("/backoffice/feature-flags", signedFetch, createFeatureFlagHandler)
   router.put("/backoffice/feature-flags/:name", signedFetch, updateFeatureFlagHandler)
   router.delete("/backoffice/feature-flags/:name", signedFetch, deleteFeatureFlagHandler)
+
+  // Campaigns management
+  router.get("/backoffice/campaigns", signedFetch, getBackofficeCampaignsHandler)
+  router.post("/backoffice/campaigns", signedFetch, createCampaignHandler)
+  router.put("/backoffice/campaigns/:token", signedFetch, updateCampaignHandler)
+  router.delete("/backoffice/campaigns/:token", signedFetch, deleteCampaignHandler)
+  router.get("/backoffice/campaigns/:token/audit", signedFetch, getCampaignAuditHandler)
 
   return router
 }
