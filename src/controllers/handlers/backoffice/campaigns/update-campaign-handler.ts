@@ -98,11 +98,15 @@ export async function updateCampaignHandler(
     }
 
     if (body.placeIds !== undefined) {
-      const placeIdsError = validatePlaceIds(body.placeIds ?? [])
+      // null means "clear the carousel", the same thing create does with an absent list.
+      // Validating a substitute and then storing the original would put null into a NOT NULL
+      // column, turning a bad request into a 500.
+      const placeIds = body.placeIds ?? []
+      const placeIdsError = validatePlaceIds(placeIds)
       if (placeIdsError) {
         return { status: 400, body: { ok: false, error: placeIdsError } }
       }
-      changes.placeIds = body.placeIds as string[]
+      changes.placeIds = placeIds as string[]
     }
 
     if (body.startsAt !== undefined) {

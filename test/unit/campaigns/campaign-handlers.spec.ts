@@ -115,7 +115,7 @@ describe('campaign handlers', () => {
           placeIds: [],
           startsAt: null,
           endsAt: null,
-          // A new campaign is never live on creation — it has to be switched on explicitly.
+          // Absent `enabled` defaults to dark, so a campaign cannot go live by omission.
           enabled: false
         },
         ALLOWED
@@ -223,6 +223,17 @@ describe('campaign handlers', () => {
 
       expect(response.status).toBe(404)
       expect(mockCampaignsDb.update).not.toHaveBeenCalled()
+    })
+
+    // `placeIds: null` used to validate a substitute and then store the original, which is a
+    // NOT NULL violation — a bad request surfacing as a 500.
+    it('treats a null placeIds as clearing the carousel', async () => {
+      const response = await updateCampaignHandler(
+        createContext(ALLOWED, { placeIds: null }, { token: 'summer-26' }) as any
+      )
+
+      expect(response.status).toBe(200)
+      expect(mockCampaignsDb.update).toHaveBeenCalledWith('summer-26', { placeIds: [] }, ALLOWED)
     })
 
     it('returns 400 when the body carries nothing to update', async () => {

@@ -1,4 +1,5 @@
 import SQL from 'sql-template-strings'
+import type { PoolClient } from 'pg'
 import { AppComponents } from '../types'
 import { CampaignMode, TargetType } from '../logic/campaigns'
 
@@ -133,13 +134,33 @@ function toAuditEntry(row: CampaignAuditRow): CampaignAuditEntry {
 
 export async function createCampaignsDbComponent({ pg }: Pick<AppComponents, 'pg'>): Promise<ICampaignsDbComponent> {
 
+  // A campaign write and its audit row have to land together: a change that applied but was
+  // never recorded defeats the point of having a trail. pg.query() checks a connection out of
+  // the pool per call, so BEGIN/COMMIT issued through it can land on different connections —
+  // the transaction needs one client held for its whole span.
+  async function withTransaction<T>(run: (client: PoolClient) => Promise<T>): Promise<T> {
+    const client = await pg.getPool().connect()
+    try {
+      await client.query('BEGIN')
+      const result = await run(client)
+      await client.query('COMMIT')
+      return result
+    } catch (error) {
+      await client.query('ROLLBACK')
+      throw error
+    } finally {
+      client.release()
+    }
+  }
+
   async function writeAudit(
+    client: PoolClient,
     token: string,
     action: CampaignAuditAction,
     changes: Record<string, unknown> | null,
     actor: string
   ): Promise<void> {
-    await pg.query(SQL`
+    await client.query(SQL`
       INSERT INTO campaign_audit (token, action, changes, actor)
       VALUES (${token}, ${action}, ${changes ? JSON.stringify(changes) : null}, ${actor})
     `)
@@ -171,20 +192,22 @@ export async function createCampaignsDbComponent({ pg }: Pick<AppComponents, 'pg
   }
 
   async function create(input: CreateCampaignInput, actor: string): Promise<Campaign> {
-    const query = SQL`
-      INSERT INTO campaigns (
-        token, mode, target_type, target_position, target_world,
-        title, cta, place_ids, starts_at, ends_at, enabled, updated_by
-      ) VALUES (
-        ${input.token}, ${input.mode}, ${input.targetType}, ${input.targetPosition}, ${input.targetWorld},
-        ${input.title}, ${input.cta}, ${input.placeIds}, ${input.startsAt}, ${input.endsAt},
-        ${input.enabled}, ${actor}
-      )
-      RETURNING `.append(COLUMNS)
-    const result = await pg.query<CampaignRow>(query)
-    const campaign = toCampaign(result.rows[0])
-    await writeAudit(input.token, 'create', campaign as unknown as Record<string, unknown>, actor)
-    return campaign
+    return withTransaction(async client => {
+      const query = SQL`
+        INSERT INTO campaigns (
+          token, mode, target_type, target_position, target_world,
+          title, cta, place_ids, starts_at, ends_at, enabled, updated_by
+        ) VALUES (
+          ${input.token}, ${input.mode}, ${input.targetType}, ${input.targetPosition}, ${input.targetWorld},
+          ${input.title}, ${input.cta}, ${input.placeIds}, ${input.startsAt}, ${input.endsAt},
+          ${input.enabled}, ${actor}
+        )
+        RETURNING `.append(COLUMNS)
+      const result = await client.query<CampaignRow>(query)
+      const campaign = toCampaign(result.rows[0])
+      await writeAudit(client, input.token, 'create', campaign as unknown as Record<string, unknown>, actor)
+      return campaign
+    })
   }
 
   async function update(
@@ -210,25 +233,29 @@ export async function createCampaignsDbComponent({ pg }: Pick<AppComponents, 'pg
     if (changes.enabled !== undefined) query.append(SQL`, enabled = ${changes.enabled}`)
     query.append(SQL` WHERE token = ${token} RETURNING `).append(COLUMNS)
 
-    const result = await pg.query<CampaignRow>(query)
-    if (result.rows.length === 0) {
-      return null
-    }
-    await writeAudit(token, 'update', Object.fromEntries(entries), actor)
-    return toCampaign(result.rows[0])
+    return withTransaction(async client => {
+      const result = await client.query<CampaignRow>(query)
+      if (result.rows.length === 0) {
+        return null
+      }
+      await writeAudit(client, token, 'update', Object.fromEntries(entries), actor)
+      return toCampaign(result.rows[0])
+    })
   }
 
   async function deleteCampaign(token: string, actor: string): Promise<boolean> {
-    const existing = await getByToken(token)
-    if (!existing) {
-      return false
-    }
-    const result = await pg.query(SQL`DELETE FROM campaigns WHERE token = ${token}`)
-    if (result.rowCount === 0) {
-      return false
-    }
-    await writeAudit(token, 'delete', existing as unknown as Record<string, unknown>, actor)
-    return true
+    return withTransaction(async client => {
+      // Deleted inside the transaction and RETURNING the row, so the snapshot written to the
+      // trail is exactly what was removed even if something else touches the row meanwhile.
+      const query = SQL`DELETE FROM campaigns WHERE token = ${token} RETURNING `.append(COLUMNS)
+      const result = await client.query<CampaignRow>(query)
+      if (result.rows.length === 0) {
+        return false
+      }
+      const removed = toCampaign(result.rows[0])
+      await writeAudit(client, token, 'delete', removed as unknown as Record<string, unknown>, actor)
+      return true
+    })
   }
 
   async function getAudit(token: string, limit: number): Promise<CampaignAuditEntry[]> {

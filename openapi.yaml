@@ -775,7 +775,8 @@ paths:
         needs to take its join-world route; anything else would be treated as a realm URL
         and would not resolve to the intended world.
 
-        `enabled` defaults to `false`: a new campaign is never live on creation.
+        `enabled` defaults to `false`, so a campaign created without it is dark until it is
+        switched on; passing `enabled: true` creates it live, subject to its active window.
         Requires signed fetch (ADR-44) and the signer address in `ALLOWED_USERS`.
       operationId: createCampaign
       security:
