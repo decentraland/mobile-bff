@@ -87,7 +87,12 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
   // global (undici) types, while this repo's well-known-components packages model it with
   // node-fetch's. They are structurally different types for the same runtime objects, so
   // neither the fetch component going in nor the handler coming out is assignable. Both casts
-  // are confined here rather than repeated at the 24 router call sites below.
+  // are confined here rather than repeated at the 27 router call sites below.
+  //
+  // TODO: both casts go away once the well-known-components packages move onto global-fetch
+  // typings. Until then they keep compiling if either interface changes shape, and the outbound
+  // one also erases the `verification` the middleware adds -- handlers declare it themselves and
+  // every one answers 401 when it is missing, so an unmounted route fails closed rather than open.
   const signedFetch = signedFetchMiddleware({
     fetcher: fetch as unknown as IFetchComponent,
     optional: true,
