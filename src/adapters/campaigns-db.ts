@@ -128,7 +128,12 @@ export async function createCampaignsDbComponent({ pg }: Pick<AppComponents, 'pg
       await client.query('COMMIT')
       return result
     } catch (error) {
-      await client.query('ROLLBACK')
+      // A rollback on a dead connection throws its own error, and that one would replace the
+      // failure we actually want in the log. The server aborts the transaction anyway when the
+      // connection drops, so nothing is left half-applied by swallowing it.
+      try {
+        await client.query('ROLLBACK')
+      } catch {}
       throw error
     } finally {
       client.release()
