@@ -9,19 +9,11 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
     // straight into the explorer, skipping avatar creation and the FTUE this feature
     // is about (see _should_go_to_explorer_from_deeplink in lobby.gd).
     token: { type: 'text', primaryKey: true },
-    // 'ftue'   -> the FTUE renders campaign content with the target pinned first
-    // 'bypass' -> skip the FTUE and boot straight into the target's loading screen
-    mode: { type: 'text', notNull: true, default: 'ftue' },
     target_type: { type: 'text', notNull: true },
     // Genesis City parcel as "x,y"
     target_position: { type: 'text', notNull: false },
     // World name, e.g. "name.dcl.eth"
     target_world: { type: 'text', notNull: false },
-    // Optional FTUE copy overrides ('ftue' mode only)
-    title: { type: 'text', notNull: false },
-    cta: { type: 'text', notNull: false },
-    // Curated carousel. Empty -> the default featured list, with the target pinned first.
-    place_ids: { type: 'text[]', notNull: true, default: pgm.func("'{}'") },
     starts_at: { type: 'timestamptz', notNull: false },
     ends_at: { type: 'timestamptz', notNull: false },
     enabled: { type: 'boolean', notNull: true, default: false },
@@ -33,10 +25,6 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
   // Same kebab-case style as feature_flags and the godot-explorer deep-link params
   pgm.addConstraint('campaigns', 'campaigns_token_format', {
     check: "token ~ '^[a-z0-9]+(-[a-z0-9]+)*$' AND length(token) <= 64"
-  })
-
-  pgm.addConstraint('campaigns', 'campaigns_mode_check', {
-    check: "mode IN ('ftue', 'bypass')"
   })
 
   pgm.addConstraint('campaigns', 'campaigns_target_type_check', {

@@ -1,8 +1,6 @@
 import {
   validateToken,
-  validateMode,
   validateTarget,
-  validatePlaceIds,
   parseTimestamp,
   validateWindow,
   WORLD_NAME_REGEX
@@ -20,14 +18,6 @@ describe('campaigns logic', () => {
       expect(validateToken('')).toMatch(/required/)
       expect(validateToken(42)).toMatch(/required/)
       expect(validateToken('a'.repeat(65))).toMatch(/at most 64/)
-    })
-  })
-
-  describe('validateMode', () => {
-    it('accepts only ftue and bypass', () => {
-      expect(validateMode('ftue')).toBeNull()
-      expect(validateMode('bypass')).toBeNull()
-      expect(validateMode('skip')).toMatch(/must be one of/)
     })
   })
 
@@ -75,20 +65,6 @@ describe('campaigns logic', () => {
     it('rejects an unknown targetType', () => {
       expect(validateTarget({ targetType: 'parcel', targetPosition: '0,0' })).toHaveProperty('error')
       expect(validateTarget({})).toHaveProperty('error')
-    })
-  })
-
-  describe('validatePlaceIds', () => {
-    const uuid = '780f04dd-eba1-41a8-b109-74896c87e98b'
-
-    it('accepts a list of place uuids and rejects bad shapes', () => {
-      expect(validatePlaceIds([])).toBeNull()
-      expect(validatePlaceIds([uuid])).toBeNull()
-
-      expect(validatePlaceIds('not-an-array')).toMatch(/must be an array/)
-      expect(validatePlaceIds(['nope'])).toMatch(/place uuids/)
-      expect(validatePlaceIds([uuid, uuid])).toMatch(/duplicates/)
-      expect(validatePlaceIds(new Array(11).fill(uuid))).toMatch(/at most 10/)
     })
   })
 

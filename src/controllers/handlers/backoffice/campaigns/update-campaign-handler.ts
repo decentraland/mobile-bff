@@ -1,27 +1,13 @@
 import { DecentralandSignatureContext } from '@dcl/platform-crypto-middleware'
 import { HandlerContextWithPath } from '../../../../types'
 import { isAllowedUser } from '../../../../logic/allowed-users'
-import {
-  validateMode,
-  validateTarget,
-  validateOptionalText,
-  validatePlaceIds,
-  parseTimestamp,
-  validateWindow,
-  CampaignMode,
-  TITLE_MAX_LENGTH,
-  CTA_MAX_LENGTH
-} from '../../../../logic/campaigns'
+import { validateTarget, parseTimestamp, validateWindow } from '../../../../logic/campaigns'
 import { UpdateCampaignInput } from '../../../../adapters/campaigns-db'
 
 type UpdateBody = {
-  mode?: unknown
   targetType?: unknown
   targetPosition?: unknown
   targetWorld?: unknown
-  title?: unknown
-  cta?: unknown
-  placeIds?: unknown
   startsAt?: unknown
   endsAt?: unknown
   enabled?: unknown
@@ -56,14 +42,6 @@ export async function updateCampaignHandler(
     const body = await request.json() as UpdateBody
     const changes: UpdateCampaignInput = {}
 
-    if (body.mode !== undefined) {
-      const modeError = validateMode(body.mode)
-      if (modeError) {
-        return { status: 400, body: { ok: false, error: modeError } }
-      }
-      changes.mode = body.mode as CampaignMode
-    }
-
     // The target columns are constrained as a unit (exactly one populated, matching
     // targetType), so a partial target edit cannot be validated in isolation — ask for
     // the whole target rather than merging it with the stored row and guessing.
@@ -75,38 +53,6 @@ export async function updateCampaignHandler(
       changes.targetType = target.targetType
       changes.targetPosition = target.targetPosition
       changes.targetWorld = target.targetWorld
-    }
-
-    if (body.title !== undefined) {
-      const titleError = validateOptionalText(body.title, 'title', TITLE_MAX_LENGTH)
-      if (titleError) {
-        return { status: 400, body: { ok: false, error: titleError } }
-      }
-      changes.title = typeof body.title === 'string' && body.title.trim().length > 0
-        ? body.title.trim()
-        : null
-    }
-
-    if (body.cta !== undefined) {
-      const ctaError = validateOptionalText(body.cta, 'cta', CTA_MAX_LENGTH)
-      if (ctaError) {
-        return { status: 400, body: { ok: false, error: ctaError } }
-      }
-      changes.cta = typeof body.cta === 'string' && body.cta.trim().length > 0
-        ? body.cta.trim()
-        : null
-    }
-
-    if (body.placeIds !== undefined) {
-      // null means "clear the carousel", the same thing create does with an absent list.
-      // Validating a substitute and then storing the original would put null into a NOT NULL
-      // column, turning a bad request into a 500.
-      const placeIds = body.placeIds ?? []
-      const placeIdsError = validatePlaceIds(placeIds)
-      if (placeIdsError) {
-        return { status: 400, body: { ok: false, error: placeIdsError } }
-      }
-      changes.placeIds = placeIds as string[]
     }
 
     if (body.startsAt !== undefined) {

@@ -97,7 +97,7 @@ describe('campaign handlers', () => {
   })
 
   describe('POST /backoffice/campaigns', () => {
-    it('stores the canonical target triple and defaults to a disabled ftue campaign', async () => {
+    it('stores the canonical target triple and defaults to disabled', async () => {
       const response = await createCampaignHandler(
         createContext(ALLOWED, { token: 'summer-26', targetType: 'genesis', targetPosition: '-9,-9' }) as any
       )
@@ -106,13 +106,9 @@ describe('campaign handlers', () => {
       expect(mockCampaignsDb.create).toHaveBeenCalledWith(
         {
           token: 'summer-26',
-          mode: 'ftue',
           targetType: 'genesis',
           targetPosition: '-9,-9',
           targetWorld: null,
-          title: null,
-          cta: null,
-          placeIds: [],
           startsAt: null,
           endsAt: null,
           // Absent `enabled` defaults to dark, so a campaign cannot go live by omission.
@@ -122,11 +118,10 @@ describe('campaign handlers', () => {
       )
     })
 
-    it('accepts a bypass campaign targeting a world, with an active window', async () => {
+    it('accepts a campaign targeting a world, with an active window', async () => {
       const response = await createCampaignHandler(
         createContext(ALLOWED, {
           token: 'world-launch',
-          mode: 'bypass',
           targetType: 'world',
           targetWorld: 'myworld.dcl.eth',
           startsAt: '2026-09-01T00:00:00.000Z',
@@ -138,7 +133,6 @@ describe('campaign handlers', () => {
       expect(response.status).toBe(201)
       expect(mockCampaignsDb.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          mode: 'bypass',
           targetType: 'world',
           targetWorld: 'myworld.dcl.eth',
           targetPosition: null,
@@ -152,7 +146,6 @@ describe('campaign handlers', () => {
 
     it.each([
       ['a non-kebab token', { token: 'Summer 26', targetType: 'genesis', targetPosition: '0,0' }],
-      ['an unknown mode', { token: 'x', mode: 'skip', targetType: 'genesis', targetPosition: '0,0' }],
       ['a missing target', { token: 'x' }],
       ['a malformed parcel', { token: 'x', targetType: 'genesis', targetPosition: 'a,b' }],
       ['an unroutable world', { token: 'x', targetType: 'world', targetWorld: 'my-world.dcl.eth' }],
@@ -223,17 +216,6 @@ describe('campaign handlers', () => {
 
       expect(response.status).toBe(404)
       expect(mockCampaignsDb.update).not.toHaveBeenCalled()
-    })
-
-    // `placeIds: null` used to validate a substitute and then store the original, which is a
-    // NOT NULL violation — a bad request surfacing as a 500.
-    it('treats a null placeIds as clearing the carousel', async () => {
-      const response = await updateCampaignHandler(
-        createContext(ALLOWED, { placeIds: null }, { token: 'summer-26' }) as any
-      )
-
-      expect(response.status).toBe(200)
-      expect(mockCampaignsDb.update).toHaveBeenCalledWith('summer-26', { placeIds: [] }, ALLOWED)
     })
 
     it('returns 400 when the body carries nothing to update', async () => {

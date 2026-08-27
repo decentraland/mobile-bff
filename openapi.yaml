@@ -701,8 +701,8 @@ paths:
       description: |
         Returns every enabled campaign whose active window contains the current time, as a
         `{ token: campaign }` map. Read by godot-explorer on boot to resolve the opaque
-        `?c=<token>` carried by an ad or referrer link into either an FTUE variant
-        (`mode: ftue`) or a direct boot into the target scene (`mode: bypass`).
+        `?c=<token>` carried by an ad or referrer link into the scene it should open.
+        An attributed install boots straight into that scene and skips the FTUE.
 
         The window is evaluated server-side, so a client with a skewed clock or a stale
         cached map cannot resurrect an expired campaign. A client that cannot reach this
@@ -721,21 +721,13 @@ paths:
                 data:
                   campaigns:
                     summer-26:
-                      mode: ftue
                       target:
                         type: genesis
                         position: "-9,-9"
-                      title: Summer is here
-                      cta: Jump into Summer
-                      placeIds: []
                     world-launch:
-                      mode: bypass
                       target:
                         type: world
                         name: myworld.dcl.eth
-                      title: null
-                      cta: null
-                      placeIds: []
         '500':
           $ref: '#/components/responses/CampaignServerError'
 
@@ -789,11 +781,8 @@ paths:
               $ref: '#/components/schemas/CreateCampaignRequest'
             example:
               token: summer-26
-              mode: ftue
               targetType: genesis
               targetPosition: "-9,-9"
-              title: Summer is here
-              cta: Jump into Summer
               startsAt: '2026-09-01T00:00:00.000Z'
               endsAt: '2026-09-30T00:00:00.000Z'
               enabled: true
@@ -805,7 +794,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/CampaignResponse'
         '400':
-          description: Invalid body (bad token, unknown mode, invalid or mixed target, bad window, invalid placeIds)
+          description: Invalid body (bad token, invalid or mixed target, bad window)
           content:
             application/json:
               schema:
@@ -867,7 +856,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/CampaignResponse'
         '400':
-          description: Invalid body (no fields, partial target edit, bad window, invalid values)
+          description: Invalid body (no fields, partial target edit, bad window)
           content:
             application/json:
               schema:
@@ -1500,30 +1489,10 @@ components:
 
     PublicCampaign:
       type: object
-      required: [mode, target, placeIds]
+      required: [target]
       properties:
-        mode:
-          type: string
-          enum: [ftue, bypass]
-          description: |
-            `ftue` renders the FTUE with campaign content and the target pinned first.
-            `bypass` skips the FTUE and boots straight into the target's loading screen.
         target:
           $ref: '#/components/schemas/CampaignTarget'
-        title:
-          type: string
-          nullable: true
-          description: FTUE copy override (`ftue` mode only)
-        cta:
-          type: string
-          nullable: true
-          description: FTUE call-to-action label override (`ftue` mode only)
-        placeIds:
-          type: array
-          description: Curated carousel. Empty means the default featured list with the target pinned first.
-          items:
-            type: string
-            format: uuid
 
     CampaignsResponse:
       type: object
@@ -1605,10 +1574,6 @@ components:
           pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"
           maxLength: 64
           example: summer-26
-        mode:
-          type: string
-          enum: [ftue, bypass]
-          default: ftue
         targetType:
           type: string
           enum: [genesis, world]
@@ -1620,20 +1585,6 @@ components:
           type: string
           description: Required when `targetType` is `world`; must be absent otherwise.
           example: myworld.dcl.eth
-        title:
-          type: string
-          maxLength: 120
-          nullable: true
-        cta:
-          type: string
-          maxLength: 40
-          nullable: true
-        placeIds:
-          type: array
-          maxItems: 10
-          items:
-            type: string
-            format: uuid
         startsAt:
           type: string
           format: date-time
@@ -1654,9 +1605,6 @@ components:
       description: |
         Partial update. Editing the target requires `targetType` plus its matching field.
       properties:
-        mode:
-          type: string
-          enum: [ftue, bypass]
         targetType:
           type: string
           enum: [genesis, world]
@@ -1664,17 +1612,6 @@ components:
           type: string
         targetWorld:
           type: string
-        title:
-          type: string
-          nullable: true
-        cta:
-          type: string
-          nullable: true
-        placeIds:
-          type: array
-          items:
-            type: string
-            format: uuid
         startsAt:
           type: string
           format: date-time

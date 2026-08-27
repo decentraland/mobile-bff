@@ -1,15 +1,11 @@
 import SQL from 'sql-template-strings'
 import type { PoolClient } from 'pg'
 import { AppComponents } from '../types'
-import { CampaignMode, TargetType } from '../logic/campaigns'
+import { TargetType } from '../logic/campaigns'
 
-// What the client resolver consumes: only what it needs to render/route.
+// What the client resolver consumes: only what it needs to route.
 export type PublicCampaign = {
-  mode: CampaignMode
   target: { type: 'genesis'; position: string } | { type: 'world'; name: string }
-  title: string | null
-  cta: string | null
-  placeIds: string[]
 }
 
 export type PublicCampaignsMap = Record<string, PublicCampaign>
@@ -26,13 +22,9 @@ export type Campaign = PublicCampaign & {
 
 export type CreateCampaignInput = {
   token: string
-  mode: CampaignMode
   targetType: TargetType
   targetPosition: string | null
   targetWorld: string | null
-  title: string | null
-  cta: string | null
-  placeIds: string[]
   startsAt: Date | null
   endsAt: Date | null
   enabled: boolean
@@ -64,13 +56,9 @@ export type ICampaignsDbComponent = {
 
 type CampaignRow = {
   token: string
-  mode: CampaignMode
   target_type: TargetType
   target_position: string | null
   target_world: string | null
-  title: string | null
-  cta: string | null
-  place_ids: string[]
   starts_at: Date | null
   ends_at: Date | null
   enabled: boolean
@@ -89,7 +77,7 @@ type CampaignAuditRow = {
 }
 
 const COLUMNS =
-  'token, mode, target_type, target_position, target_world, title, cta, place_ids, ' +
+  'token, target_type, target_position, target_world, ' +
   'starts_at, ends_at, enabled, created_at, updated_at, updated_by'
 
 function toTarget(row: Pick<CampaignRow, 'target_type' | 'target_position' | 'target_world'>) {
@@ -99,13 +87,7 @@ function toTarget(row: Pick<CampaignRow, 'target_type' | 'target_position' | 'ta
 }
 
 function toPublicCampaign(row: CampaignRow): PublicCampaign {
-  return {
-    mode: row.mode,
-    target: toTarget(row),
-    title: row.title,
-    cta: row.cta,
-    placeIds: row.place_ids ?? []
-  }
+  return { target: toTarget(row) }
 }
 
 function toCampaign(row: CampaignRow): Campaign {
@@ -195,12 +177,11 @@ export async function createCampaignsDbComponent({ pg }: Pick<AppComponents, 'pg
     return withTransaction(async client => {
       const query = SQL`
         INSERT INTO campaigns (
-          token, mode, target_type, target_position, target_world,
-          title, cta, place_ids, starts_at, ends_at, enabled, updated_by
+          token, target_type, target_position, target_world,
+          starts_at, ends_at, enabled, updated_by
         ) VALUES (
-          ${input.token}, ${input.mode}, ${input.targetType}, ${input.targetPosition}, ${input.targetWorld},
-          ${input.title}, ${input.cta}, ${input.placeIds}, ${input.startsAt}, ${input.endsAt},
-          ${input.enabled}, ${actor}
+          ${input.token}, ${input.targetType}, ${input.targetPosition}, ${input.targetWorld},
+          ${input.startsAt}, ${input.endsAt}, ${input.enabled}, ${actor}
         )
         RETURNING `.append(COLUMNS)
       const result = await client.query<CampaignRow>(query)
@@ -221,13 +202,9 @@ export async function createCampaignsDbComponent({ pg }: Pick<AppComponents, 'pg
     }
 
     const query = SQL`UPDATE campaigns SET updated_at = NOW(), updated_by = ${actor}`
-    if (changes.mode !== undefined) query.append(SQL`, mode = ${changes.mode}`)
     if (changes.targetType !== undefined) query.append(SQL`, target_type = ${changes.targetType}`)
     if (changes.targetPosition !== undefined) query.append(SQL`, target_position = ${changes.targetPosition}`)
     if (changes.targetWorld !== undefined) query.append(SQL`, target_world = ${changes.targetWorld}`)
-    if (changes.title !== undefined) query.append(SQL`, title = ${changes.title}`)
-    if (changes.cta !== undefined) query.append(SQL`, cta = ${changes.cta}`)
-    if (changes.placeIds !== undefined) query.append(SQL`, place_ids = ${changes.placeIds}`)
     if (changes.startsAt !== undefined) query.append(SQL`, starts_at = ${changes.startsAt}`)
     if (changes.endsAt !== undefined) query.append(SQL`, ends_at = ${changes.endsAt}`)
     if (changes.enabled !== undefined) query.append(SQL`, enabled = ${changes.enabled}`)
