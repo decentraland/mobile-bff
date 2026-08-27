@@ -19,6 +19,7 @@ import { ICacheComponent } from './adapters/cache'
 import { IDestinationsApiComponent } from './adapters/destinations-api'
 import { IAppVersionsDbComponent } from './adapters/app-versions-db'
 import { IFeatureFlagsDbComponent } from './adapters/feature-flags-db'
+import { ICampaignsDbComponent } from './adapters/campaigns-db'
 import { IAppAttestComponent } from './adapters/app-attest'
 import { IPlayIntegrityComponent } from './adapters/play-integrity'
 import { IAttestationVerifierComponent } from './adapters/attestation-verifier'
@@ -50,6 +51,7 @@ export type BaseComponents = {
   destinationsApi: IDestinationsApiComponent
   appVersionsDb: IAppVersionsDbComponent
   featureFlagsDb: IFeatureFlagsDbComponent
+  campaignsDb: ICampaignsDbComponent
   appAttest: IAppAttestComponent
   playIntegrity: IPlayIntegrityComponent
   attestationVerifier: IAttestationVerifierComponent

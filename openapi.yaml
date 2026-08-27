@@ -39,6 +39,8 @@ tags:
     description: Wallet operations gated by platform attestation
   - name: Feature Flags
     description: Runtime feature toggles consumed by the mobile clients (e.g. pulse, dual-channel)
+  - name: Campaigns
+    description: Ad/referrer campaign token to target scene mapping, resolved by the client on boot
 
 paths:
   /ping:
@@ -691,6 +693,218 @@ paths:
         '500':
           $ref: '#/components/responses/FeatureFlagServerError'
 
+  /campaigns:
+    get:
+      tags:
+        - Campaigns
+      summary: Get the campaign map
+      description: |
+        Returns every campaign as a `{ token: campaign }` map. Read by godot-explorer on
+        boot to resolve the opaque `?c=<token>` carried by an ad or referrer link into the
+        scene it should open. An attributed install boots straight into that scene and
+        skips the FTUE.
+
+        A client that cannot reach this endpoint, or whose token is not in the map, falls
+        back to the default FTUE.
+      operationId: getCampaigns
+      security: []
+      responses:
+        '200':
+          description: Active campaigns retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CampaignsResponse'
+              example:
+                ok: true
+                data:
+                  campaigns:
+                    summer-26:
+                      target:
+                        type: genesis
+                        position: "-9,-9"
+                    world-launch:
+                      target:
+                        type: world
+                        name: myworld.dcl.eth
+        '500':
+          $ref: '#/components/responses/CampaignServerError'
+
+  /backoffice/campaigns:
+    get:
+      tags:
+        - Campaigns
+      summary: List all campaigns (backoffice)
+      description: |
+        Returns every campaign as a list. Requires signed fetch (ADR-44) and the signer
+        address in `ALLOWED_USERS`.
+      operationId: getBackofficeCampaigns
+      security:
+        - signedFetch: []
+      responses:
+        '200':
+          description: Campaigns retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CampaignsDetailedResponse'
+        '401':
+          $ref: '#/components/responses/CampaignUnauthorized'
+        '403':
+          $ref: '#/components/responses/CampaignForbidden'
+        '500':
+          $ref: '#/components/responses/CampaignServerError'
+
+    post:
+      tags:
+        - Campaigns
+      summary: Create a campaign (backoffice)
+      description: |
+        Creates a campaign mapping. Tokens are kebab-case so they can travel as a
+        deep-link query param. The target is validated for format only — a `world`
+        target must match `^[a-zA-Z0-9]+\.dcl\.eth$`, which is exactly what the client
+        needs to take its join-world route; anything else would be treated as a realm URL
+        and would not resolve to the intended world.
+
+        A campaign is live as soon as it exists: to stop one, delete it.
+        Requires signed fetch (ADR-44) and the signer address in `ALLOWED_USERS`.
+      operationId: createCampaign
+      security:
+        - signedFetch: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCampaignRequest'
+            example:
+              token: summer2022
+              targetType: genesis
+              targetPosition: "-9,-9"
+      responses:
+        '201':
+          description: Campaign created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CampaignResponse'
+        '400':
+          description: Invalid body (bad token, invalid or mixed target)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                ok: false
+                error: "'targetPosition' must be a parcel like '-9,-9'"
+        '401':
+          $ref: '#/components/responses/CampaignUnauthorized'
+        '403':
+          $ref: '#/components/responses/CampaignForbidden'
+        '409':
+          description: A campaign with this token already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                ok: false
+                error: "Campaign 'summer-26' already exists"
+        '500':
+          $ref: '#/components/responses/CampaignServerError'
+
+  /backoffice/campaigns/{token}:
+    parameters:
+      - name: token
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"
+        example: summer-26
+    put:
+      tags:
+        - Campaigns
+      summary: Update a campaign (backoffice)
+      description: |
+        Replaces the target. The three target fields are constrained as a unit, so the
+        whole target is required — `targetType` plus its matching field. A half-target
+        edit is rejected rather than merged with the stored row.
+        Requires signed fetch (ADR-44) and the signer address in `ALLOWED_USERS`.
+      operationId: updateCampaign
+      security:
+        - signedFetch: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCampaignRequest'
+            example:
+              targetType: world
+              targetWorld: myworld.dcl.eth
+      responses:
+        '200':
+          description: Campaign updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CampaignResponse'
+        '400':
+          description: Invalid body (partial target edit, invalid target)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                ok: false
+                error: No valid fields to update
+        '401':
+          $ref: '#/components/responses/CampaignUnauthorized'
+        '403':
+          $ref: '#/components/responses/CampaignForbidden'
+        '404':
+          $ref: '#/components/responses/CampaignNotFound'
+        '500':
+          $ref: '#/components/responses/CampaignServerError'
+
+    delete:
+      tags:
+        - Campaigns
+      summary: Delete a campaign (backoffice)
+      description: |
+        Removes the mapping. Clients resolving this token fall back to the default FTUE.
+        Requires signed fetch (ADR-44) and the signer address in `ALLOWED_USERS`.
+      operationId: deleteCampaign
+      security:
+        - signedFetch: []
+      responses:
+        '200':
+          description: Campaign deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      token:
+                        type: string
+                        example: summer-26
+        '401':
+          $ref: '#/components/responses/CampaignUnauthorized'
+        '403':
+          $ref: '#/components/responses/CampaignForbidden'
+        '404':
+          $ref: '#/components/responses/CampaignNotFound'
+        '500':
+          $ref: '#/components/responses/CampaignServerError'
+
+
 components:
   securitySchemes:
     signedFetch:
@@ -745,6 +959,44 @@ components:
             ok: false
             error: "Feature flag 'not-a-flag' not found"
     FeatureFlagServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            ok: false
+            error: Internal server error
+    CampaignUnauthorized:
+      description: Unauthorized - Invalid or missing signed fetch
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            unauthorized:
+              $ref: '#/components/examples/UnauthorizedError'
+            signedFetchError:
+              $ref: '#/components/examples/SignedFetchError'
+    CampaignForbidden:
+      description: Forbidden - signer address not in ALLOWED_USERS
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            ok: false
+            error: "Forbidden: User not in allowed list"
+    CampaignNotFound:
+      description: No campaign with this token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            ok: false
+            error: "Campaign 'not-a-campaign' not found"
+    CampaignServerError:
       description: Internal server error
       content:
         application/json:
@@ -1163,6 +1415,128 @@ components:
                     - pass
                     - fail
                   example: pass
+
+    CampaignTarget:
+      type: object
+      description: Where the campaign sends the user. Exactly one shape, keyed by `type`.
+      oneOf:
+        - type: object
+          required: [type, position]
+          properties:
+            type:
+              type: string
+              enum: [genesis]
+            position:
+              type: string
+              pattern: "^-?[0-9]{1,4},-?[0-9]{1,4}$"
+              example: "-9,-9"
+        - type: object
+          required: [type, name]
+          properties:
+            type:
+              type: string
+              enum: [world]
+            name:
+              type: string
+              pattern: "^[a-zA-Z0-9]+\\.dcl\\.eth$"
+              example: myworld.dcl.eth
+
+    PublicCampaign:
+      type: object
+      required: [target]
+      properties:
+        target:
+          $ref: '#/components/schemas/CampaignTarget'
+
+    CampaignsResponse:
+      type: object
+      required: [ok, data]
+      properties:
+        ok:
+          type: boolean
+          example: true
+        data:
+          type: object
+          required: [campaigns]
+          properties:
+            campaigns:
+              type: object
+              additionalProperties:
+                $ref: '#/components/schemas/PublicCampaign'
+
+    Campaign:
+      allOf:
+        - $ref: '#/components/schemas/PublicCampaign'
+        - type: object
+          required: [token]
+          properties:
+            token:
+              type: string
+              example: summer2022
+
+    CampaignsDetailedResponse:
+      type: object
+      required: [ok, data]
+      properties:
+        ok:
+          type: boolean
+          example: true
+        data:
+          type: object
+          required: [campaigns]
+          properties:
+            campaigns:
+              type: array
+              items:
+                $ref: '#/components/schemas/Campaign'
+
+    CampaignResponse:
+      type: object
+      required: [ok, data]
+      properties:
+        ok:
+          type: boolean
+          example: true
+        data:
+          $ref: '#/components/schemas/Campaign'
+
+    CreateCampaignRequest:
+      type: object
+      required: [token, targetType]
+      properties:
+        token:
+          type: string
+          pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"
+          maxLength: 64
+          example: summer-26
+        targetType:
+          type: string
+          enum: [genesis, world]
+        targetPosition:
+          type: string
+          description: Required when `targetType` is `genesis`; must be absent otherwise.
+          example: "-9,-9"
+        targetWorld:
+          type: string
+          description: Required when `targetType` is `world`; must be absent otherwise.
+          example: myworld.dcl.eth
+
+    UpdateCampaignRequest:
+      type: object
+      required: [targetType]
+      description: |
+        Replaces the target. The three target columns are constrained as a unit, so the
+        whole target is required rather than a partial edit merged with the stored row.
+      properties:
+        targetType:
+          type: string
+          enum: [genesis, world]
+        targetPosition:
+          type: string
+          description: Required when `targetType` is `genesis`; must be absent otherwise.
+        targetWorld:
+          type: string
+          description: Required when `targetType` is `world`; must be absent otherwise.
 
   examples:
     UnauthorizedError:
