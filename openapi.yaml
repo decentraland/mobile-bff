@@ -697,16 +697,15 @@ paths:
     get:
       tags:
         - Campaigns
-      summary: Get the active campaign map
+      summary: Get the campaign map
       description: |
-        Returns every enabled campaign whose active window contains the current time, as a
-        `{ token: campaign }` map. Read by godot-explorer on boot to resolve the opaque
-        `?c=<token>` carried by an ad or referrer link into the scene it should open.
-        An attributed install boots straight into that scene and skips the FTUE.
+        Returns every campaign as a `{ token: campaign }` map. Read by godot-explorer on
+        boot to resolve the opaque `?c=<token>` carried by an ad or referrer link into the
+        scene it should open. An attributed install boots straight into that scene and
+        skips the FTUE.
 
-        The window is evaluated server-side, so a client with a skewed clock or a stale
-        cached map cannot resurrect an expired campaign. A client that cannot reach this
-        endpoint falls back to the default FTUE.
+        A client that cannot reach this endpoint, or whose token is not in the map, falls
+        back to the default FTUE.
       operationId: getCampaigns
       security: []
       responses:
@@ -737,8 +736,8 @@ paths:
         - Campaigns
       summary: List all campaigns (backoffice)
       description: |
-        Returns every campaign, enabled or not, in or out of its window, with its audit
-        fields. Requires signed fetch (ADR-44) and the signer address in `ALLOWED_USERS`.
+        Returns every campaign as a list. Requires signed fetch (ADR-44) and the signer
+        address in `ALLOWED_USERS`.
       operationId: getBackofficeCampaigns
       security:
         - signedFetch: []
@@ -767,8 +766,7 @@ paths:
         needs to take its join-world route; anything else would be treated as a realm URL
         and would not resolve to the intended world.
 
-        `enabled` defaults to `false`, so a campaign created without it is dark until it is
-        switched on; passing `enabled: true` creates it live, subject to its active window.
+        A campaign is live as soon as it exists: to stop one, delete it.
         Requires signed fetch (ADR-44) and the signer address in `ALLOWED_USERS`.
       operationId: createCampaign
       security:
@@ -780,12 +778,9 @@ paths:
             schema:
               $ref: '#/components/schemas/CreateCampaignRequest'
             example:
-              token: summer-26
+              token: summer2022
               targetType: genesis
               targetPosition: "-9,-9"
-              startsAt: '2026-09-01T00:00:00.000Z'
-              endsAt: '2026-09-30T00:00:00.000Z'
-              enabled: true
       responses:
         '201':
           description: Campaign created
@@ -794,7 +789,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/CampaignResponse'
         '400':
-          description: Invalid body (bad token, invalid or mixed target, bad window)
+          description: Invalid body (bad token, invalid or mixed target)
           content:
             application/json:
               schema:
@@ -832,10 +827,9 @@ paths:
         - Campaigns
       summary: Update a campaign (backoffice)
       description: |
-        Partial update; at least one field is required. The three target fields are
-        constrained as a unit, so editing the target means sending `targetType` plus its
-        matching field — a half-target edit is rejected rather than merged. Editing only
-        one end of the active window is validated against the stored other end.
+        Replaces the target. The three target fields are constrained as a unit, so the
+        whole target is required — `targetType` plus its matching field. A half-target
+        edit is rejected rather than merged with the stored row.
         Requires signed fetch (ADR-44) and the signer address in `ALLOWED_USERS`.
       operationId: updateCampaign
       security:
@@ -847,7 +841,8 @@ paths:
             schema:
               $ref: '#/components/schemas/UpdateCampaignRequest'
             example:
-              enabled: false
+              targetType: world
+              targetWorld: myworld.dcl.eth
       responses:
         '200':
           description: Campaign updated
@@ -856,7 +851,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/CampaignResponse'
         '400':
-          description: Invalid body (no fields, partial target edit, bad window)
+          description: Invalid body (partial target edit, invalid target)
           content:
             application/json:
               schema:
@@ -879,7 +874,6 @@ paths:
       summary: Delete a campaign (backoffice)
       description: |
         Removes the mapping. Clients resolving this token fall back to the default FTUE.
-        The audit trail survives the deletion and stays readable at the audit endpoint.
         Requires signed fetch (ADR-44) and the signer address in `ALLOWED_USERS`.
       operationId: deleteCampaign
       security:
@@ -910,46 +904,6 @@ paths:
         '500':
           $ref: '#/components/responses/CampaignServerError'
 
-  /backoffice/campaigns/{token}/audit:
-    parameters:
-      - name: token
-        in: path
-        required: true
-        schema:
-          type: string
-        example: summer-26
-      - name: limit
-        in: query
-        required: false
-        schema:
-          type: integer
-          minimum: 1
-          maximum: 200
-          default: 50
-    get:
-      tags:
-        - Campaigns
-      summary: Read a campaign's audit trail (backoffice)
-      description: |
-        Who changed this mapping, what changed and when, newest first. The trail outlives
-        the campaign, so a deleted token still answers here.
-        Requires signed fetch (ADR-44) and the signer address in `ALLOWED_USERS`.
-      operationId: getCampaignAudit
-      security:
-        - signedFetch: []
-      responses:
-        '200':
-          description: Audit trail retrieved successfully
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CampaignAuditResponse'
-        '401':
-          $ref: '#/components/responses/CampaignUnauthorized'
-        '403':
-          $ref: '#/components/responses/CampaignForbidden'
-        '500':
-          $ref: '#/components/responses/CampaignServerError'
 
 components:
   securitySchemes:
@@ -1514,30 +1468,11 @@ components:
       allOf:
         - $ref: '#/components/schemas/PublicCampaign'
         - type: object
-          required: [token, enabled, createdAt, updatedAt]
+          required: [token]
           properties:
             token:
               type: string
-              example: summer-26
-            startsAt:
-              type: string
-              format: date-time
-              nullable: true
-            endsAt:
-              type: string
-              format: date-time
-              nullable: true
-            enabled:
-              type: boolean
-            createdAt:
-              type: string
-              format: date-time
-            updatedAt:
-              type: string
-              format: date-time
-            updatedBy:
-              type: string
-              nullable: true
+              example: summer2022
 
     CampaignsDetailedResponse:
       type: object
@@ -1585,83 +1520,23 @@ components:
           type: string
           description: Required when `targetType` is `world`; must be absent otherwise.
           example: myworld.dcl.eth
-        startsAt:
-          type: string
-          format: date-time
-          nullable: true
-          description: Open-ended when absent or null.
-        endsAt:
-          type: string
-          format: date-time
-          nullable: true
-          description: Open-ended when absent or null. Must be strictly after `startsAt`.
-        enabled:
-          type: boolean
-          default: false
 
     UpdateCampaignRequest:
       type: object
-      minProperties: 1
+      required: [targetType]
       description: |
-        Partial update. Editing the target requires `targetType` plus its matching field.
+        Replaces the target. The three target columns are constrained as a unit, so the
+        whole target is required rather than a partial edit merged with the stored row.
       properties:
         targetType:
           type: string
           enum: [genesis, world]
         targetPosition:
           type: string
+          description: Required when `targetType` is `genesis`; must be absent otherwise.
         targetWorld:
           type: string
-        startsAt:
-          type: string
-          format: date-time
-          nullable: true
-        endsAt:
-          type: string
-          format: date-time
-          nullable: true
-        enabled:
-          type: boolean
-
-    CampaignAuditEntry:
-      type: object
-      required: [id, token, action, actor, createdAt]
-      properties:
-        id:
-          type: integer
-        token:
-          type: string
-          example: summer-26
-        action:
-          type: string
-          enum: [create, update, delete]
-        changes:
-          type: object
-          nullable: true
-          description: Full row snapshot for create/delete, changed fields only for update.
-          additionalProperties: true
-        actor:
-          type: string
-          description: Signer address that made the change
-        createdAt:
-          type: string
-          format: date-time
-
-    CampaignAuditResponse:
-      type: object
-      required: [ok, data]
-      properties:
-        ok:
-          type: boolean
-          example: true
-        data:
-          type: object
-          required: [entries]
-          properties:
-            entries:
-              type: array
-              items:
-                $ref: '#/components/schemas/CampaignAuditEntry'
+          description: Required when `targetType` is `world`; must be absent otherwise.
 
   examples:
     UnauthorizedError:

@@ -1,10 +1,4 @@
-import {
-  validateToken,
-  validateTarget,
-  parseTimestamp,
-  validateWindow,
-  WORLD_NAME_REGEX
-} from '../../../src/logic/campaigns'
+import { validateToken, validateTarget, WORLD_NAME_REGEX } from '../../../src/logic/campaigns'
 
 describe('campaigns logic', () => {
   describe('validateToken', () => {
@@ -65,31 +59,6 @@ describe('campaigns logic', () => {
     it('rejects an unknown targetType', () => {
       expect(validateTarget({ targetType: 'parcel', targetPosition: '0,0' })).toHaveProperty('error')
       expect(validateTarget({})).toHaveProperty('error')
-    })
-  })
-
-  describe('window', () => {
-    it('parses ISO timestamps and treats absent bounds as open-ended', () => {
-      expect(parseTimestamp(undefined, 'startsAt')).toEqual({ value: null })
-      expect(parseTimestamp(null, 'startsAt')).toEqual({ value: null })
-      expect(parseTimestamp('2026-09-01T00:00:00.000Z', 'startsAt')).toEqual({
-        value: new Date('2026-09-01T00:00:00.000Z')
-      })
-      expect(parseTimestamp('not-a-date', 'startsAt')).toHaveProperty('error')
-      expect(parseTimestamp(1787616000000, 'startsAt')).toHaveProperty('error')
-    })
-
-    it('requires endsAt to be strictly after startsAt', () => {
-      const start = new Date('2026-09-01T00:00:00.000Z')
-      const end = new Date('2026-09-30T00:00:00.000Z')
-
-      expect(validateWindow(start, end)).toBeNull()
-      expect(validateWindow(null, end)).toBeNull()
-      expect(validateWindow(start, null)).toBeNull()
-      expect(validateWindow(null, null)).toBeNull()
-
-      expect(validateWindow(end, start)).toMatch(/must be after/)
-      expect(validateWindow(start, start)).toMatch(/must be after/)
     })
   })
 })

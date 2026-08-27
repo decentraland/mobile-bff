@@ -1,25 +1,9 @@
 import { DecentralandSignatureContext } from '@dcl/platform-crypto-middleware'
 import { HandlerContextWithPath } from '../../../../types'
 import { isAllowedUser } from '../../../../logic/allowed-users'
-import {
-  validateToken,
-  validateTarget,
-  parseTimestamp,
-  validateWindow
-} from '../../../../logic/campaigns'
-import { CreateCampaignInput } from '../../../../adapters/campaigns-db'
+import { validateToken, validateTarget } from '../../../../logic/campaigns'
 
 const PG_UNIQUE_VIOLATION = '23505'
-
-type CreateBody = {
-  token?: unknown
-  targetType?: unknown
-  targetPosition?: unknown
-  targetWorld?: unknown
-  startsAt?: unknown
-  endsAt?: unknown
-  enabled?: unknown
-}
 
 export async function createCampaignHandler(
   context: HandlerContextWithPath<'campaignsDb' | 'logs' | 'config', '/backoffice/campaigns'>
@@ -44,7 +28,7 @@ export async function createCampaignHandler(
 
   let token = ''
   try {
-    const body = await request.json() as CreateBody
+    const body = await request.json()
 
     const tokenError = validateToken(body.token)
     if (tokenError) {
@@ -57,34 +41,7 @@ export async function createCampaignHandler(
       return { status: 400, body: { ok: false, error: target.error } }
     }
 
-    const startsAt = parseTimestamp(body.startsAt, 'startsAt')
-    if ('error' in startsAt) {
-      return { status: 400, body: { ok: false, error: startsAt.error } }
-    }
-    const endsAt = parseTimestamp(body.endsAt, 'endsAt')
-    if ('error' in endsAt) {
-      return { status: 400, body: { ok: false, error: endsAt.error } }
-    }
-    const windowError = validateWindow(startsAt.value, endsAt.value)
-    if (windowError) {
-      return { status: 400, body: { ok: false, error: windowError } }
-    }
-
-    if (body.enabled !== undefined && typeof body.enabled !== 'boolean') {
-      return { status: 400, body: { ok: false, error: "'enabled' must be a boolean" } }
-    }
-
-    const input: CreateCampaignInput = {
-      token,
-      targetType: target.targetType,
-      targetPosition: target.targetPosition,
-      targetWorld: target.targetWorld,
-      startsAt: startsAt.value,
-      endsAt: endsAt.value,
-      enabled: body.enabled === true
-    }
-
-    const campaign = await campaignsDb.create(input, userAddress)
+    const campaign = await campaignsDb.create({ token, ...target })
 
     logger.info('Campaign created', { token, createdBy: userAddress })
 

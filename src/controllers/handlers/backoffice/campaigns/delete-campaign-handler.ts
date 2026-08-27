@@ -25,7 +25,7 @@ export async function deleteCampaignHandler(
   }
 
   try {
-    const deleted = await campaignsDb.delete(token, userAddress)
+    const deleted = await campaignsDb.delete(token)
     if (!deleted) {
       return { status: 404, body: { ok: false, error: `Campaign '${token}' not found` } }
     }

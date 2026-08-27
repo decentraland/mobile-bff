@@ -78,25 +78,3 @@ export function validateTarget(input: {
   }
   return { targetType: type, targetPosition: null, targetWorld }
 }
-
-// Accepts an ISO-8601 string or null. Returns the canonical Date, or an error.
-export function parseTimestamp(value: unknown, field: string): { value: Date | null } | { error: string } {
-  if (value === undefined || value === null) {
-    return { value: null }
-  }
-  if (typeof value !== 'string') {
-    return { error: `'${field}' must be an ISO-8601 string or null` }
-  }
-  const parsed = new Date(value)
-  if (Number.isNaN(parsed.getTime())) {
-    return { error: `'${field}' must be a valid ISO-8601 date` }
-  }
-  return { value: parsed }
-}
-
-export function validateWindow(startsAt: Date | null, endsAt: Date | null): string | null {
-  if (startsAt && endsAt && endsAt.getTime() <= startsAt.getTime()) {
-    return "'endsAt' must be after 'startsAt'"
-  }
-  return null
-}

@@ -13,13 +13,7 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
     // Genesis City parcel as "x,y"
     target_position: { type: 'text', notNull: false },
     // World name, e.g. "name.dcl.eth"
-    target_world: { type: 'text', notNull: false },
-    starts_at: { type: 'timestamptz', notNull: false },
-    ends_at: { type: 'timestamptz', notNull: false },
-    enabled: { type: 'boolean', notNull: true, default: false },
-    created_at: { type: 'timestamptz', notNull: true, default: pgm.func('NOW()') },
-    updated_at: { type: 'timestamptz', notNull: true, default: pgm.func('NOW()') },
-    updated_by: { type: 'varchar(64)', notNull: false }
+    target_world: { type: 'text', notNull: false }
   })
 
   // Same kebab-case style as feature_flags and the godot-explorer deep-link params
@@ -44,37 +38,8 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
   pgm.addConstraint('campaigns', 'campaigns_position_format', {
     check: "target_position IS NULL OR target_position ~ '^-?[0-9]{1,4},-?[0-9]{1,4}$'"
   })
-
-  pgm.addConstraint('campaigns', 'campaigns_window_order', {
-    check: 'starts_at IS NULL OR ends_at IS NULL OR ends_at > starts_at'
-  })
-
-  // The public GET filters on enabled + window on every client boot
-  pgm.createIndex('campaigns', ['enabled', 'starts_at', 'ends_at'], {
-    name: 'campaigns_active_idx'
-  })
-
-  // Audit trail. No FK to campaigns: the history of a deleted campaign must survive it.
-  pgm.createTable('campaign_audit', {
-    id: { type: 'serial', primaryKey: true },
-    token: { type: 'text', notNull: true },
-    action: { type: 'text', notNull: true },
-    // Full row snapshot for create/delete, changed fields only for update
-    changes: { type: 'jsonb', notNull: false },
-    actor: { type: 'varchar(64)', notNull: true },
-    created_at: { type: 'timestamptz', notNull: true, default: pgm.func('NOW()') }
-  })
-
-  pgm.addConstraint('campaign_audit', 'campaign_audit_action_check', {
-    check: "action IN ('create', 'update', 'delete')"
-  })
-
-  pgm.createIndex('campaign_audit', ['token', 'created_at'], {
-    name: 'campaign_audit_token_created_idx'
-  })
 }
 
 export async function down(pgm: MigrationBuilder): Promise<void> {
-  pgm.dropTable('campaign_audit')
   pgm.dropTable('campaigns')
 }

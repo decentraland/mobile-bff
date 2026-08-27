@@ -1,9 +1,7 @@
 import { HandlerContextWithPath } from '../../../types'
 
 // Client-facing campaign map. Read by godot-explorer on boot (Campaigns autoload) to
-// resolve the `?c=<token>` carried by an ad / referrer link into an FTUE variant or a
-// direct scene boot. Only enabled campaigns inside their active window are served, so a
-// stale client cache can never resurrect an expired one.
+// resolve the `?c=<token>` carried by an ad / referrer link into the scene it opens.
 export async function getCampaignsHandler(
   context: HandlerContextWithPath<'campaignsDb' | 'logs', '/campaigns'>
 ) {
@@ -14,7 +12,7 @@ export async function getCampaignsHandler(
   const logger = logs.getLogger('get-campaigns')
 
   try {
-    const campaigns = await campaignsDb.getActive()
+    const campaigns = await campaignsDb.getMap()
     return {
       status: 200,
       body: { ok: true, data: { campaigns } }

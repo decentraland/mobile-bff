@@ -65,7 +65,6 @@ import { getBackofficeCampaignsHandler } from "./handlers/backoffice/campaigns/g
 import { createCampaignHandler } from "./handlers/backoffice/campaigns/create-campaign-handler"
 import { updateCampaignHandler } from "./handlers/backoffice/campaigns/update-campaign-handler"
 import { deleteCampaignHandler } from "./handlers/backoffice/campaigns/delete-campaign-handler"
-import { getCampaignAuditHandler } from "./handlers/backoffice/campaigns/get-campaign-audit-handler"
 
 // Wallets (Thirdweb thin proxy)
 // TODO: re-enable sign-message endpoint once the TTL and handshake flow are better defined.
@@ -190,7 +189,6 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
   router.post("/backoffice/campaigns", signedFetch, createCampaignHandler)
   router.put("/backoffice/campaigns/:token", signedFetch, updateCampaignHandler)
   router.delete("/backoffice/campaigns/:token", signedFetch, deleteCampaignHandler)
-  router.get("/backoffice/campaigns/:token/audit", signedFetch, getCampaignAuditHandler)
 
   return router
 }

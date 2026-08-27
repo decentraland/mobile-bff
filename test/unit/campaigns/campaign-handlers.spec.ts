@@ -3,7 +3,6 @@ import { getBackofficeCampaignsHandler } from '../../../src/controllers/handlers
 import { createCampaignHandler } from '../../../src/controllers/handlers/backoffice/campaigns/create-campaign-handler'
 import { updateCampaignHandler } from '../../../src/controllers/handlers/backoffice/campaigns/update-campaign-handler'
 import { deleteCampaignHandler } from '../../../src/controllers/handlers/backoffice/campaigns/delete-campaign-handler'
-import { getCampaignAuditHandler } from '../../../src/controllers/handlers/backoffice/campaigns/get-campaign-audit-handler'
 import {
   createCampaignsDbJestMockComponent,
   createTestCampaign,
@@ -26,29 +25,28 @@ describe('campaign handlers', () => {
     mockConfig = createConfigJestMockComponent({ ALLOWED_USERS: ALLOWED })
   })
 
-  function createContext(auth: string | undefined, body?: any, params?: any, url?: string) {
+  function createContext(auth: string | undefined, body?: any, params?: any) {
     return {
       components: { campaignsDb: mockCampaignsDb, logs: mockLogs, config: mockConfig },
       verification: auth ? { auth } : undefined,
       request: { json: () => Promise.resolve(body) },
-      params: params ?? {},
-      url: new URL(url ?? 'http://localhost/backoffice/campaigns')
+      params: params ?? {}
     }
   }
 
   describe('public GET /campaigns', () => {
-    it('returns the active campaign map keyed by token', async () => {
+    it('returns the campaign map keyed by token', async () => {
       const response = await getCampaignsHandler(createContext(undefined) as any)
 
       expect(response.status).toBe(200)
       expect(response.body).toEqual({ ok: true, data: { campaigns: DEFAULT_TEST_CAMPAIGNS } })
-      expect(mockCampaignsDb.getActive).toHaveBeenCalled()
+      expect(mockCampaignsDb.getMap).toHaveBeenCalled()
     })
 
     // The client fails open to the default FTUE, so a db outage must stay a clean
     // 5xx envelope rather than leaking an exception shape.
     it('returns the error envelope when the db fails', async () => {
-      mockCampaignsDb.getActive.mockRejectedValue(new Error('db down'))
+      mockCampaignsDb.getMap.mockRejectedValue(new Error('db down'))
 
       const response = await getCampaignsHandler(createContext(undefined) as any)
 
@@ -57,23 +55,12 @@ describe('campaign handlers', () => {
     })
   })
 
-  // The backoffice UI reads these envelopes directly, so their shape is part of the contract.
-  describe('backoffice list envelopes', () => {
-    it('wraps the campaign list under data.campaigns', async () => {
-      const response = await getBackofficeCampaignsHandler(createContext(ALLOWED) as any)
+  // The backoffice UI reads this envelope directly, so its shape is part of the contract.
+  it('wraps the backoffice campaign list under data.campaigns', async () => {
+    const response = await getBackofficeCampaignsHandler(createContext(ALLOWED) as any)
 
-      expect(response.status).toBe(200)
-      expect(response.body).toEqual({ ok: true, data: { campaigns: [createTestCampaign()] } })
-    })
-
-    it('wraps the audit trail under data.entries', async () => {
-      const response = await getCampaignAuditHandler(
-        createContext(ALLOWED, undefined, { token: 'summer-26' }) as any
-      )
-
-      expect(response.status).toBe(200)
-      expect(response.body).toEqual({ ok: true, data: { entries: [] } })
-    })
+    expect(response.status).toBe(200)
+    expect(response.body).toEqual({ ok: true, data: { campaigns: [createTestCampaign()] } })
   })
 
   describe('backoffice auth gate', () => {
@@ -81,8 +68,7 @@ describe('campaign handlers', () => {
       ['list', getBackofficeCampaignsHandler],
       ['create', createCampaignHandler],
       ['update', updateCampaignHandler],
-      ['delete', deleteCampaignHandler],
-      ['audit', getCampaignAuditHandler]
+      ['delete', deleteCampaignHandler]
     ])('rejects unauthenticated and non-allowlisted callers on %s', async (_label, handler) => {
       const anonymous = await handler(createContext(undefined, {}, { token: 'summer-26' }) as any)
       expect(anonymous.status).toBe(401)
@@ -97,61 +83,50 @@ describe('campaign handlers', () => {
   })
 
   describe('POST /backoffice/campaigns', () => {
-    it('stores the canonical target triple and defaults to disabled', async () => {
-      const response = await createCampaignHandler(
-        createContext(ALLOWED, { token: 'summer-26', targetType: 'genesis', targetPosition: '-9,-9' }) as any
-      )
-
-      expect(response.status).toBe(201)
-      expect(mockCampaignsDb.create).toHaveBeenCalledWith(
-        {
-          token: 'summer-26',
-          targetType: 'genesis',
-          targetPosition: '-9,-9',
-          targetWorld: null,
-          startsAt: null,
-          endsAt: null,
-          // Absent `enabled` defaults to dark, so a campaign cannot go live by omission.
-          enabled: false
-        },
-        ALLOWED
-      )
-    })
-
-    it('accepts a campaign targeting a world, with an active window', async () => {
+    it('stores the canonical target triple for a genesis target', async () => {
       const response = await createCampaignHandler(
         createContext(ALLOWED, {
-          token: 'world-launch',
-          targetType: 'world',
-          targetWorld: 'myworld.dcl.eth',
-          startsAt: '2026-09-01T00:00:00.000Z',
-          endsAt: '2026-09-30T00:00:00.000Z',
-          enabled: true
+          token: 'summer2022',
+          targetType: 'genesis',
+          targetPosition: '10,-20'
         }) as any
       )
 
       expect(response.status).toBe(201)
-      expect(mockCampaignsDb.create).toHaveBeenCalledWith(
-        expect.objectContaining({
+      expect(mockCampaignsDb.create).toHaveBeenCalledWith({
+        token: 'summer2022',
+        targetType: 'genesis',
+        targetPosition: '10,-20',
+        targetWorld: null
+      })
+    })
+
+    it('stores the canonical target triple for a world target', async () => {
+      const response = await createCampaignHandler(
+        createContext(ALLOWED, {
+          token: 'world-launch',
           targetType: 'world',
-          targetWorld: 'myworld.dcl.eth',
-          targetPosition: null,
-          startsAt: new Date('2026-09-01T00:00:00.000Z'),
-          endsAt: new Date('2026-09-30T00:00:00.000Z'),
-          enabled: true
-        }),
-        ALLOWED
+          targetWorld: 'myworld.dcl.eth'
+        }) as any
       )
+
+      expect(response.status).toBe(201)
+      expect(mockCampaignsDb.create).toHaveBeenCalledWith({
+        token: 'world-launch',
+        targetType: 'world',
+        targetPosition: null,
+        targetWorld: 'myworld.dcl.eth'
+      })
     })
 
     it.each([
-      ['a non-kebab token', { token: 'Summer 26', targetType: 'genesis', targetPosition: '0,0' }],
-      ['a missing target', { token: 'x' }],
-      ['a malformed parcel', { token: 'x', targetType: 'genesis', targetPosition: 'a,b' }],
-      ['an unroutable world', { token: 'x', targetType: 'world', targetWorld: 'my-world.dcl.eth' }],
-      ['an inverted window', {
-        token: 'x', targetType: 'genesis', targetPosition: '0,0',
-        startsAt: '2026-09-30T00:00:00.000Z', endsAt: '2026-09-01T00:00:00.000Z'
+      ['a token that is not kebab-case', { token: 'Summer 26', targetType: 'genesis', targetPosition: '0,0' }],
+      ['a world name the client could not resolve', { token: 'x', targetType: 'world', targetWorld: 'myworld.eth' }],
+      ['a target mixing both column families', {
+        token: 'x',
+        targetType: 'genesis',
+        targetPosition: '0,0',
+        targetWorld: 'myworld.dcl.eth'
       }]
     ])('rejects %s without touching the db', async (_label, body) => {
       const response = await createCampaignHandler(createContext(ALLOWED, body) as any)
@@ -168,109 +143,60 @@ describe('campaign handlers', () => {
       )
 
       expect(response.status).toBe(409)
-      expect(response.body.error).toContain('summer-26')
     })
   })
 
   describe('PUT /backoffice/campaigns/:token', () => {
-    it('applies a partial change', async () => {
+    it('replaces the target as a unit', async () => {
       const response = await updateCampaignHandler(
-        createContext(ALLOWED, { enabled: true }, { token: 'summer-26' }) as any
-      )
-
-      expect(response.status).toBe(200)
-      expect(mockCampaignsDb.update).toHaveBeenCalledWith('summer-26', { enabled: true }, ALLOWED)
-    })
-
-    // The three target columns are constrained as a unit, so a half-target edit is
-    // rejected instead of being merged with the stored row.
-    it('rejects a partial target edit', async () => {
-      const response = await updateCampaignHandler(
-        createContext(ALLOWED, { targetPosition: '10,10' }, { token: 'summer-26' }) as any
-      )
-
-      expect(response.status).toBe(400)
-      expect(mockCampaignsDb.update).not.toHaveBeenCalled()
-    })
-
-    it('validates a one-sided window edit against the stored bound', async () => {
-      mockCampaignsDb.getByToken.mockResolvedValue(
-        createTestCampaign({ startsAt: '2026-09-15T00:00:00.000Z' })
-      )
-
-      const response = await updateCampaignHandler(
-        createContext(ALLOWED, { endsAt: '2026-09-01T00:00:00.000Z' }, { token: 'summer-26' }) as any
-      )
-
-      expect(response.status).toBe(400)
-      expect(response.body.error).toMatch(/must be after/)
-      expect(mockCampaignsDb.update).not.toHaveBeenCalled()
-    })
-
-    it('returns 404 for an unknown token', async () => {
-      mockCampaignsDb.getByToken.mockResolvedValue(null)
-
-      const response = await updateCampaignHandler(
-        createContext(ALLOWED, { enabled: true }, { token: 'ghost' }) as any
-      )
-
-      expect(response.status).toBe(404)
-      expect(mockCampaignsDb.update).not.toHaveBeenCalled()
-    })
-
-    it('returns 400 when the body carries nothing to update', async () => {
-      const response = await updateCampaignHandler(
-        createContext(ALLOWED, {}, { token: 'summer-26' }) as any
-      )
-
-      expect(response.status).toBe(400)
-      expect(mockCampaignsDb.update).not.toHaveBeenCalled()
-    })
-  })
-
-  describe('DELETE /backoffice/campaigns/:token', () => {
-    it('deletes an existing campaign and 404s an unknown one', async () => {
-      const deleted = await deleteCampaignHandler(
-        createContext(ALLOWED, undefined, { token: 'summer-26' }) as any
-      )
-      expect(deleted.status).toBe(200)
-      expect(mockCampaignsDb.delete).toHaveBeenCalledWith('summer-26', ALLOWED)
-
-      mockCampaignsDb.delete.mockResolvedValue(false)
-      const missing = await deleteCampaignHandler(
-        createContext(ALLOWED, undefined, { token: 'ghost' }) as any
-      )
-      expect(missing.status).toBe(404)
-    })
-  })
-
-  describe('GET /backoffice/campaigns/:token/audit', () => {
-    it('clamps the limit and answers for a token that no longer exists', async () => {
-      const response = await getCampaignAuditHandler(
         createContext(
           ALLOWED,
-          undefined,
-          { token: 'deleted-campaign' },
-          'http://localhost/backoffice/campaigns/deleted-campaign/audit?limit=9999'
+          { targetType: 'world', targetWorld: 'other.dcl.eth' },
+          { token: 'summer-26' }
         ) as any
       )
 
       expect(response.status).toBe(200)
-      expect(mockCampaignsDb.getAudit).toHaveBeenCalledWith('deleted-campaign', 200)
+      expect(mockCampaignsDb.update).toHaveBeenCalledWith('summer-26', {
+        targetType: 'world',
+        targetPosition: null,
+        targetWorld: 'other.dcl.eth'
+      })
     })
 
-    it('falls back to the default limit when the query param is absent or junk', async () => {
-      await getCampaignAuditHandler(
-        createContext(ALLOWED, undefined, { token: 'summer-26' },
-          'http://localhost/backoffice/campaigns/summer-26/audit') as any
+    // The three target columns are constrained together, so half a target cannot be
+    // validated on its own — it has to be rejected rather than merged with the stored row.
+    it('rejects a partial target edit', async () => {
+      const response = await updateCampaignHandler(
+        createContext(ALLOWED, { targetPosition: '5,5' }, { token: 'summer-26' }) as any
       )
-      expect(mockCampaignsDb.getAudit).toHaveBeenCalledWith('summer-26', 50)
 
-      await getCampaignAuditHandler(
-        createContext(ALLOWED, undefined, { token: 'summer-26' },
-          'http://localhost/backoffice/campaigns/summer-26/audit?limit=abc') as any
-      )
-      expect(mockCampaignsDb.getAudit).toHaveBeenLastCalledWith('summer-26', 50)
+      expect(response.status).toBe(400)
+      expect(mockCampaignsDb.update).not.toHaveBeenCalled()
     })
+
+    it('returns 404 for an unknown token', async () => {
+      mockCampaignsDb.update.mockResolvedValue(null)
+
+      const response = await updateCampaignHandler(
+        createContext(ALLOWED, { targetType: 'genesis', targetPosition: '0,0' }, { token: 'nope' }) as any
+      )
+
+      expect(response.status).toBe(404)
+    })
+  })
+
+  it('deletes an existing campaign and 404s an unknown one', async () => {
+    const deleted = await deleteCampaignHandler(
+      createContext(ALLOWED, undefined, { token: 'summer-26' }) as any
+    )
+    expect(deleted.status).toBe(200)
+    expect(mockCampaignsDb.delete).toHaveBeenCalledWith('summer-26')
+
+    mockCampaignsDb.delete.mockResolvedValue(false)
+    const missing = await deleteCampaignHandler(
+      createContext(ALLOWED, undefined, { token: 'nope' }) as any
+    )
+    expect(missing.status).toBe(404)
   })
 })

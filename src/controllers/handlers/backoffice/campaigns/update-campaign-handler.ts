@@ -1,19 +1,7 @@
 import { DecentralandSignatureContext } from '@dcl/platform-crypto-middleware'
 import { HandlerContextWithPath } from '../../../../types'
 import { isAllowedUser } from '../../../../logic/allowed-users'
-import { validateTarget, parseTimestamp, validateWindow } from '../../../../logic/campaigns'
-import { UpdateCampaignInput } from '../../../../adapters/campaigns-db'
-
-type UpdateBody = {
-  targetType?: unknown
-  targetPosition?: unknown
-  targetWorld?: unknown
-  startsAt?: unknown
-  endsAt?: unknown
-  enabled?: unknown
-}
-
-const TARGET_FIELDS = ['targetType', 'targetPosition', 'targetWorld'] as const
+import { validateTarget } from '../../../../logic/campaigns'
 
 export async function updateCampaignHandler(
   context: HandlerContextWithPath<'campaignsDb' | 'logs' | 'config', '/backoffice/campaigns/:token'>
@@ -39,68 +27,17 @@ export async function updateCampaignHandler(
   }
 
   try {
-    const body = await request.json() as UpdateBody
-    const changes: UpdateCampaignInput = {}
+    const body = await request.json()
 
     // The target columns are constrained as a unit (exactly one populated, matching
-    // targetType), so a partial target edit cannot be validated in isolation — ask for
-    // the whole target rather than merging it with the stored row and guessing.
-    if (TARGET_FIELDS.some(field => body[field] !== undefined)) {
-      const target = validateTarget(body)
-      if ('error' in target) {
-        return { status: 400, body: { ok: false, error: target.error } }
-      }
-      changes.targetType = target.targetType
-      changes.targetPosition = target.targetPosition
-      changes.targetWorld = target.targetWorld
+    // targetType), so the whole target is required rather than a partial edit merged
+    // with the stored row.
+    const target = validateTarget(body)
+    if ('error' in target) {
+      return { status: 400, body: { ok: false, error: target.error } }
     }
 
-    if (body.startsAt !== undefined) {
-      const startsAt = parseTimestamp(body.startsAt, 'startsAt')
-      if ('error' in startsAt) {
-        return { status: 400, body: { ok: false, error: startsAt.error } }
-      }
-      changes.startsAt = startsAt.value
-    }
-
-    if (body.endsAt !== undefined) {
-      const endsAt = parseTimestamp(body.endsAt, 'endsAt')
-      if ('error' in endsAt) {
-        return { status: 400, body: { ok: false, error: endsAt.error } }
-      }
-      changes.endsAt = endsAt.value
-    }
-
-    if (body.enabled !== undefined) {
-      if (typeof body.enabled !== 'boolean') {
-        return { status: 400, body: { ok: false, error: "'enabled' must be a boolean" } }
-      }
-      changes.enabled = body.enabled
-    }
-
-    if (Object.keys(changes).length === 0) {
-      return { status: 400, body: { ok: false, error: 'No valid fields to update' } }
-    }
-
-    const existing = await campaignsDb.getByToken(token)
-    if (!existing) {
-      return { status: 404, body: { ok: false, error: `Campaign '${token}' not found` } }
-    }
-
-    // Only one end of the window may be edited at a time, so check the effective
-    // window (the merge of the change with what is already stored).
-    const effectiveStartsAt = changes.startsAt !== undefined
-      ? changes.startsAt
-      : existing.startsAt ? new Date(existing.startsAt) : null
-    const effectiveEndsAt = changes.endsAt !== undefined
-      ? changes.endsAt
-      : existing.endsAt ? new Date(existing.endsAt) : null
-    const windowError = validateWindow(effectiveStartsAt, effectiveEndsAt)
-    if (windowError) {
-      return { status: 400, body: { ok: false, error: windowError } }
-    }
-
-    const campaign = await campaignsDb.update(token, changes, userAddress)
+    const campaign = await campaignsDb.update(token, target)
     if (!campaign) {
       return { status: 404, body: { ok: false, error: `Campaign '${token}' not found` } }
     }
