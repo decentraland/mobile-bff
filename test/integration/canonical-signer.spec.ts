@@ -3,7 +3,11 @@ import { test } from '../components'
 import { getAuthHeaders, getIdentity, getLegacyAuthHeaders, Identity } from '../utils/signed-fetch'
 
 const PATH = '/deletion'
-const CANONICAL_SIGNER = 'decentraland-kernel-scene'
+
+// Deliberately not `signer`: it is gated by `rejectIfSigner`, which runs before signature
+// verification, so re-casing it would be refused by the gate without the signature being consulted.
+// Nothing inspects `origin`, so only the signature can answer here.
+const ORIGIN = 'https://play.decentraland.org'
 
 test('canonical signer', function ({ components }) {
   let identity: Identity
@@ -26,7 +30,7 @@ test('canonical signer', function ({ components }) {
     let headers: Record<string, string>
 
     beforeEach(() => {
-      headers = getAuthHeaders('GET', PATH, { signer: CANONICAL_SIGNER }, sign)
+      headers = getAuthHeaders('GET', PATH, { origin: ORIGIN }, sign)
     })
 
     it('should serve the request when the metadata arrives as it was signed', async () => {
@@ -36,13 +40,13 @@ test('canonical signer', function ({ components }) {
       await expect(response.json()).resolves.toEqual({ ok: true, data: null })
     })
 
-    describe('and the signer key is re-cased after signing', () => {
+    describe('and a metadata key is re-cased after signing', () => {
       beforeEach(() => {
         // The attack itself, not a mock of it: nothing here weakens the signature, only the
         // delivered header is rewritten. Under the folded payload this kept a genuinely valid
         // signature while reading as absent to a case-sensitive comparison. The metadata bytes are
         // now inside the signature, so it no longer does.
-        headers[AUTH_METADATA_HEADER] = JSON.stringify({ Signer: CANONICAL_SIGNER })
+        headers[AUTH_METADATA_HEADER] = JSON.stringify({ Origin: ORIGIN })
       })
 
       it('should drop the request to unauthenticated', async () => {
@@ -84,7 +88,7 @@ test('canonical signer', function ({ components }) {
       let headers: Record<string, string>
 
       beforeEach(() => {
-        headers = getLegacyAuthHeaders('GET', PATH, { origin: 'https://play.decentraland.org/Mobile' }, sign)
+        headers = getLegacyAuthHeaders('GET', PATH, { origin: `${ORIGIN}/Mobile` }, sign)
       })
 
       it('should refuse the request, the two payload formats no longer agreeing', async () => {
