@@ -85,11 +85,12 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
     fetcher: fetch as unknown as IFetchComponent,
     optional: true,
     // `canonicalMetadataKeys` is deliberately absent, which keeps the pre-6.0.0 folded payload
-    // refused. The only signed-fetch consumer is godot-explorer, and it does still sign that
-    // payload -- `format!("{}:{}:{}:{}", method, path, ts, meta).to_lowercase()` in
-    // lib/src/auth/wallet.rs. It stays compatible anyway because `async_signed_fetch` signs "{}"
-    // for a bodyless request and all three /deletion calls are bodyless: with no uppercase in the
-    // metadata the fold is a no-op, so the two payloads are byte-identical. Pinned by
+    // refused. Both signed-fetch consumers do still sign that payload -- godot-explorer
+    // (lib/src/auth/wallet.rs) for /deletion, and mobile-hub (src/utils/fetch.ts) for
+    // /backoffice/*. Neither breaks, because neither sends metadata containing uppercase:
+    // godot-explorer signs "{}" for a bodyless request and all its calls here are bodyless, and
+    // mobile-hub signs { origin: location.origin }, which the URL spec lowercases. With no
+    // uppercase the trailing fold is a no-op and the two payloads are byte-identical. Pinned by
     // canonical-signer.spec.ts, which fails if that stops being true.
     //
     // Adding the option back would be the fix if a caller ever signs metadata containing uppercase

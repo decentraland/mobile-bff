@@ -57,10 +57,11 @@ test('canonical signer', function ({ components }) {
     })
   })
 
-  // godot-explorer -- the only signed-fetch consumer -- still signs the pre-6.0.0 folded payload
-  // (`format!("{}:{}:{}:{}", ...).to_lowercase()` in lib/src/auth/wallet.rs). These two cases pin
-  // why that is compatible here and exactly where the compatibility stops, since this service
-  // deliberately does not set `canonicalMetadataKeys`.
+  // Both signed-fetch consumers still sign the pre-6.0.0 folded payload: godot-explorer
+  // (`format!("{}:{}:{}:{}", ...).to_lowercase()` in lib/src/auth/wallet.rs) and mobile-hub
+  // (`payloadParts.join(':').toLowerCase()` in src/utils/fetch.ts). These two cases pin why that
+  // is compatible here and exactly where the compatibility stops, since this service deliberately
+  // does not set `canonicalMetadataKeys`.
   describe('when the request is signed with the pre-6.0.0 folded payload', () => {
     describe('and the metadata is what the shipped client sends', () => {
       let headers: Record<string, string>
