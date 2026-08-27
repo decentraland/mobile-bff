@@ -84,6 +84,21 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
   const signedFetch = signedFetchMiddleware({
     fetcher: fetch as unknown as IFetchComponent,
     optional: true,
+    // 6.0.0 signs the metadata bytes verbatim; every previously shipped client folded the whole
+    // payload. Our callers are App Store / Play Store builds, which cannot be sequenced ahead of a
+    // deploy, so requests signed with the old format are still verified — after the current one is
+    // tried and fails, never instead of it.
+    //
+    // The option doubles as the switch and rejects an empty list, so a field has to be named. No
+    // handler in this service reads metadata at all: every one of them authorizes on
+    // `verification.auth`, the recovered address, and the backoffice routes additionally on
+    // ALLOWED_USERS. Nothing here can be influenced by metadata, whichever way it is spelled.
+    // `signer` is named because it is the ADR-44 field that carries authorization meaning by
+    // convention, so the guard is already in place if a handler ever starts reading it.
+    //
+    // Remove this once the old clients have aged out; it is the only thing keeping the legacy
+    // payload accepted.
+    canonicalMetadataKeys: ['signer'],
     onError: (err: any) => ({
       error: err.message,
       message: 'This endpoint requires a signed fetch request. See ADR-44.'

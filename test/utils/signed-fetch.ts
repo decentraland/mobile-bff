@@ -27,18 +27,13 @@ export async function getIdentity(): Promise<Identity> {
   return { authChain, realAccount, ephemeralIdentity }
 }
 
-export function getAuthHeaders(
-  method: string,
-  path: string,
-  metadata: Record<string, any>,
+function buildHeaders(
+  metadataJSON: string,
+  timestamp: number,
+  payloadToSign: string,
   chainProvider: (payload: string) => AuthChain
 ) {
   const headers: Record<string, string> = {}
-  const timestamp = Date.now()
-  const metadataJSON = JSON.stringify(metadata)
-  const payloadParts = [method.toLowerCase(), path.toLowerCase(), timestamp.toString(), metadataJSON]
-  const payloadToSign = payloadParts.join(':').toLowerCase()
-
   const chain = chainProvider(payloadToSign)
 
   chain.forEach((link, index) => {
@@ -49,4 +44,42 @@ export function getAuthHeaders(
   headers[AUTH_METADATA_HEADER] = metadataJSON
 
   return headers
+}
+
+/**
+ * Signs the current (>= 6.0.0) payload: method, path and timestamp lowercased, metadata joined
+ * verbatim. The metadata bytes are inside the signature, so its casing can no longer be changed
+ * in flight without invalidating the request.
+ */
+export function getAuthHeaders(
+  method: string,
+  path: string,
+  metadata: Record<string, any>,
+  chainProvider: (payload: string) => AuthChain
+) {
+  const timestamp = Date.now()
+  const metadataJSON = JSON.stringify(metadata)
+  const payloadToSign = [method.toLowerCase(), path.toLowerCase(), timestamp.toString(), metadataJSON].join(':')
+
+  return buildHeaders(metadataJSON, timestamp, payloadToSign, chainProvider)
+}
+
+/**
+ * Signs the pre-6.0.0 payload: the whole joined string folded, metadata included. This is what
+ * already-shipped mobile clients send, and what `canonicalMetadataKeys` keeps accepting.
+ *
+ * Only meaningfully different from {@link getAuthHeaders} when the metadata contains uppercase --
+ * otherwise the fold is a no-op and both produce identical bytes.
+ */
+export function getLegacyAuthHeaders(
+  method: string,
+  path: string,
+  metadata: Record<string, any>,
+  chainProvider: (payload: string) => AuthChain
+) {
+  const timestamp = Date.now()
+  const metadataJSON = JSON.stringify(metadata)
+  const payloadToSign = [method, path, timestamp.toString(), metadataJSON].join(':').toLowerCase()
+
+  return buildHeaders(metadataJSON, timestamp, payloadToSign, chainProvider)
 }
