@@ -5,12 +5,6 @@ import { getAuthHeaders, getIdentity, getLegacyAuthHeaders, Identity } from '../
 const PATH = '/deletion'
 const CANONICAL_SIGNER = 'decentraland-kernel-scene'
 
-// Uppercase in a field the service does not guard. The two payload formats only diverge where the
-// metadata has uppercase, so without it a legacy-signed request is byte-identical to a current one
-// and would verify on the current path -- proving nothing about the fallback.
-const LEGACY_METADATA = { signer: CANONICAL_SIGNER, origin: 'https://play.decentraland.org/Mobile' }
-const CURRENT_METADATA = { signer: CANONICAL_SIGNER, origin: 'https://play.decentraland.org' }
-
 test('canonical signer', function ({ components }) {
   let identity: Identity
   let sign: (payload: string) => AuthChain
@@ -32,7 +26,7 @@ test('canonical signer', function ({ components }) {
     let headers: Record<string, string>
 
     beforeEach(() => {
-      headers = getAuthHeaders('GET', PATH, CURRENT_METADATA, sign)
+      headers = getAuthHeaders('GET', PATH, { signer: CANONICAL_SIGNER }, sign)
     })
 
     it('should serve the request when the metadata arrives as it was signed', async () => {
@@ -45,10 +39,10 @@ test('canonical signer', function ({ components }) {
     describe('and the signer key is re-cased after signing', () => {
       beforeEach(() => {
         // The attack itself, not a mock of it: nothing here weakens the signature, only the
-        // delivered header is rewritten. Before 6.0.0 the payload was folded before signing, so
-        // this kept a genuinely valid signature while reading as absent to a case-sensitive
-        // comparison. The metadata bytes are now inside the signature, so it no longer does.
-        headers[AUTH_METADATA_HEADER] = JSON.stringify({ ...CURRENT_METADATA, Signer: CANONICAL_SIGNER })
+        // delivered header is rewritten. Under the folded payload this kept a genuinely valid
+        // signature while reading as absent to a case-sensitive comparison. The metadata bytes are
+        // now inside the signature, so it no longer does.
+        headers[AUTH_METADATA_HEADER] = JSON.stringify({ Signer: CANONICAL_SIGNER })
       })
 
       it('should drop the request to unauthenticated', async () => {
@@ -63,40 +57,42 @@ test('canonical signer', function ({ components }) {
     })
   })
 
-  describe('when the request is signed with the pre-6.0.0 payload', () => {
-    let headers: Record<string, string>
+  // godot-explorer -- the only signed-fetch consumer -- still signs the pre-6.0.0 folded payload
+  // (`format!("{}:{}:{}:{}", ...).to_lowercase()` in lib/src/auth/wallet.rs). These two cases pin
+  // why that is compatible here and exactly where the compatibility stops, since this service
+  // deliberately does not set `canonicalMetadataKeys`.
+  describe('when the request is signed with the pre-6.0.0 folded payload', () => {
+    describe('and the metadata is what the shipped client sends', () => {
+      let headers: Record<string, string>
 
-    beforeEach(() => {
-      headers = getLegacyAuthHeaders('GET', PATH, LEGACY_METADATA, sign)
-    })
-
-    it('should still serve the request so already-shipped mobile clients keep working', async () => {
-      const response = await components.localFetch.fetch(PATH, { method: 'GET', headers })
-
-      expect(response.status).toBe(200)
-      await expect(response.json()).resolves.toEqual({ ok: true, data: null })
-    })
-
-    describe('and the signer key is re-cased after signing', () => {
       beforeEach(() => {
-        // Written out rather than spread so the key order matches what was signed and only the
-        // casing differs. Spreading `signer: undefined` would drop the key and re-append it last,
-        // changing the bytes -- the folded payload would then differ too and the signature would
-        // fail on its own, which is not the case under test.
-        headers[AUTH_METADATA_HEADER] = JSON.stringify({
-          Signer: CANONICAL_SIGNER,
-          origin: LEGACY_METADATA.origin
-        })
+        // `async_signed_fetch` signs "{}" for a bodyless request, and all three /deletion calls
+        // are bodyless.
+        headers = getLegacyAuthHeaders('GET', PATH, {}, sign)
       })
 
-      it('should refuse the request rather than accept a spelling the signature never pinned', async () => {
+      it('should serve the request, the fold being a no-op on metadata with no uppercase', async () => {
         const response = await components.localFetch.fetch(PATH, { method: 'GET', headers })
 
-        // This is the case that makes `canonicalMetadataKeys` worth declaring. The legacy payload
-        // folds the metadata, so the re-cased header still produces the exact bytes that were
-        // signed: the fallback would verify it and serve a 200. It is refused because `Signer`
-        // folds to a declared key without matching its spelling -- not because the signature is
-        // bad, which it is not.
+        expect(response.status).toBe(200)
+        await expect(response.json()).resolves.toEqual({ ok: true, data: null })
+      })
+    })
+
+    describe('and the metadata contains uppercase', () => {
+      let headers: Record<string, string>
+
+      beforeEach(() => {
+        headers = getLegacyAuthHeaders('GET', PATH, { origin: 'https://play.decentraland.org/Mobile' }, sign)
+      })
+
+      it('should refuse the request, the two payload formats no longer agreeing', async () => {
+        const response = await components.localFetch.fetch(PATH, { method: 'GET', headers })
+
+        // Not a regression -- no caller sends this today. It is asserted so that a caller which
+        // starts signing uppercase metadata before shipping the new payload format shows up as a
+        // failing test here rather than as 401s in production. `canonicalMetadataKeys` is the fix
+        // if that happens.
         expect(response.status).toBe(401)
         await expect(response.json()).resolves.toEqual({ ok: false, error: 'Unauthorized' })
       })

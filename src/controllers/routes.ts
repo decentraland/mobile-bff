@@ -84,21 +84,16 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
   const signedFetch = signedFetchMiddleware({
     fetcher: fetch as unknown as IFetchComponent,
     optional: true,
-    // 6.0.0 signs the metadata bytes verbatim; every previously shipped client folded the whole
-    // payload. Our callers are App Store / Play Store builds, which cannot be sequenced ahead of a
-    // deploy, so requests signed with the old format are still verified — after the current one is
-    // tried and fails, never instead of it.
+    // `canonicalMetadataKeys` is deliberately absent, which keeps the pre-6.0.0 folded payload
+    // refused. The only signed-fetch consumer is godot-explorer, and it does still sign that
+    // payload -- `format!("{}:{}:{}:{}", method, path, ts, meta).to_lowercase()` in
+    // lib/src/auth/wallet.rs. It stays compatible anyway because `async_signed_fetch` signs "{}"
+    // for a bodyless request and all three /deletion calls are bodyless: with no uppercase in the
+    // metadata the fold is a no-op, so the two payloads are byte-identical. Pinned by
+    // canonical-signer.spec.ts, which fails if that stops being true.
     //
-    // The option doubles as the switch and rejects an empty list, so a field has to be named. No
-    // handler in this service reads metadata at all: every one of them authorizes on
-    // `verification.auth`, the recovered address, and the backoffice routes additionally on
-    // ALLOWED_USERS. Nothing here can be influenced by metadata, whichever way it is spelled.
-    // `signer` is named because it is the ADR-44 field that carries authorization meaning by
-    // convention, so the guard is already in place if a handler ever starts reading it.
-    //
-    // Remove this once the old clients have aged out; it is the only thing keeping the legacy
-    // payload accepted.
-    canonicalMetadataKeys: ['signer'],
+    // Adding the option back would be the fix if a caller ever signs metadata containing uppercase
+    // before it ships the new payload format.
     onError: (err: any) => ({
       error: err.message,
       message: 'This endpoint requires a signed fetch request. See ADR-44.'
