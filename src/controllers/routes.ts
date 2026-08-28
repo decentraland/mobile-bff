@@ -68,6 +68,9 @@ import { createCampaignHandler } from "./handlers/backoffice/campaigns/create-ca
 import { updateCampaignHandler } from "./handlers/backoffice/campaigns/update-campaign-handler"
 import { deleteCampaignHandler } from "./handlers/backoffice/campaigns/delete-campaign-handler"
 
+// Backoffice permission probe
+import { getBackofficeMeHandler } from "./handlers/backoffice/me-handler"
+
 // Wallets (Thirdweb thin proxy)
 // TODO: re-enable sign-message endpoint once the TTL and handshake flow are better defined.
 // import { signMessageHandler } from "./handlers/wallets/sign-message-handler"
@@ -185,6 +188,9 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
 
   // ============== BACKOFFICE ENDPOINTS ==============
   // require signed fetch + ALLOWED_USERS
+
+  // Permission probe used by mobile-hub to gate its UI before any write
+  router.get("/backoffice/me", signedFetch, getBackofficeMeHandler)
 
   // Places management
   router.get("/backoffice/places", signedFetch, getBackofficePlacesHandler)

@@ -41,6 +41,8 @@ tags:
     description: Runtime feature toggles consumed by the mobile clients (e.g. pulse, dual-channel)
   - name: Campaigns
     description: Ad/referrer campaign token to target scene mapping, resolved by the client on boot
+  - name: Backoffice
+    description: Admin-only operations, gated by signed fetch plus the ALLOWED_USERS allow list
 
 paths:
   /ping:
@@ -520,6 +522,46 @@ paths:
               example:
                 ok: false
                 error: Internal server error
+
+  /backoffice/me:
+    get:
+      tags:
+        - Backoffice
+      summary: Check backoffice permissions for the signer
+      description: |
+        Permission probe. Returns the signer's address and whether it is present in
+        `ALLOWED_USERS`. Clients use it to gate their UI up front instead of discovering
+        a 403 on the first write.
+
+        Deliberately answers `200` with `allowed: false` rather than `403`, so callers can
+        tell "not allowed" apart from "the request failed". Requires signed fetch (ADR-44).
+      operationId: getBackofficeMe
+      security:
+        - signedFetch: []
+      responses:
+        '200':
+          description: Permission resolved (check `data.allowed`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackofficeMeResponse'
+              examples:
+                allowed:
+                  summary: Signer is on the allow list
+                  value:
+                    ok: true
+                    data:
+                      address: '0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266'
+                      allowed: true
+                notAllowed:
+                  summary: Signer is authenticated but not on the allow list
+                  value:
+                    ok: true
+                    data:
+                      address: '0x1234567890123456789012345678901234567890'
+                      allowed: false
+        '401':
+          $ref: '#/components/responses/FeatureFlagUnauthorized'
 
   /backoffice/feature-flags:
     get:
@@ -1224,6 +1266,30 @@ components:
           nullable: true
           description: Wallet address of the last editor (null for untouched seeds)
           example: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+
+    BackofficeMeResponse:
+      type: object
+      required:
+        - ok
+        - data
+      properties:
+        ok:
+          type: boolean
+          example: true
+        data:
+          type: object
+          required:
+            - address
+            - allowed
+          properties:
+            address:
+              type: string
+              description: The signer address recovered from the auth chain
+              example: '0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266'
+            allowed:
+              type: boolean
+              description: Whether the address is present in ALLOWED_USERS
+              example: true
 
     FeatureFlagsDetailedResponse:
       type: object

@@ -56,6 +56,7 @@ The `/places` endpoint provides unified access to scene groups, worlds, and parc
 
 Backoffice endpoints require signed fetch + wallet address in `ALLOWED_USERS` env var:
 
+- `GET /backoffice/me` - Permission probe: `{ address, allowed }`. Returns 200 with `allowed: false` (not 403) so clients can distinguish denial from failure
 - `GET/POST/PUT/DELETE /backoffice/scene-groups` - Manage scene groups
 - `GET/POST/DELETE /backoffice/bans` - Manage bans (groups, scenes, worlds)
 - `GET/POST/DELETE /backoffice/tags` - Manage tags
