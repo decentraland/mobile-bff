@@ -23,6 +23,16 @@ Places allow organizing scenes and worlds into named collections for the mobile 
 
 These endpoints require signed requests and the wallet address must be in the `ALLOWED_USERS` environment variable.
 
+##### Permissions
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/backoffice/me` | Returns `{ "address": "0x…", "allowed": true }` for the signer |
+
+Permission probe for admin UIs: it lets a client gate its whole interface up front instead of
+discovering a `403` on the first write. It answers `200` with `allowed: false` rather than `403`,
+so callers can tell "not allowed" apart from "the request failed". Unsigned requests get `401`.
+
 ##### Place Groups
 
 | Method | Path | Description |
