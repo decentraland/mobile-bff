@@ -1,7 +1,7 @@
 import { Router } from "@well-known-components/http-server"
 import type { IHttpServerComponent } from "@well-known-components/interfaces"
 import type { IFetchComponent } from "@dcl/core-commons"
-import { wellKnownComponents as signedFetchMiddleware } from '@dcl/crypto-middleware'
+import { rejectIfSigner, wellKnownComponents as signedFetchMiddleware } from '@dcl/crypto-middleware'
 import { GlobalContext } from "../types"
 import { pingHandler } from "./handlers/ping-handler"
 import { requestDeletionHandler } from "./handlers/request-deletion-handler"
@@ -107,6 +107,15 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
     //
     // Adding the option back would be the fix if a caller ever signs metadata containing uppercase
     // before it ships the new payload format.
+
+    // Scenes sign with the *player's* identity, so a scene-originated request is genuinely
+    // authentic and `verification.auth` is the visiting user. `signer` is the only thing marking it
+    // as scene-issued, and nothing here read it. None of these endpoints are for scenes: /deletion
+    // acts on the caller's own account, /backoffice/* is moderation gated on ALLOWED_USERS.
+    //
+    // Inert for real callers -- an absent `signer` passes and neither consumer sends one. Runs
+    // before signature verification, so it applies to any payload format.
+    metadataValidator: rejectIfSigner('decentraland-kernel-scene'),
     onError: (err: any) => ({
       error: err.message,
       message: 'This endpoint requires a signed fetch request. See ADR-44.'
