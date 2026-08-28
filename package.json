@@ -26,8 +26,9 @@
     "tabWidth": 2
   },
   "dependencies": {
-    "@dcl/crypto": "^3.4.5",
-    "@dcl/platform-crypto-middleware": "^1.1.0",
+    "@dcl/core-commons": "^0.10.1",
+    "@dcl/crypto": "^3.7.0",
+    "@dcl/crypto-middleware": "^6.3.0",
     "@dcl/schemas": "^19.4.0",
     "@well-known-components/env-config-provider": "^1.2.0",
     "@well-known-components/fetch-component": "^3.0.0",

@@ -1,5 +1,7 @@
 import { Router } from "@well-known-components/http-server"
-import { wellKnownComponents as signedFetchMiddleware } from '@dcl/platform-crypto-middleware'
+import type { IHttpServerComponent } from "@well-known-components/interfaces"
+import type { IFetchComponent } from "@dcl/core-commons"
+import { wellKnownComponents as signedFetchMiddleware } from '@dcl/crypto-middleware'
 import { GlobalContext } from "../types"
 import { pingHandler } from "./handlers/ping-handler"
 import { requestDeletionHandler } from "./handlers/request-deletion-handler"
@@ -81,14 +83,37 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
 
   const { fetch } = globalContext.components
 
+  // @dcl/crypto-middleware is typed against @dcl/core-commons, which models fetch with Node's
+  // global (undici) types, while this repo's well-known-components packages model it with
+  // node-fetch's. They are structurally different types for the same runtime objects, so
+  // neither the fetch component going in nor the handler coming out is assignable. Both casts
+  // are confined here rather than repeated at the 27 router call sites below.
+  //
+  // TODO: both casts go away once the well-known-components packages move onto global-fetch
+  // typings. Until then they keep compiling if either interface changes shape, and the outbound
+  // one also erases the `verification` the middleware adds -- handlers declare it themselves and
+  // every one answers 401 when it is missing, so an unmounted route fails closed rather than open.
   const signedFetch = signedFetchMiddleware({
-    fetcher: fetch,
+    fetcher: fetch as unknown as IFetchComponent,
     optional: true,
+    // `canonicalMetadataKeys` is deliberately absent, which keeps the pre-6.0.0 folded payload
+    // refused. Both signed-fetch consumers do still sign that payload -- godot-explorer
+    // (lib/src/auth/wallet.rs) for /deletion, and mobile-hub (src/utils/fetch.ts) for
+    // /backoffice/*. Neither breaks, because neither sends metadata containing uppercase:
+    // godot-explorer signs "{}" for a bodyless request and all its calls here are bodyless, and
+    // mobile-hub signs { origin: location.origin }, which the URL spec lowercases. With no
+    // uppercase the trailing fold is a no-op and the two payloads are byte-identical. Pinned by
+    // canonical-signer.spec.ts, which fails if that stops being true.
+    //
+    // Adding the option back would be the fix if a caller ever signs metadata containing uppercase
+    // before it ships the new payload format.
     onError: (err: any) => ({
       error: err.message,
       message: 'This endpoint requires a signed fetch request. See ADR-44.'
     })
-  })
+  }) as unknown as IHttpServerComponent.IRequestHandler<
+    IHttpServerComponent.PathAwareContext<GlobalContext, string>
+  >
 
   router.get("/ping", pingHandler)
 

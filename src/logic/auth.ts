@@ -1,5 +1,4 @@
-import { AuthChain, AuthLink } from '@dcl/crypto'
-import { AUTH_CHAIN_HEADER_PREFIX } from '@dcl/platform-crypto-middleware'
+import { AUTH_CHAIN_HEADER_PREFIX, AuthChain, AuthLink } from '@dcl/crypto'
 
 export function extractAuthChain(headers: Record<string, string>): AuthChain {
   const authChain: AuthLink[] = []
