@@ -52,6 +52,22 @@ The `/places` endpoint provides unified access to scene groups, worlds, and parc
 - `GET /places?tag=tag1,tag2` - Get groups matching ALL tags (AND logic, comma-separated)
 - `GET /places?parcel=x,y` - Get scene/group info with ban status
 
+#### App Versions (Public)
+
+The force-update gate godot-explorer reads on boot. One row per **track**:
+
+- `GET /app-versions` - the `legacy` track, the only one clients up to 1.13.1 can call
+- `GET /app-versions/:track` - e.g. `/app-versions/v2`, what fixed clients read
+- `GET/PUT /backoffice/app-versions` - list every track / write one (defaults to `legacy`)
+
+**Never raise `legacy.minimalRequiredVersionNumber` above `LEGACY_MINIMAL_VERSION_CAP`**
+(`src/logic/app-version-tracks.ts`). Every build from 1.12.0 up to and including 1.13.1
+draws the update overlay beneath the startup splash and never dismisses it, so a hard gate
+leaves them on an unrecoverable spinner. The fix ships as another 1.13.1 build, so the
+version number cannot separate broken from fixed — only the track can. The handler
+enforces the cap; soft gates (`recommendedVersionNumber`) still work on those builds and
+stay unrestricted.
+
 #### Content Moderation (Backoffice)
 
 Backoffice endpoints require signed fetch + wallet address in `ALLOWED_USERS` env var:

@@ -2,6 +2,7 @@ import { DecentralandSignatureContext } from '@dcl/crypto-middleware'
 import { HandlerContextWithPath } from '../../../../types'
 import { isAllowedUser } from '../../../../logic/allowed-users'
 import { AppVersions, PlatformVersions } from '../../../../adapters/app-versions-db'
+import { LEGACY_TRACK, isValidTrackName, validateTrackMinimal } from '../../../../logic/app-version-tracks'
 
 type PlatformBody = {
   minimalRequiredVersionNumber?: unknown
@@ -9,6 +10,7 @@ type PlatformBody = {
 }
 
 type UpdateBody = {
+  track?: unknown
   ios?: PlatformBody
   android?: PlatformBody
 }
@@ -59,6 +61,13 @@ export async function updateAppVersionsHandler(
   try {
     const body = await request.json() as UpdateBody
 
+    // Defaults to the legacy track so the endpoint keeps meaning exactly what it meant
+    // before tracks existed. Targeting another track is always explicit.
+    const track = body.track === undefined ? LEGACY_TRACK : body.track
+    if (typeof track !== 'string' || !isValidTrackName(track)) {
+      return { status: 400, body: { ok: false, error: "'track' must be a kebab-case string" } }
+    }
+
     const ios = parsePlatform(body.ios, 'ios')
     if (typeof ios === 'string') {
       return { status: 400, body: { ok: false, error: ios } }
@@ -68,12 +77,22 @@ export async function updateAppVersionsHandler(
       return { status: 400, body: { ok: false, error: android } }
     }
 
+    for (const [platform, versions] of [['ios', ios], ['android', android]] as const) {
+      const capError = validateTrackMinimal(track, versions.minimalRequiredVersionNumber, platform)
+      if (capError) {
+        return { status: 400, body: { ok: false, error: capError } }
+      }
+    }
+
     const update: AppVersions = { ios, android }
-    const data = await appVersionsDb.update(update, userAddress)
+    const data = await appVersionsDb.update(track, update, userAddress)
+    if (!data) {
+      return { status: 404, body: { ok: false, error: `Unknown track '${track}'` } }
+    }
 
-    logger.info('App versions updated', { updatedBy: userAddress })
+    logger.info('App versions updated', { track, updatedBy: userAddress })
 
-    return { status: 200, body: { ok: true, data } }
+    return { status: 200, body: { ok: true, data: { track, ...data } } }
   } catch (error) {
     logger.error('Error updating app versions', {
       error: (error as Error).message,
