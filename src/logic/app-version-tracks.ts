@@ -6,13 +6,16 @@ export const TRACK_NAME_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/
 // how to call. Its thresholds are effectively frozen — see LEGACY_MINIMAL_VERSION_CAP.
 export const LEGACY_TRACK = 'legacy'
 
-// The track fixed clients (1.13.2+) read.
+// The track clients carrying the overlay fix read. They ask for it by URL, which is the
+// only thing that distinguishes them: the fix ships as another 1.13.1 build, so their
+// version number is identical to a broken one's.
 export const CURRENT_TRACK = 'v2'
 
 // godot-explorer 1.12.0 (101200) through 1.13.1 (101301) put the force-update overlay on a
 // CanvasLayer below the startup splash (layer 100) and return from lobby._ready() before
 // anything dismisses that splash. A hard gate on those builds is not a dialog — it is an
-// unrecoverable startup spinner.
+// unrecoverable startup spinner. The fixed build is also 1.13.1, so this range cannot be
+// narrowed by version number; the fixed ones simply never read this track.
 //
 // Keeping the legacy minimum at or below the oldest broken build guarantees every one of
 // them passes the gate (the client compares `current < minimal`). Soft gates are unaffected

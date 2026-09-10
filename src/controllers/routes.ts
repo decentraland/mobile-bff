@@ -149,7 +149,7 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
   router.get("/bans", getBansHandler)
 
   // App Versions (mobile clients use this to enforce minimum/recommended app versions).
-  // The bare route is pinned to the frozen legacy track; 1.13.2+ clients ask for a track.
+  // The bare route is pinned to the frozen legacy track; fixed clients ask for a track.
   router.get("/app-versions", getAppVersionsHandler)
   router.get("/app-versions/:track", getAppVersionsByTrackHandler)
 

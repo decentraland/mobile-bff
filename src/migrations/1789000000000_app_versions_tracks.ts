@@ -4,12 +4,15 @@ export const shorthands: ColumnDefinitions | undefined = undefined
 
 // Turns the app_versions singleton into one row per *track*.
 //
-// Why: godot-explorer 1.12.0 through 1.13.1 render the force-update overlay on a
-// CanvasLayer *below* the startup splash and never dismiss the splash, so a client in
-// that range that receives a hard gate hangs on the startup spinner with no way out.
-// The thresholds those clients read can therefore never be raised again — they are
-// frozen for the lifetime of those installs. Fixed clients (1.13.2+) read a different
-// track, whose numbers stay free to move.
+// Why: every godot-explorer build shipped from 1.12.0 up to and including 1.13.1
+// renders the force-update overlay on a CanvasLayer *below* the startup splash and never
+// dismisses the splash, so one of those clients receiving a hard gate hangs on the
+// startup spinner with no way out. The thresholds they read can therefore never be
+// raised again — they are frozen for the lifetime of those installs.
+//
+// The fix ships as a later 1.13.1 build, so the marketing version cannot tell a broken
+// client from a fixed one. The track is what separates them: only builds carrying the
+// fix ask for one, and its numbers stay free to move.
 //
 // The legacy row keeps serving GET /app-versions unchanged; the new `v2` row is served
 // at GET /app-versions/v2 and is seeded as a copy of legacy, so behaviour is identical
