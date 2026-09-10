@@ -51,8 +51,9 @@ import { updatePlaceGroupHandler } from "./handlers/backoffice/place-groups/upda
 import { deletePlaceGroupHandler } from "./handlers/backoffice/place-groups/delete-place-group-handler"
 
 // App Versions handlers
-import { getAppVersionsHandler } from "./handlers/app-versions/get-app-versions-handler"
+import { getAppVersionsHandler, getAppVersionsByTrackHandler } from "./handlers/app-versions/get-app-versions-handler"
 import { updateAppVersionsHandler } from "./handlers/backoffice/app-versions/update-app-versions-handler"
+import { getBackofficeAppVersionsHandler } from "./handlers/backoffice/app-versions/get-app-versions-handler"
 
 // Feature Flags handlers
 import { getFeatureFlagsHandler } from "./handlers/feature-flags/get-feature-flags-handler"
@@ -147,8 +148,10 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
   router.get("/tags", getAllTagsHandler)
   router.get("/bans", getBansHandler)
 
-  // App Versions (mobile clients use this to enforce minimum/recommended app versions)
+  // App Versions (mobile clients use this to enforce minimum/recommended app versions).
+  // The bare route is pinned to the frozen legacy track; 1.13.2+ clients ask for a track.
   router.get("/app-versions", getAppVersionsHandler)
+  router.get("/app-versions/:track", getAppVersionsByTrackHandler)
 
   // Feature Flags (runtime toggles consumed by the mobile clients, e.g. pulse / dual-channel)
   router.get("/feature-flags", getFeatureFlagsHandler)
@@ -210,6 +213,7 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
   router.delete("/backoffice/tags/:id", signedFetch, deleteTagHandler)
 
   // App Versions management
+  router.get("/backoffice/app-versions", signedFetch, getBackofficeAppVersionsHandler)
   router.put("/backoffice/app-versions", signedFetch, updateAppVersionsHandler)
 
   // Feature Flags management

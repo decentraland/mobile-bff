@@ -11,9 +11,18 @@ export type AppVersions = {
   android: PlatformVersions
 }
 
+export type AppVersionsTrack = AppVersions & {
+  track: string
+  updatedAt: string
+  updatedBy: string | null
+}
+
 export type IAppVersionsDbComponent = {
-  get(): Promise<AppVersions>
-  update(values: AppVersions, updatedBy: string): Promise<AppVersions>
+  // Returns null when the track does not exist.
+  get(track: string): Promise<AppVersions | null>
+  getAll(): Promise<AppVersionsTrack[]>
+  // Returns null when the track does not exist.
+  update(track: string, values: AppVersions, updatedBy: string): Promise<AppVersions | null>
 }
 
 type AppVersionsRow = {
@@ -21,6 +30,12 @@ type AppVersionsRow = {
   ios_recommended_version: number
   android_minimal_required_version: number
   android_recommended_version: number
+}
+
+type AppVersionsTrackRow = AppVersionsRow & {
+  track: string
+  updated_at: Date
+  updated_by: string | null
 }
 
 export async function createAppVersionsDbComponent({ pg }: Pick<AppComponents, 'pg'>): Promise<IAppVersionsDbComponent> {
@@ -38,7 +53,7 @@ export async function createAppVersionsDbComponent({ pg }: Pick<AppComponents, '
     }
   }
 
-  async function get(): Promise<AppVersions> {
+  async function get(track: string): Promise<AppVersions | null> {
     const query = SQL`
       SELECT
         ios_minimal_required_version,
@@ -46,16 +61,38 @@ export async function createAppVersionsDbComponent({ pg }: Pick<AppComponents, '
         android_minimal_required_version,
         android_recommended_version
       FROM app_versions
-      WHERE id = 1
+      WHERE track = ${track}
     `
     const result = await pg.query<AppVersionsRow>(query)
     if (result.rows.length === 0) {
-      throw new Error('app_versions singleton row not found — DB seed missing or row was deleted')
+      return null
     }
     return toAppVersions(result.rows[0])
   }
 
-  async function update(values: AppVersions, updatedBy: string): Promise<AppVersions> {
+  async function getAll(): Promise<AppVersionsTrack[]> {
+    const query = SQL`
+      SELECT
+        track,
+        ios_minimal_required_version,
+        ios_recommended_version,
+        android_minimal_required_version,
+        android_recommended_version,
+        updated_at,
+        updated_by
+      FROM app_versions
+      ORDER BY track ASC
+    `
+    const result = await pg.query<AppVersionsTrackRow>(query)
+    return result.rows.map((row) => ({
+      track: row.track,
+      ...toAppVersions(row),
+      updatedAt: new Date(row.updated_at).toISOString(),
+      updatedBy: row.updated_by
+    }))
+  }
+
+  async function update(track: string, values: AppVersions, updatedBy: string): Promise<AppVersions | null> {
     const query = SQL`
       UPDATE app_versions
       SET
@@ -65,7 +102,7 @@ export async function createAppVersionsDbComponent({ pg }: Pick<AppComponents, '
         android_recommended_version = ${values.android.recommendedVersionNumber},
         updated_at = NOW(),
         updated_by = ${updatedBy}
-      WHERE id = 1
+      WHERE track = ${track}
       RETURNING
         ios_minimal_required_version,
         ios_recommended_version,
@@ -74,10 +111,10 @@ export async function createAppVersionsDbComponent({ pg }: Pick<AppComponents, '
     `
     const result = await pg.query<AppVersionsRow>(query)
     if (result.rows.length === 0) {
-      throw new Error('app_versions singleton row not found — DB seed missing or row was deleted')
+      return null
     }
     return toAppVersions(result.rows[0])
   }
 
-  return { get, update }
+  return { get, getAll, update }
 }
