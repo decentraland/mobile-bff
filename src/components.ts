@@ -22,6 +22,7 @@ import { createDestinationsApiComponent } from './adapters/destinations-api'
 import { createAppVersionsDbComponent } from './adapters/app-versions-db'
 import { createFeatureFlagsDbComponent } from './adapters/feature-flags-db'
 import { createCampaignsDbComponent } from './adapters/campaigns-db'
+import { createPushDbComponent } from './adapters/push-db'
 import { createAppAttestComponent } from './adapters/app-attest'
 import { createPlayIntegrityComponent } from './adapters/play-integrity'
 import { createAttestationVerifierComponent } from './adapters/attestation-verifier'
@@ -67,6 +68,7 @@ export async function initComponents(): Promise<AppComponents> {
   const appVersionsDb = await createAppVersionsDbComponent({ pg })
   const featureFlagsDb = await createFeatureFlagsDbComponent({ pg })
   const campaignsDb = await createCampaignsDbComponent({ pg })
+  const pushDb = await createPushDbComponent({ pg })
   const appAttest = await createAppAttestComponent({ config })
   const playIntegrity = await createPlayIntegrityComponent({ config })
   const attestationVerifier = await createAttestationVerifierComponent({
@@ -102,6 +104,7 @@ export async function initComponents(): Promise<AppComponents> {
     appVersionsDb,
     featureFlagsDb,
     campaignsDb,
+    pushDb,
     appAttest,
     playIntegrity,
     attestationVerifier,

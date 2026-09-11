@@ -80,6 +80,11 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
     user_id: { type: 'text', notNull: true },
     token: { type: 'text', notNull: true },
     state: { type: 'text', notNull: true, default: 'pending' },
+    // When the row was handed to a sender. A claim has to be visible in the row itself,
+    // not just as a row lock: the lock dies with the claiming transaction, and the send
+    // happens after that transaction commits. Doubles as the lease — a row left in
+    // `sending` by a crashed replica is reclaimed once it goes stale.
+    claimed_at: { type: 'timestamptz', notNull: false },
     provider_msg_id: { type: 'text', notNull: false },
     error_code: { type: 'text', notNull: false },
     attempts: { type: 'smallint', notNull: true, default: 0 },
@@ -91,7 +96,7 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
   })
 
   pgm.addConstraint('push_deliveries', 'push_deliveries_state_check', {
-    check: "state IN ('pending', 'sent', 'failed', 'skipped_dead_token', 'cancelled')"
+    check: "state IN ('pending', 'sending', 'sent', 'failed', 'skipped_dead_token', 'cancelled')"
   })
 
   // The dispatcher's claim query filters on exactly this pair.
