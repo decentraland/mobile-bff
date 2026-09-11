@@ -22,6 +22,7 @@ import { IFeatureFlagsDbComponent } from './adapters/feature-flags-db'
 import { ICampaignsDbComponent } from './adapters/campaigns-db'
 import { IPushDbComponent } from './adapters/push-db'
 import { IFcmComponent } from './adapters/fcm'
+import { IPushDispatcherComponent } from './adapters/push-dispatcher'
 import { IAppAttestComponent } from './adapters/app-attest'
 import { IPlayIntegrityComponent } from './adapters/play-integrity'
 import { IAttestationVerifierComponent } from './adapters/attestation-verifier'
@@ -56,6 +57,7 @@ export type BaseComponents = {
   campaignsDb: ICampaignsDbComponent
   pushDb: IPushDbComponent
   fcm: IFcmComponent
+  pushDispatcher: IPushDispatcherComponent
   appAttest: IAppAttestComponent
   playIntegrity: IPlayIntegrityComponent
   attestationVerifier: IAttestationVerifierComponent

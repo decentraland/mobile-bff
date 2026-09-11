@@ -10,7 +10,7 @@ export type PushCampaignStatus =
   | 'cancelled'
   | 'failed'
 
-export type PushDeliveryState = 'pending' | 'sending' | 'sent' | 'failed' | 'skipped_dead_token' | 'cancelled'
+export type PushDeliveryState = 'pending' | 'sending' | 'sent' | 'failed' | 'cancelled'
 
 export type PushCampaign = {
   id: string
@@ -77,6 +77,8 @@ export type ClaimedDelivery = {
   imageUrl: string | null
   category: string
   ttlSeconds: number
+  /** Attempts already spent, so the sender can stop retrying a delivery that never lands. */
+  attempts: number
 }
 
 export type DeliveryOutcome = {
@@ -93,7 +95,6 @@ export type CampaignStats = {
   failed: number
   pending: number
   cancelled: number
-  skippedDeadToken: number
   /** Handed to a sender and not yet resolved. */
   inFlight: number
   /** Failure counts keyed by the provider error code. */
@@ -318,6 +319,7 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
       image_url: string | null
       category: string
       ttl_seconds: number
+      attempts: number
     }>(SQL`
       WITH claimed AS (
         SELECT d.campaign_id, d.user_id
@@ -334,14 +336,14 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
         SET state = 'sending', claimed_at = now()
         FROM claimed
         WHERE d.campaign_id = claimed.campaign_id AND d.user_id = claimed.user_id
-        RETURNING d.campaign_id, d.user_id, d.token
+        RETURNING d.campaign_id, d.user_id, d.token, d.attempts
       ), started AS (
         UPDATE push_campaigns c
         SET status = 'sending', started_at = COALESCE(c.started_at, now())
         WHERE c.id IN (SELECT campaign_id FROM taken) AND c.status = 'scheduled'
         RETURNING c.id
       )
-      SELECT t.campaign_id, t.user_id, t.token,
+      SELECT t.campaign_id, t.user_id, t.token, t.attempts,
              c.campaign_key, c.title, c.body, c.deep_link, c.image_url, c.category, c.ttl_seconds
       FROM taken t
       JOIN push_campaigns c ON c.id = t.campaign_id
@@ -357,7 +359,8 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
       deepLink: row.deep_link,
       imageUrl: row.image_url,
       category: row.category,
-      ttlSeconds: row.ttl_seconds
+      ttlSeconds: row.ttl_seconds,
+      attempts: row.attempts
     }))
   }
 
@@ -388,7 +391,10 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
         await client.query(
           `UPDATE push_deliveries
            SET state = $3, provider_msg_id = $4, error_code = $5,
-               attempts = attempts + 1, sent_at = now(), claimed_at = NULL
+               attempts = attempts + 1, claimed_at = NULL,
+               -- Only a real send stamps sent_at. A retry goes back to pending, and a
+               -- timestamp there would claim it went out when it did not.
+               sent_at = CASE WHEN $3 = 'sent' THEN now() ELSE sent_at END
            WHERE campaign_id = $1 AND user_id = $2`,
           [
             outcome.campaignId,
@@ -446,7 +452,6 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
       failed: 0,
       pending: 0,
       cancelled: 0,
-      skippedDeadToken: 0,
       inFlight: 0,
       errors: {}
     }
@@ -456,7 +461,6 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
       if (row.state === 'sent') stats.sent += count
       else if (row.state === 'pending') stats.pending += count
       else if (row.state === 'cancelled') stats.cancelled += count
-      else if (row.state === 'skipped_dead_token') stats.skippedDeadToken += count
       else if (row.state === 'sending') stats.inFlight += count
       else if (row.state === 'failed') {
         stats.failed += count

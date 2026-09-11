@@ -36,10 +36,12 @@ export type PushMessage = {
   ttlSeconds: number
 }
 
+// Discriminated by a string rather than a boolean `ok`: the test tsconfig does not enable
+// strict mode, and without strictNullChecks a boolean-literal discriminant does not narrow,
+// so every consumer would need a cast to read the failure fields.
 export type SendResult =
-  | { ok: true; providerMsgId: string }
-  /** `retryable` false means the token will never work again. */
-  | { ok: false; errorCode: string; retryable: boolean; tokenIsDead: boolean }
+  | { status: 'sent'; providerMsgId: string }
+  | { status: 'error'; errorCode: string; retryable: boolean; tokenIsDead: boolean }
 
 export type IFcmComponent = {
   send(message: PushMessage): Promise<SendResult>
@@ -122,9 +124,9 @@ export async function createFcmComponent({
       if (!providerMsgId) {
         // A 200 with no name should not happen; treat it as retryable rather than
         // recording a send we cannot point at anything.
-        return { ok: false, errorCode: 'NO_MESSAGE_NAME', retryable: true, tokenIsDead: false }
+        return { status: 'error', errorCode: 'NO_MESSAGE_NAME', retryable: true, tokenIsDead: false }
       }
-      return { ok: true, providerMsgId }
+      return { status: 'sent', providerMsgId }
     } catch (error: any) {
       const classified = classifyError(error)
       logger.debug('FCM send failed', {
@@ -133,7 +135,7 @@ export async function createFcmComponent({
         errorCode: classified.errorCode,
         retryable: String(classified.retryable)
       })
-      return { ok: false, ...classified }
+      return { status: 'error', ...classified }
     }
   }
 

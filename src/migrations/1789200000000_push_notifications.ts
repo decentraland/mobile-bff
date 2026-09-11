@@ -96,7 +96,7 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
   })
 
   pgm.addConstraint('push_deliveries', 'push_deliveries_state_check', {
-    check: "state IN ('pending', 'sending', 'sent', 'failed', 'skipped_dead_token', 'cancelled')"
+    check: "state IN ('pending', 'sending', 'sent', 'failed', 'cancelled')"
   })
 
   // The dispatcher's claim query filters on exactly this pair.

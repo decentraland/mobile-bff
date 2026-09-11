@@ -1,13 +1,29 @@
 import { createDotEnvConfigComponent } from '@well-known-components/env-config-provider'
 import { createLogComponent } from '@well-known-components/logger'
 import { createMetricsComponent } from '@well-known-components/metrics'
-import { createPgComponent, IPgComponent } from '@well-known-components/pg-component'
+import { IPgComponent } from '@well-known-components/pg-component'
 import { metricDeclarations } from '../../src/metrics'
+import { startPgWithMigrations } from '../utils/pg'
 import { createPushDbComponent, IPushDbComponent } from '../../src/adapters/push-db'
+import { IFcmComponent, PushMessage, SendResult } from '../../src/adapters/fcm'
+import { createPushDispatcherComponent, withAttribution } from '../../src/adapters/push-dispatcher'
 
 // These tests require a real PostgreSQL database and are designed to run in CI
 // Skip locally if PostgreSQL is not available
 const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'true'
+
+describe('push attribution links', () => {
+  // The client reads these back as `Push Opened`; getting the separator wrong silently
+  // produces a link that routes but cannot be attributed.
+  it('appends tracking params whether or not the link already has a query', () => {
+    expect(withAttribution('decentraland://open?position=0,0', 'spring', 'push_1')).toBe(
+      'decentraland://open?position=0,0&push_campaign_id=spring&push_id=push_1&source=push'
+    )
+    expect(withAttribution('decentraland://open', 'spring', 'push_1')).toBe(
+      'decentraland://open?push_campaign_id=spring&push_id=push_1&source=push'
+    )
+  })
+})
 
 ;(runDbTests ? describe : describe.skip)('push-db integration tests', () => {
   const CREATOR = '0x1111111111111111111111111111111111111111'
@@ -15,6 +31,23 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
 
   let pg: IPgComponent
   let pushDb: IPushDbComponent
+  let sent: PushMessage[]
+  let respond: (message: PushMessage) => SendResult
+
+  // Stands in for FCM so the dispatcher's decisions are observable without a network.
+  const fcm: IFcmComponent = {
+    async send(message: PushMessage): Promise<SendResult> {
+      sent.push(message)
+      return respond(message)
+    }
+  }
+
+  async function makeDispatcher() {
+    const config = await createDotEnvConfigComponent({ path: ['.env.default', '.env'] })
+    const metrics = await createMetricsComponent(metricDeclarations, { config })
+    const logs = await createLogComponent({ metrics })
+    return createPushDispatcherComponent({ config, logs, pushDb, fcm })
+  }
 
   beforeAll(async () => {
     // Force test database to avoid messing with local dev data
@@ -24,20 +57,7 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
     const metrics = await createMetricsComponent(metricDeclarations, { config })
     const logs = await createLogComponent({ metrics })
 
-    pg = await createPgComponent(
-      { logs, config, metrics },
-      {
-        migration: {
-          databaseUrl: await getDbConnectionString(config),
-          dir: __dirname + '/../../dist/migrations',
-          migrationsTable: 'pgmigrations',
-          ignorePattern: '.*\\.map',
-          direction: 'up'
-        }
-      }
-    )
-
-    await pg.start()
+    pg = await startPgWithMigrations({ logs, config, metrics })
     pushDb = await createPushDbComponent({ pg })
   })
 
@@ -51,20 +71,10 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
     // push_deliveries goes with the campaigns via ON DELETE CASCADE.
     await pg.query('DELETE FROM push_campaigns')
     await pg.query('DELETE FROM push_dead_tokens')
+    sent = []
+    respond = () => ({ status: 'sent', providerMsgId: 'projects/test/messages/1' })
   })
 
-  async function getDbConnectionString(config: any): Promise<string> {
-    let databaseUrl: string | undefined = await config.getString('PG_COMPONENT_PSQL_CONNECTION_STRING')
-    if (!databaseUrl) {
-      const dbUser = await config.requireString('PG_COMPONENT_PSQL_USER')
-      const dbDatabaseName = await config.requireString('PG_COMPONENT_PSQL_DATABASE')
-      const dbPort = await config.requireString('PG_COMPONENT_PSQL_PORT')
-      const dbHost = await config.requireString('PG_COMPONENT_PSQL_HOST')
-      const dbPassword = await config.requireString('PG_COMPONENT_PSQL_PASSWORD')
-      databaseUrl = `postgres://${dbUser}:${dbPassword}@${dbHost}:${dbPort}/${dbDatabaseName}`
-    }
-    return databaseUrl
-  }
 
   function newCampaign(key: string) {
     return {
@@ -206,7 +216,100 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
     expect(cancelled?.cancelledDeliveries).toBe(1)
 
     const stats = await pushDb.getStats(campaign.id)
-    expect(stats).toMatchObject({ sent: 1, cancelled: 1, pending: 0 })
+    expect(stats).toMatchObject({ sent: 1, cancelled: 1, pending: 0, inFlight: 0 })
     expect(await pushDb.claimDeliveries(10)).toHaveLength(0)
+  })
+
+  async function approvedCampaign(key: string, audience: { userId: string; token: string }[]) {
+    const campaign = await pushDb.createCampaign({
+      campaignKey: key,
+      title: 'Title',
+      body: 'Body',
+      deepLink: 'decentraland://open?position=0,0',
+      imageUrl: null,
+      ttlSeconds: 86400,
+      scheduledAt: null,
+      createdBy: CREATOR
+    })
+    await pushDb.replaceAudience(campaign.id, audience)
+    await pushDb.setStatus(campaign.id, ['draft'], 'pending_approval')
+    await pushDb.approveCampaign(campaign.id, APPROVER)
+    return campaign
+  }
+
+  it('sends an approved campaign and closes it out', async () => {
+    const campaign = await approvedCampaign('happy-path', [
+      { userId: 'user-a', token: 'token-a' },
+      { userId: 'user-b', token: 'token-b' }
+    ])
+    const dispatcher = await makeDispatcher()
+
+    const result = await dispatcher.tick()
+
+    expect(result).toMatchObject({ claimed: 2, sent: 2, failed: 0, retrying: 0, finishedCampaigns: 1 })
+    expect((await pushDb.getCampaign(campaign.id))?.status).toBe('sent')
+
+    // Each delivery carries its own push_id, and the deep link is attributed.
+    expect(new Set(sent.map((m) => m.pushId)).size).toBe(2)
+    expect(sent[0].deepLink).toContain('push_campaign_id=happy-path')
+    expect(sent[0].deepLink).toContain(`push_id=${sent[0].pushId}`)
+    expect(sent[0].ttlSeconds).toBe(86400)
+  })
+
+  it('retries a transient failure and gives up on a permanent one', async () => {
+    const campaign = await approvedCampaign('mixed-fates', [
+      { userId: 'flaky', token: 'token-flaky' },
+      { userId: 'gone', token: 'token-gone' }
+    ])
+    const dispatcher = await makeDispatcher()
+
+    respond = (message) =>
+      message.token === 'token-gone'
+        ? { status: 'error', errorCode: 'UNREGISTERED', retryable: false, tokenIsDead: true }
+        : { status: 'error', errorCode: 'UNAVAILABLE', retryable: true, tokenIsDead: false }
+
+    const first = await dispatcher.tick()
+    expect(first).toMatchObject({ claimed: 2, sent: 0, failed: 1, retrying: 1 })
+    // The campaign is not finished while something is still queued for another attempt.
+    expect(first.finishedCampaigns).toBe(0)
+    expect((await pushDb.getCampaign(campaign.id))?.status).toBe('sending')
+
+    // The uninstalled device is struck off so the next audience never pays for it again.
+    const dead = await pg.query<{ token: string }>('SELECT token FROM push_dead_tokens')
+    expect(dead.rows.map((r) => r.token)).toEqual(['token-gone'])
+
+    // Second pass: the retryable one is claimable again, and now it works.
+    respond = () => ({ status: 'sent', providerMsgId: 'projects/test/messages/2' })
+    const second = await dispatcher.tick()
+    expect(second).toMatchObject({ claimed: 1, sent: 1, finishedCampaigns: 1 })
+    expect(sent.map((m) => m.token)).toEqual(['token-flaky', 'token-gone', 'token-flaky'])
+
+    const stats = await pushDb.getStats(campaign.id)
+    expect(stats).toMatchObject({ sent: 1, failed: 1, pending: 0, inFlight: 0 })
+  })
+
+  it('stops retrying a delivery that never lands', async () => {
+    const campaign = await approvedCampaign('doomed', [{ userId: 'user-a', token: 'token-a' }])
+    const dispatcher = await makeDispatcher()
+    respond = () => ({ status: 'error', errorCode: 'UNAVAILABLE', retryable: true, tokenIsDead: false })
+
+    // MAX_ATTEMPTS is 3: two retries, then it is written off rather than circulating forever.
+    await dispatcher.tick()
+    await dispatcher.tick()
+    const third = await dispatcher.tick()
+
+    expect(sent).toHaveLength(3)
+    expect(third).toMatchObject({ failed: 1, retrying: 0, finishedCampaigns: 1 })
+    expect(await pushDb.claimDeliveries(10)).toHaveLength(0)
+    expect((await pushDb.getStats(campaign.id)).errors).toEqual({ UNAVAILABLE: 1 })
+  })
+
+  it('sends nothing for a cancelled campaign', async () => {
+    const campaign = await approvedCampaign('cancelled', [{ userId: 'user-a', token: 'token-a' }])
+    await pushDb.cancelCampaign(campaign.id)
+    const dispatcher = await makeDispatcher()
+
+    expect(await dispatcher.tick()).toMatchObject({ claimed: 0, sent: 0 })
+    expect(sent).toHaveLength(0)
   })
 })
