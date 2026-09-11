@@ -21,6 +21,7 @@ import { IAppVersionsDbComponent } from './adapters/app-versions-db'
 import { IFeatureFlagsDbComponent } from './adapters/feature-flags-db'
 import { ICampaignsDbComponent } from './adapters/campaigns-db'
 import { IPushDbComponent } from './adapters/push-db'
+import { IFcmComponent } from './adapters/fcm'
 import { IAppAttestComponent } from './adapters/app-attest'
 import { IPlayIntegrityComponent } from './adapters/play-integrity'
 import { IAttestationVerifierComponent } from './adapters/attestation-verifier'
@@ -54,6 +55,7 @@ export type BaseComponents = {
   featureFlagsDb: IFeatureFlagsDbComponent
   campaignsDb: ICampaignsDbComponent
   pushDb: IPushDbComponent
+  fcm: IFcmComponent
   appAttest: IAppAttestComponent
   playIntegrity: IPlayIntegrityComponent
   attestationVerifier: IAttestationVerifierComponent

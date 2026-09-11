@@ -42,6 +42,19 @@ async function initComponents(): Promise<TestComponents> {
       'utf8'
     ).toString('base64')
 
+  // FCM service account: same story as PLAY_INTEGRITY_SA_JSON above -- createFcmComponent
+  // decodes and parses it at construction, and the integration tests never send a push.
+  process.env.FCM_SA_JSON =
+    process.env.FCM_SA_JSON ||
+    Buffer.from(
+      JSON.stringify({
+        client_email: 'integration-test@example.com',
+        private_key: 'integration-test-key',
+        project_id: 'integration-test-project'
+      }),
+      'utf8'
+    ).toString('base64')
+
   const components = await originalInitComponents()
 
   return {
