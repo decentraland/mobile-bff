@@ -231,10 +231,16 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
   async function approveCampaign(id: string, approvedBy: string): Promise<PushCampaign | null> {
     // created_by <> approved_by is also a table constraint; keeping it in the WHERE means a
     // self-approval comes back as "not approvable" instead of a 500 from the check violation.
+    //
+    // audience_count > 0 because a campaign with nothing queued can never leave `scheduled`:
+    // reaching `sending` requires claiming a row, and finishDrainedCampaigns only closes
+    // campaigns already `sending`. Submit checks this too, but the audience can be replaced
+    // with an all-suppressed one while the campaign sits in `pending_approval`.
     const query = SQL`
       UPDATE push_campaigns
       SET status = 'scheduled', approved_by = ${approvedBy}, approved_at = now()
       WHERE id = ${id} AND status = 'pending_approval' AND created_by <> ${approvedBy}
+        AND audience_count > 0
       RETURNING `.append(CAMPAIGN_COLUMNS)
     const result = await pg.query<CampaignRow>(query)
     return result.rows.length > 0 ? toCampaign(result.rows[0]) : null
@@ -368,11 +374,17 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
   // Past the lease they go back to the queue, but only while there are attempts left:
   // a delivery that keeps killing whatever picks it up is marked failed instead of
   // circulating forever.
+  //
+  // The expiry itself counts as an attempt. Only a *completed* send used to bump `attempts`,
+  // so a row that died before recordOutcomes ran — the exact case this function exists for —
+  // came back with its budget untouched and could cycle pending->sending->pending forever.
+  // Every SET here reads the pre-UPDATE `attempts`, hence the explicit +1 in both branches.
   async function reclaimStaleDeliveries(leaseSeconds: number, maxAttempts: number): Promise<number> {
     const result = await pg.query(SQL`
       UPDATE push_deliveries
-      SET state = CASE WHEN attempts >= ${maxAttempts} THEN 'failed' ELSE 'pending' END,
-          error_code = CASE WHEN attempts >= ${maxAttempts} THEN 'LEASE_EXPIRED' ELSE error_code END,
+      SET attempts = attempts + 1,
+          state = CASE WHEN attempts + 1 >= ${maxAttempts} THEN 'failed' ELSE 'pending' END,
+          error_code = CASE WHEN attempts + 1 >= ${maxAttempts} THEN 'LEASE_EXPIRED' ELSE error_code END,
           claimed_at = NULL
       WHERE state = 'sending'
         AND claimed_at < now() - (${leaseSeconds} * INTERVAL '1 second')

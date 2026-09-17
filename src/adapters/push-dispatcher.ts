@@ -199,6 +199,14 @@ export async function createPushDispatcherComponent({
     if (timer) {
       return
     }
+    // A non-positive interval disables the loop. The integration tests set it that way: every
+    // suite boots the real app against one shared database, so a live claimer firing mid-test
+    // would move rows out from under a suite's own assertions and read as a product bug. The
+    // suites that do exercise dispatching drive tick() directly.
+    if (intervalMs <= 0) {
+      logger.info('Push dispatcher timer disabled', { intervalMs })
+      return
+    }
     logger.info('Starting push dispatcher', {
       intervalMs,
       batchSize,

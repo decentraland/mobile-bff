@@ -193,11 +193,36 @@ describe('push attribution links', () => {
     expect(await pushDb.reclaimStaleDeliveries(0, 3)).toBe(1)
     expect(await pushDb.claimDeliveries(10)).toHaveLength(1)
 
-    // Past the attempt budget it stops circulating and is called failed.
-    await pg.query("UPDATE push_deliveries SET attempts = 3 WHERE campaign_id = '" + campaign.id + "'")
+    // The expiry spends an attempt of its own, so a replica that keeps dying before it records
+    // anything still runs out of budget. Nothing below sets `attempts` by hand: doing that was
+    // what hid the row cycling pending->sending->pending forever, since only a completed send
+    // used to count.
     expect(await pushDb.reclaimStaleDeliveries(0, 3)).toBe(1)
+    expect(await pushDb.claimDeliveries(10)).toHaveLength(1)
+    expect(await pushDb.reclaimStaleDeliveries(0, 3)).toBe(1)
+
+    // Budget spent: written off instead of circulating, and nobody can claim it again.
+    expect(await pushDb.claimDeliveries(10)).toHaveLength(0)
     const stats = await pushDb.getStats(campaign.id)
     expect(stats).toMatchObject({ failed: 1, pending: 0, inFlight: 0, errors: { LEASE_EXPIRED: 1 } })
+  })
+
+  it('refuses to approve a campaign whose audience has gone entirely dead', async () => {
+    // Approval needs a queue: reaching `sending` requires claiming a row, and
+    // finishDrainedCampaigns only closes campaigns already `sending`. Approved with nothing
+    // queued, a campaign sits in `scheduled` for good — never sent, only cancellable by hand.
+    const campaign = await pushDb.createCampaign(newCampaign('all-tokens-dead'))
+    await pushDb.replaceAudience(campaign.id, [{ userId: 'user-a', token: 'token-a' }])
+    await pushDb.setStatus(campaign.id, ['draft'], 'pending_approval')
+
+    // The window submit's own check cannot cover: the audience may be replaced while the
+    // campaign waits for an approver, and suppression is applied at upload time.
+    await pushDb.markTokensDead([{ token: 'token-a', errorCode: 'UNREGISTERED' }])
+    const report = await pushDb.replaceAudience(campaign.id, [{ userId: 'user-a', token: 'token-a' }])
+    expect(report).toMatchObject({ valid: 0, suppressed: 1 })
+
+    expect(await pushDb.approveCampaign(campaign.id, APPROVER)).toBeNull()
+    expect((await pushDb.getCampaign(campaign.id))?.status).toBe('pending_approval')
   })
 
   it('cancels what is still queued and leaves what already went out alone', async () => {

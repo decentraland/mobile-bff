@@ -31,7 +31,7 @@ export async function approvePushCampaignHandler(
       return { status: 200, body: { ok: true, data: approved } }
     }
 
-    // approveCampaign refuses on three different grounds; a bare "cannot approve" would
+    // approveCampaign refuses on four different grounds; a bare "cannot approve" would
     // leave the operator guessing which one, and the self-approval case in particular
     // needs to read as a rule and not a bug.
     const campaign = await pushDb.getCampaign(params.id)
@@ -42,6 +42,15 @@ export async function approvePushCampaignHandler(
       return {
         status: 403,
         body: { ok: false, error: 'A campaign must be approved by someone other than its creator' }
+      }
+    }
+    // Ahead of the generic status message, which would otherwise report a campaign that IS
+    // pending approval as not being pending approval. Approving this would strand it in
+    // `scheduled` with an empty queue: it can never reach `sending`, so it can never finish.
+    if (campaign.audienceCount === 0) {
+      return {
+        status: 409,
+        body: { ok: false, error: 'Upload an audience before approving; this campaign reaches nobody' }
       }
     }
     return {

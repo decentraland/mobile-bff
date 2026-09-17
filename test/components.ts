@@ -23,6 +23,10 @@ export const test = createRunner<TestComponents>({
 async function initComponents(): Promise<TestComponents> {
   // Use test database
   process.env.PG_COMPONENT_PSQL_DATABASE = 'mobile_test'
+  // No background dispatching during tests. startComponents() starts the real dispatcher,
+  // and its 5s timer would claim deliveries from whichever suite happens to have rows in
+  // flight. push-db.spec drives tick() by hand instead.
+  process.env.PUSH_DISPATCH_INTERVAL_MS = '0'
   // One port per Jest worker. Every integration suite boots a real HTTP server, and they all
   // read the same HTTP_SERVER_PORT, so two suites landing in different workers at the same
   // moment race for the socket and the loser dies with EADDRINUSE. It stayed hidden while
