@@ -23,6 +23,11 @@ export const test = createRunner<TestComponents>({
 async function initComponents(): Promise<TestComponents> {
   // Use test database
   process.env.PG_COMPONENT_PSQL_DATABASE = 'mobile_test'
+  // One port per Jest worker. Every integration suite boots a real HTTP server, and they all
+  // read the same HTTP_SERVER_PORT, so two suites landing in different workers at the same
+  // moment race for the socket and the loser dies with EADDRINUSE. It stayed hidden while
+  // there were few enough suites for Jest to keep them from overlapping.
+  process.env.HTTP_SERVER_PORT = String(9100 + Number(process.env.JEST_WORKER_ID ?? 1))
   // Attestation session secret: production deploys must set their own, but
   // the integration test runner needs *some* value that passes the 32-char
   // length check at startup. This deterministic test value is fine because
