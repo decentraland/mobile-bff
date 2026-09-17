@@ -68,6 +68,15 @@ import { getBackofficeCampaignsHandler } from "./handlers/backoffice/campaigns/g
 import { createCampaignHandler } from "./handlers/backoffice/campaigns/create-campaign-handler"
 import { updateCampaignHandler } from "./handlers/backoffice/campaigns/update-campaign-handler"
 import { deleteCampaignHandler } from "./handlers/backoffice/campaigns/delete-campaign-handler"
+import { getPushCampaignsHandler } from "./handlers/backoffice/push/get-push-campaigns-handler"
+import { createPushCampaignHandler } from "./handlers/backoffice/push/create-push-campaign-handler"
+import { updatePushCampaignHandler } from "./handlers/backoffice/push/update-push-campaign-handler"
+import { uploadPushAudienceHandler } from "./handlers/backoffice/push/upload-audience-handler"
+import { testSendPushCampaignHandler } from "./handlers/backoffice/push/test-send-handler"
+import { submitPushCampaignHandler } from "./handlers/backoffice/push/submit-push-campaign-handler"
+import { approvePushCampaignHandler } from "./handlers/backoffice/push/approve-push-campaign-handler"
+import { cancelPushCampaignHandler } from "./handlers/backoffice/push/cancel-push-campaign-handler"
+import { getPushStatsHandler } from "./handlers/backoffice/push/get-push-stats-handler"
 
 // Wallets (Thirdweb thin proxy)
 // TODO: re-enable sign-message endpoint once the TTL and handshake flow are better defined.
@@ -227,6 +236,21 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
   router.post("/backoffice/campaigns", signedFetch, createCampaignHandler)
   router.put("/backoffice/campaigns/:token", signedFetch, updateCampaignHandler)
   router.delete("/backoffice/campaigns/:token", signedFetch, deleteCampaignHandler)
+
+  // Push notifications (godot-explorer#2585). Content is editable only while a campaign is a
+  // draft, and approval has to come from someone other than the creator, so the ordering of
+  // these routes mirrors the state machine: create -> audience -> submit -> approve.
+  router.get("/backoffice/push/campaigns", signedFetch, getPushCampaignsHandler)
+  router.post("/backoffice/push/campaigns", signedFetch, createPushCampaignHandler)
+  router.put("/backoffice/push/campaigns/:id", signedFetch, updatePushCampaignHandler)
+  router.post("/backoffice/push/campaigns/:id/audience", signedFetch, uploadPushAudienceHandler)
+  // No approval required: asking two people to sign off on a preview means nobody previews.
+  router.post("/backoffice/push/campaigns/:id/test", signedFetch, testSendPushCampaignHandler)
+  router.post("/backoffice/push/campaigns/:id/submit", signedFetch, submitPushCampaignHandler)
+  router.post("/backoffice/push/campaigns/:id/approve", signedFetch, approvePushCampaignHandler)
+  // Kill switch: stops whatever is still queued. What already went out cannot be recalled.
+  router.post("/backoffice/push/campaigns/:id/cancel", signedFetch, cancelPushCampaignHandler)
+  router.get("/backoffice/push/campaigns/:id/stats", signedFetch, getPushStatsHandler)
 
   return router
 }

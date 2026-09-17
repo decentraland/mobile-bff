@@ -23,6 +23,15 @@ export const test = createRunner<TestComponents>({
 async function initComponents(): Promise<TestComponents> {
   // Use test database
   process.env.PG_COMPONENT_PSQL_DATABASE = 'mobile_test'
+  // No background dispatching during tests. startComponents() starts the real dispatcher,
+  // and its 5s timer would claim deliveries from whichever suite happens to have rows in
+  // flight. push-db.spec drives tick() by hand instead.
+  process.env.PUSH_DISPATCH_INTERVAL_MS = '0'
+  // One port per Jest worker. Every integration suite boots a real HTTP server, and they all
+  // read the same HTTP_SERVER_PORT, so two suites landing in different workers at the same
+  // moment race for the socket and the loser dies with EADDRINUSE. It stayed hidden while
+  // there were few enough suites for Jest to keep them from overlapping.
+  process.env.HTTP_SERVER_PORT = String(9100 + Number(process.env.JEST_WORKER_ID ?? 1))
   // Attestation session secret: production deploys must set their own, but
   // the integration test runner needs *some* value that passes the 32-char
   // length check at startup. This deterministic test value is fine because
@@ -39,6 +48,19 @@ async function initComponents(): Promise<TestComponents> {
     process.env.PLAY_INTEGRITY_SA_JSON ||
     Buffer.from(
       JSON.stringify({ client_email: 'integration-test@example.com', private_key: 'integration-test-key' }),
+      'utf8'
+    ).toString('base64')
+
+  // FCM service account: same story as PLAY_INTEGRITY_SA_JSON above -- createFcmComponent
+  // decodes and parses it at construction, and the integration tests never send a push.
+  process.env.FCM_SA_JSON =
+    process.env.FCM_SA_JSON ||
+    Buffer.from(
+      JSON.stringify({
+        client_email: 'integration-test@example.com',
+        private_key: 'integration-test-key',
+        project_id: 'integration-test-project'
+      }),
       'utf8'
     ).toString('base64')
 

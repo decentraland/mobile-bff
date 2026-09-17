@@ -41,6 +41,11 @@ tags:
     description: Runtime feature toggles consumed by the mobile clients (e.g. pulse, dual-channel)
   - name: Campaigns
     description: Ad/referrer campaign token to target scene mapping, resolved by the client on boot
+  - name: Push
+    description: |
+      Server-sent push notifications for the mobile explorer. Backoffice only; there is no
+      client-facing endpoint. Devices are registered through Segment identify traits, and the
+      audience is resolved in the warehouse and uploaded per campaign as a CSV.
 
 paths:
   /ping:
@@ -904,6 +909,302 @@ paths:
         '500':
           $ref: '#/components/responses/CampaignServerError'
 
+
+  /backoffice/push/campaigns:
+    get:
+      tags:
+        - Push
+      summary: List push campaigns (backoffice)
+      description: |
+        Every push campaign, newest first. Requires signed fetch (ADR-44) and the signer
+        address in `ALLOWED_USERS`.
+      operationId: getPushCampaigns
+      security:
+        - signedFetch: []
+      responses:
+        '200':
+          description: Campaigns retrieved successfully
+        '401':
+          description: Missing or invalid signed fetch
+        '403':
+          description: Signer is not in ALLOWED_USERS
+
+    post:
+      tags:
+        - Push
+      summary: Create a push campaign (backoffice)
+      description: |
+        Creates a campaign in `draft`. `campaignKey` is kebab-case and travels in the deep
+        link as `push_campaign_id`, which is also how the client's `Push Opened` Segment
+        event joins back to it.
+
+        `deepLink` must use the `decentraland://` scheme and must NOT carry
+        `push_campaign_id`, `push_id`, `source` or `c`. The first three are appended at send
+        time, because `push_id` identifies a single delivery and only exists once the
+        recipient is known. `c` is the ad campaign token, which the client captures as the
+        install's attribution — a push carrying one would overwrite where a user came from.
+
+        `ttlSeconds` defaults to 24h and is capped at four weeks, which is where FCM silently
+        stops retaining. Copy longer than the tray shows is accepted and reported in
+        `warnings`: it still delivers.
+      operationId: createPushCampaign
+      security:
+        - signedFetch: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [campaignKey, title, body, deepLink]
+              properties:
+                campaignKey:
+                  type: string
+                  example: spring-event
+                title:
+                  type: string
+                body:
+                  type: string
+                deepLink:
+                  type: string
+                  example: decentraland://open?position=0,0
+                imageUrl:
+                  type: string
+                  nullable: true
+                ttlSeconds:
+                  type: integer
+                  default: 86400
+                scheduledAt:
+                  type: string
+                  format: date-time
+                  nullable: true
+                  description: When to send. Null means as soon as it is approved.
+      responses:
+        '201':
+          description: Campaign created
+        '400':
+          description: Invalid campaign key or content
+        '409':
+          description: A campaign with that key already exists
+
+  /backoffice/push/campaigns/{id}:
+    put:
+      tags:
+        - Push
+      summary: Edit a draft campaign (backoffice)
+      description: |
+        Only a `draft` can be edited. Past submission an approver is vouching for specific
+        words, and letting the creator rewrite them afterwards would make the two-man rule
+        decorative.
+      operationId: updatePushCampaign
+      security:
+        - signedFetch: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Campaign updated
+        '404':
+          description: Campaign not found
+        '409':
+          description: Campaign is no longer a draft
+
+  /backoffice/push/campaigns/{id}/audience:
+    post:
+      tags:
+        - Push
+      summary: Upload the audience (backoffice)
+      description: |
+        Replaces the campaign's audience with a `user_id,fcm_token` CSV exported from the
+        warehouse. An optional header row is skipped.
+
+        Uploading means "this is the list", not "add these". Rows are de-duplicated by
+        `user_id` (the last one wins), tokens already known to be dead are subtracted, and
+        every unreadable row is returned with its line number rather than dropped — sending
+        to fewer people than intended is otherwise indistinguishable from success.
+
+        Only allowed before approval: changing who receives a campaign afterwards would make
+        the approval mean something other than what was approved.
+      operationId: uploadPushAudience
+      security:
+        - signedFetch: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          text/csv:
+            schema:
+              type: string
+              example: |
+                user_id,fcm_token
+                8f2c...,fMEP9...
+      responses:
+        '200':
+          description: Audience replaced, with a report of what was accepted
+        '409':
+          description: Campaign is already approved or sending
+        '413':
+          description: File too large
+
+  /backoffice/push/campaigns/{id}/test:
+    post:
+      tags:
+        - Push
+      summary: Send a test push (backoffice)
+      description: |
+        Sends the campaign to a handful of devices without approving it, and without touching
+        `push_deliveries` — a test cannot move the campaign's counters or be mistaken for part
+        of the real send.
+
+        Deliberately needs no approval: requiring two people to sign off on a preview would
+        mean nobody previews. Recipients come from `tokens` when given, otherwise from the
+        `PUSH_TEST_TOKENS` env var.
+      operationId: testSendPushCampaign
+      security:
+        - signedFetch: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tokens:
+                  type: array
+                  maxItems: 5
+                  items:
+                    type: string
+      responses:
+        '200':
+          description: Per-recipient send results
+        '409':
+          description: No recipients configured
+
+  /backoffice/push/campaigns/{id}/submit:
+    post:
+      tags:
+        - Push
+      summary: Submit for approval (backoffice)
+      description: |
+        Moves a `draft` to `pending_approval`. Refused while the audience is empty: an
+        approver would otherwise be asked to sign off on a campaign that reaches nobody.
+      operationId: submitPushCampaign
+      security:
+        - signedFetch: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Campaign submitted
+        '409':
+          description: Campaign is not a draft, or has no audience
+
+  /backoffice/push/campaigns/{id}/approve:
+    post:
+      tags:
+        - Push
+      summary: Approve a campaign (backoffice)
+      description: |
+        Moves `pending_approval` to `scheduled`, at which point the dispatcher starts sending
+        (or waits for `scheduledAt`).
+
+        The approver must be someone other than the creator. That is enforced here, in the
+        query, and as a table constraint, so it holds even if a future endpoint forgets.
+      operationId: approvePushCampaign
+      security:
+        - signedFetch: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Campaign approved and scheduled
+        '403':
+          description: Signer is the creator, or is not in ALLOWED_USERS
+        '409':
+          description: Campaign is not pending approval
+
+  /backoffice/push/campaigns/{id}/cancel:
+    post:
+      tags:
+        - Push
+      summary: Cancel a campaign (backoffice)
+      description: |
+        The kill switch. Cancels the campaign and everything still queued; the response says
+        how many deliveries were stopped.
+
+        Notifications already sent are left alone, because they are gone — reporting them as
+        cancelled would make the stats disagree with the devices.
+      operationId: cancelPushCampaign
+      security:
+        - signedFetch: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Campaign cancelled
+        '409':
+          description: Campaign is already finished or cancelled
+
+  /backoffice/push/campaigns/{id}/stats:
+    get:
+      tags:
+        - Push
+      summary: Campaign send log (backoffice)
+      description: |
+        What the send log knows: attempted, sent, failed (broken down by provider error code),
+        still pending, in flight, cancelled.
+
+        Opens and CTR are not here. They come from the client's `Push Opened` Segment event
+        and are read in Metabase — a device handed a notification that never showed it counts
+        as sent, and there is no way to tell from this side.
+      operationId: getPushCampaignStats
+      security:
+        - signedFetch: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Campaign with its send-log stats
+        '404':
+          description: Campaign not found
 
 components:
   securitySchemes:
