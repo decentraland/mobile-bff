@@ -50,6 +50,45 @@ export function validateCampaignKey(key: unknown): string | null {
  * question, answered by the backoffice against /places while the PM is still typing —
  * refusing it here would block a campaign for a world that is about to be deployed.
  */
+/**
+ * Where a campaign is allowed to send someone.
+ *
+ * An allow-list rather than a block-list because the client parses around twenty deep-link
+ * params and keeps gaining them: `dclenv` switches environment and signs the user out,
+ * `saved-profile` and `fake-owned-wearables` rewrite who they are, `preview` and
+ * `scene-inspector` point the app at developer infrastructure.
+ *
+ * Reaching any of those used to require getting somebody to tap a link you handed them. A
+ * campaign is a server-side write that lands on every device in its audience at once, so what
+ * a campaign link may say is narrowed to the shapes that mean "go here". Widening this is a
+ * deliberate decision, which is the point of it being a list.
+ */
+const ALLOWED_DEEP_LINK_ROUTES: Record<string, string[]> = {
+  open: ['position', 'location', 'realm'],
+  events: ['id'],
+  places: ['id']
+}
+
+export function deepLinkRouteError(deepLink: string): string | null {
+  let url: URL
+  try {
+    url = new URL(deepLink)
+  } catch {
+    return "'deepLink' is not a valid URL"
+  }
+
+  const allowed = ALLOWED_DEEP_LINK_ROUTES[url.host]
+  if (!allowed) {
+    return `'deepLink' must address one of: ${Object.keys(ALLOWED_DEEP_LINK_ROUTES).join(', ')}`
+  }
+  for (const param of url.searchParams.keys()) {
+    if (!allowed.includes(param)) {
+      return `'deepLink' may not carry '${param}'; '${url.host}' accepts: ${allowed.join(', ')}`
+    }
+  }
+  return null
+}
+
 export function validateCampaignContent(body: any): { error: string } | { content: CampaignContent } {
   if (typeof body?.title !== 'string' || body.title.trim().length === 0) {
     return { error: "'title' is required and must be a non-empty string" }
@@ -79,6 +118,12 @@ export function validateCampaignContent(body: any): { error: string } | { conten
   // attribution. A push travelling with one would overwrite where a user came from.
   if (/[?&]c=/.test(deepLink)) {
     return { error: "'deepLink' must not set 'c'; that param belongs to install attribution" }
+  }
+  // Checked after the two above so their more specific messages win: both name params that the
+  // allow-list would reject anyway, but "belongs to install attribution" tells the operator why.
+  const routeError = deepLinkRouteError(deepLink)
+  if (routeError) {
+    return { error: routeError }
   }
 
   const imageUrl = body?.imageUrl ?? null

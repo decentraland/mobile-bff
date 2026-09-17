@@ -83,4 +83,33 @@ describe('validateCampaignContent', () => {
       expect(validateCampaignContent({ ...valid, deepLink })).toHaveProperty('error')
     }
   })
+
+  it('only lets a campaign link say "go here"', () => {
+    // A campaign is the one place a deep link reaches every device without anyone tapping
+    // anything, so the accepted surface is an allow-list. `dclenv` is the sharp one: the
+    // client applies it and signs the user out, so a single approved campaign carrying it
+    // would log out its whole audience.
+    for (const deepLink of [
+      'decentraland://open?dclenv=zone',
+      'decentraland://open?fake-owned-wearables=urn:x',
+      'decentraland://open?saved-profile=1',
+      'decentraland://open?preview=http://192.168.0.2:8000',
+      'decentraland://open?scene-inspector=1',
+      'decentraland://open?position=0,0&rust-log=debug',
+      'decentraland://settings'
+    ]) {
+      expect(validateCampaignContent({ ...valid, deepLink })).toHaveProperty('error')
+    }
+
+    // The destinations that remain: a parcel, a realm, an event, a place, or just the app.
+    for (const deepLink of [
+      'decentraland://open',
+      'decentraland://open?position=0,0',
+      'decentraland://open?realm=my-world.dcl.eth',
+      'decentraland://events?id=3f8c',
+      'decentraland://places?id=9b21'
+    ]) {
+      expect(validateCampaignContent({ ...valid, deepLink })).toHaveProperty('content')
+    }
+  })
 })

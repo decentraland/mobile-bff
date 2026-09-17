@@ -334,6 +334,12 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
         WHERE c.status IN ('scheduled', 'sending')
           AND (c.scheduled_at IS NULL OR c.scheduled_at <= now())
           AND d.state = 'pending'
+        -- Ordered by campaign_id, which is UUID order: arbitrary between campaigns but exactly
+        -- what push_deliveries_campaign_id_state_index provides, so the batch comes out of the
+        -- index with no sort. Ordering by due time instead was measured at 24ms against 0.17ms
+        -- on 100k pending rows (seq scan + 6MB external merge sort) because the ordering column
+        -- lives on the other table. Fairness between concurrent campaigns needs the campaign
+        -- chosen in a separate round trip, not a different ORDER BY.
         ORDER BY d.campaign_id
         LIMIT ${limit}
         FOR UPDATE OF d SKIP LOCKED
