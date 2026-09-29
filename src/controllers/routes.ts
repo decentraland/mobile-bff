@@ -62,6 +62,13 @@ import { createFeatureFlagHandler } from "./handlers/backoffice/feature-flags/cr
 import { updateFeatureFlagHandler } from "./handlers/backoffice/feature-flags/update-feature-flag-handler"
 import { deleteFeatureFlagHandler } from "./handlers/backoffice/feature-flags/delete-feature-flag-handler"
 
+// Device Support handlers (per-SoC support decision: exclude / below-minspec / keep)
+import { getDeviceSupportHandler } from "./handlers/device-support/get-device-support-handler"
+import { getBackofficeDeviceSupportHandler } from "./handlers/backoffice/device-support/get-device-support-handler"
+import { upsertDeviceSupportHandler } from "./handlers/backoffice/device-support/upsert-device-support-handler"
+import { bulkUpsertDeviceSupportHandler } from "./handlers/backoffice/device-support/bulk-upsert-device-support-handler"
+import { deleteDeviceSupportHandler } from "./handlers/backoffice/device-support/delete-device-support-handler"
+
 // Campaign handlers (ad campaign token -> target scene mapping)
 import { getCampaignsHandler } from "./handlers/campaigns/get-campaigns-handler"
 import { getBackofficeCampaignsHandler } from "./handlers/backoffice/campaigns/get-campaigns-handler"
@@ -165,6 +172,10 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
   // Feature Flags (runtime toggles consumed by the mobile clients, e.g. pulse / dual-channel)
   router.get("/feature-flags", getFeatureFlagsHandler)
 
+  // Device Support (godot-explorer's device-support-modals): client sends the one SoC it
+  // detected, server answers exclude/below-minspec/keep for that device — no list download.
+  router.get("/device-support", getDeviceSupportHandler)
+
   // Campaigns (ad/referrer token -> target scene; resolved by the client on boot)
   router.get("/campaigns", getCampaignsHandler)
 
@@ -230,6 +241,12 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
   router.post("/backoffice/feature-flags", signedFetch, createFeatureFlagHandler)
   router.put("/backoffice/feature-flags/:name", signedFetch, updateFeatureFlagHandler)
   router.delete("/backoffice/feature-flags/:name", signedFetch, deleteFeatureFlagHandler)
+
+  // Device Support management (per-SoC exclude/below-minspec decisions)
+  router.get("/backoffice/device-support", signedFetch, getBackofficeDeviceSupportHandler)
+  router.put("/backoffice/device-support", signedFetch, bulkUpsertDeviceSupportHandler)
+  router.put("/backoffice/device-support/:soc", signedFetch, upsertDeviceSupportHandler)
+  router.delete("/backoffice/device-support/:soc", signedFetch, deleteDeviceSupportHandler)
 
   // Campaigns management
   router.get("/backoffice/campaigns", signedFetch, getBackofficeCampaignsHandler)
