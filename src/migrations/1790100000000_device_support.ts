@@ -14,6 +14,24 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
     check: "decision IN ('exclude', 'below-minspec')"
   })
 
+  // Lookups/deletes are whitespace-insensitive (18 of the 320 seed rows have an internal space,
+  // e.g. "EXYNOS 7420" -- see the adapter). Without a matching unique constraint, upsert/
+  // bulkUpsert's ON CONFLICT could only target the exact-spelling PK, so a write for "EXYNOS7420"
+  // while "EXYNOS 7420" already exists would silently create a second row for the same chip
+  // instead of updating it -- then a lookup matching both non-deterministically returns whichever
+  // Postgres happens to scan first. soc_key is a real stored column (not just an expression
+  // index) specifically so ON CONFLICT can target a plain column name -- Postgres's grammar for
+  // conflict targets on a bare expression needs an extra, easy-to-get-wrong parenthesization
+  // that isn't worth the risk here. Once upsert/bulkUpsert target soc_key's unique index, two rows
+  // representing the same chip becomes a real uniqueness violation instead of a silent duplicate.
+  pgm.sql(`
+    ALTER TABLE device_soc_support
+      ADD COLUMN soc_key text GENERATED ALWAYS AS (REPLACE(soc_model, ' ', '')) STORED
+  `)
+  pgm.sql(`
+    CREATE UNIQUE INDEX device_soc_support_soc_key_idx ON device_soc_support (soc_key)
+  `)
+
   // Real decision list from the PM's "Android - Per Chipset Exclusion List" spreadsheet
   // (its "List - Per Chipset" tab, Decision column), as of 2026-09-28. A SoC absent from
   // this table is implicitly 'keep' -- only the non-default decisions are stored.

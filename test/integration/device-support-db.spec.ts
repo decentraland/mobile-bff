@@ -114,6 +114,21 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
       expect(updated.decision).toBe('below-minspec')
       expect(await deviceSupportDb.getDecision('test-soc-2')).toBe('below-minspec')
     })
+
+    it('should update the existing row -- not create a second one -- when the same chip is upserted with different spacing', async () => {
+      await deviceSupportDb.upsert('test soc spaced', 'exclude', TEST_ADDRESS)
+      const second = await deviceSupportDb.upsert('testsocspaced', 'below-minspec', TEST_ADDRESS)
+
+      // The conflict updated the one existing row (soc_model now reflects the new spelling)
+      // instead of inserting a second row for the same normalized key.
+      expect(second.soc).toBe('TESTSOCSPACED')
+      expect(second.decision).toBe('below-minspec')
+
+      const all = await deviceSupportDb.getAll()
+      const matches = all.filter(e => e.soc.replace(/ /g, '') === 'TESTSOCSPACED')
+      expect(matches).toHaveLength(1)
+      expect(await deviceSupportDb.getDecision('TEST SOC SPACED')).toBe('below-minspec')
+    })
   })
 
   describe('bulkUpsert', () => {
@@ -129,6 +144,15 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
       expect(count).toBe(2)
       expect(await deviceSupportDb.getDecision('test-bulk-1')).toBe('exclude')
       expect(await deviceSupportDb.getDecision('test-bulk-2')).toBe('below-minspec')
+    })
+
+    it('should update, not duplicate, an existing row when re-upserted with different spacing', async () => {
+      await deviceSupportDb.upsert('test bulk spaced', 'exclude', TEST_ADDRESS)
+      await deviceSupportDb.bulkUpsert([{ soc: 'testbulkspaced', decision: 'below-minspec' }], TEST_ADDRESS)
+
+      const all = await deviceSupportDb.getAll()
+      expect(all.filter(e => e.soc.replace(/ /g, '') === 'TESTBULKSPACED')).toHaveLength(1)
+      expect(await deviceSupportDb.getDecision('TEST BULK SPACED')).toBe('below-minspec')
     })
 
     it('should roll back the whole batch when one entry violates the decision CHECK constraint', async () => {

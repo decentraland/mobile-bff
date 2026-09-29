@@ -42,10 +42,13 @@ export async function createDeviceSupportDbComponent({
   pg,
   metrics
 }: Pick<AppComponents, 'pg' | 'metrics'>): Promise<IDeviceSupportDbComponent> {
-  // Whitespace-insensitive on both sides (REPLACE ... ' ', '') so a client-reported value that
-  // differs from the stored one only by a missing/extra space (e.g. "EXYNOS7420" vs the seeded
-  // "EXYNOS 7420" -- 18 of the 320 seed rows have an internal space) still matches. soc_model is
-  // stored with its natural spacing for backoffice readability; this only affects comparison.
+  // soc_key (a generated column: REPLACE(soc_model, ' ', ''), see the migration) makes lookups
+  // whitespace-insensitive, so a client-reported value that differs from the stored one only by a
+  // missing/extra space (e.g. "EXYNOS7420" vs the seeded "EXYNOS 7420" -- 18 of the 320 seed rows
+  // have an internal space) still matches. soc_model keeps its natural spacing for backoffice
+  // readability; soc_key's unique index (which upsert/bulkUpsert's ON CONFLICT also targets)
+  // guarantees at most one row can ever match a given key, so there's no ordering ambiguity in
+  // rows[0] below.
   //
   // device_support_lookup_total{found} is the only production signal that a client's SoC string
   // isn't reaching this table in the form it's stored in -- an absent row is indistinguishable
@@ -54,7 +57,7 @@ export async function createDeviceSupportDbComponent({
   async function getDecision(soc: string): Promise<PublicDecision> {
     const normalized = normalizeSoc(soc)
     const result = await pg.query<Pick<DeviceSupportRow, 'decision'>>(SQL`
-      SELECT decision FROM device_soc_support WHERE REPLACE(soc_model, ' ', '') = REPLACE(${normalized}, ' ', '')
+      SELECT decision FROM device_soc_support WHERE soc_key = REPLACE(${normalized}, ' ', '')
     `)
     const found = result.rows.length > 0
     metrics.increment('device_support_lookup_total', { found: String(found) })
@@ -68,12 +71,19 @@ export async function createDeviceSupportDbComponent({
     return result.rows.map(toEntry)
   }
 
+  // Conflict target is soc_key (the whitespace-stripped generated column getDecision/delete also
+  // match on), not the exact-spelling PK. Targeting the PK would let a differently-spaced spelling
+  // of an already-seeded chip (e.g. "EXYNOS7420" vs the seeded "EXYNOS 7420") insert as a second
+  // row instead of updating the existing one, which is exactly the duplicate soc_key's unique
+  // index now makes impossible. Also writes soc_model to EXCLUDED's spelling on conflict, so the
+  // display value tracks the most recent submission.
   async function upsert(soc: string, decision: Decision, updatedBy: string): Promise<DeviceSupportEntry> {
     const normalized = normalizeSoc(soc)
     const result = await pg.query<DeviceSupportRow>(SQL`
       INSERT INTO device_soc_support (soc_model, decision, updated_by)
       VALUES (${normalized}, ${decision}, ${updatedBy})
-      ON CONFLICT (soc_model) DO UPDATE SET decision = ${decision}, updated_at = NOW(), updated_by = ${updatedBy}
+      ON CONFLICT (soc_key)
+      DO UPDATE SET soc_model = EXCLUDED.soc_model, decision = EXCLUDED.decision, updated_at = NOW(), updated_by = EXCLUDED.updated_by
       RETURNING soc_model, decision, updated_at, updated_by
     `)
     return toEntry(result.rows[0])
@@ -95,7 +105,8 @@ export async function createDeviceSupportDbComponent({
         await client.query(SQL`
           INSERT INTO device_soc_support (soc_model, decision, updated_by)
           VALUES (${normalized}, ${entry.decision}, ${updatedBy})
-          ON CONFLICT (soc_model) DO UPDATE SET decision = ${entry.decision}, updated_at = NOW(), updated_by = ${updatedBy}
+          ON CONFLICT (soc_key)
+          DO UPDATE SET soc_model = EXCLUDED.soc_model, decision = EXCLUDED.decision, updated_at = NOW(), updated_by = EXCLUDED.updated_by
         `)
       }
       await client.query('COMMIT')
@@ -108,10 +119,11 @@ export async function createDeviceSupportDbComponent({
     }
   }
 
+  // Same unique index guarantees this deletes at most one row.
   async function deleteSoc(soc: string): Promise<boolean> {
     const normalized = normalizeSoc(soc)
     const result = await pg.query(SQL`
-      DELETE FROM device_soc_support WHERE REPLACE(soc_model, ' ', '') = REPLACE(${normalized}, ' ', '')
+      DELETE FROM device_soc_support WHERE soc_key = REPLACE(${normalized}, ' ', '')
     `)
     return result.rowCount > 0
   }
