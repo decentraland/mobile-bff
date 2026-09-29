@@ -722,7 +722,7 @@ paths:
             type: string
             maxLength: 64
           example: MT6765
-          description: The chipset identifier as detected by the client (case-insensitive).
+          description: The chipset identifier as detected by the client (case- and whitespace-insensitive).
       responses:
         '200':
           description: Decision for this SoC
@@ -1900,7 +1900,7 @@ components:
       properties:
         soc:
           type: string
-          description: Stored uppercase; lookups are case-insensitive
+          description: Stored with its natural spacing; lookups are case- and whitespace-insensitive
           example: MT6765
         decision:
           $ref: '#/components/schemas/DeviceSupportDecision'
