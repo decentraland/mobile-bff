@@ -39,9 +39,12 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
   // This is a point-in-time snapshot, not a live sync -- it will drift from the spreadsheet
   // (new chipsets ship, existing ones get reclassified). The spreadsheet remains the source of
   // truth going forward; use PUT /backoffice/device-support (bulk upsert) to apply updates from
-  // it, not a new migration. ON CONFLICT DO NOTHING below only guards against this specific
-  // migration being re-applied to a database that already has these rows (e.g. a reset local/CI
-  // run) -- it is not itself an update mechanism.
+  // it, not a new migration. The untargeted ON CONFLICT DO NOTHING below only guards against this
+  // specific migration being re-applied to a database that already has these rows (e.g. a reset
+  // local/CI run) -- it is not itself an update mechanism. Deliberately has no target list (unlike
+  // upsert/bulkUpsert's ON CONFLICT (soc_key)): an untargeted DO NOTHING suppresses a violation of
+  // *any* unique constraint on the table, so it still no-ops if soc_key's index -- not just the
+  // soc_model PK -- is what a re-run would collide on.
   pgm.sql(`
 INSERT INTO device_soc_support (soc_model, decision) VALUES
     ('3215U', 'exclude'),
@@ -364,7 +367,7 @@ INSERT INTO device_soc_support (soc_model, decision) VALUES
     ('UMS9621S', 'below-minspec'),
     ('UMS9632', 'below-minspec'),
     ('UMS9632S', 'below-minspec')
-  ON CONFLICT (soc_model) DO NOTHING
+  ON CONFLICT DO NOTHING
   `)
 }
 
