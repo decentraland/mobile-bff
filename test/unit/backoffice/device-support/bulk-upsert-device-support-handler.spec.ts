@@ -1,4 +1,7 @@
-import { bulkUpsertDeviceSupportHandler } from '../../../../src/controllers/handlers/backoffice/device-support/bulk-upsert-device-support-handler'
+import {
+  bulkUpsertDeviceSupportHandler,
+  MAX_BULK_ENTRIES
+} from '../../../../src/controllers/handlers/backoffice/device-support/bulk-upsert-device-support-handler'
 import { createDeviceSupportDbJestMockComponent } from '../../../mocks/device-support-db-mock'
 import { createLogsMockComponent } from '../../../mocks/logs-mock'
 import { createConfigJestMockComponent } from '../../../mocks/config-mock'
@@ -51,6 +54,19 @@ describe('bulk-upsert-device-support-handler', () => {
 
     expect(response.status).toBe(400)
     expect(response.body.error).toContain('must not be empty')
+  })
+
+  it('should return 400 when entries exceeds MAX_BULK_ENTRIES', async () => {
+    const entries = Array.from({ length: MAX_BULK_ENTRIES + 1 }, (_, i) => ({
+      soc: `SOC-${i}`,
+      decision: 'exclude'
+    }))
+
+    const response = await bulkUpsertDeviceSupportHandler(createContext(ALLOWED_ADDRESS, { entries }) as any)
+
+    expect(response.status).toBe(400)
+    expect(response.body.error).toContain(`at most ${MAX_BULK_ENTRIES} items`)
+    expect(mockDeviceSupportDb.bulkUpsert).not.toHaveBeenCalled()
   })
 
   it('should return 400 when an entry has an invalid soc', async () => {

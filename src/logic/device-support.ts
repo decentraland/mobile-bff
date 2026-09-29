@@ -15,7 +15,10 @@ export function validateSoc(soc: unknown): string | null {
   if (typeof soc !== 'string' || soc.trim().length === 0) {
     return "'soc' is required and must be a non-empty string"
   }
-  if (soc.length > SOC_MAX_LENGTH) {
+  // Length-checks the trimmed value, matching what normalizeSoc actually stores -- checking the
+  // raw string would reject input that only exceeds the limit because of leading/trailing
+  // whitespace that never reaches the database.
+  if (soc.trim().length > SOC_MAX_LENGTH) {
     return `'soc' must be at most ${SOC_MAX_LENGTH} characters`
   }
   return null

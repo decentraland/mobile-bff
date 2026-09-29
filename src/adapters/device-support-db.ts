@@ -89,34 +89,36 @@ export async function createDeviceSupportDbComponent({
     return toEntry(result.rows[0])
   }
 
-  // Bulk-loading the PM's spreadsheet is the expected way this table gets populated/refreshed —
-  // one transaction so a bad row can't leave the table half-updated. pg.query() checks out a
-  // pooled connection per call, so BEGIN/INSERT/COMMIT could each land on a different physical
-  // connection -- a dedicated client (mirroring push-db.ts's replaceAudience) is what actually
-  // guarantees they share one.
+  // Bulk-loading the PM's spreadsheet is the expected way this table gets populated/refreshed, as
+  // one multi-row INSERT rather than one round trip per entry (320 statements for the full seed
+  // list) -- a single statement is atomic on its own, so no explicit transaction is needed.
+  //
+  // Postgres refuses to let one ON CONFLICT DO UPDATE affect the same row twice within a single
+  // statement ("ON CONFLICT DO UPDATE command cannot affect row a second time"), which a per-row
+  // loop never hit since each row was its own statement. Two input entries can collide on soc_key
+  // without colliding on spelling (e.g. "EXYNOS7420" and "EXYNOS 7420"), so entries are deduped
+  // here first, keeping the last occurrence -- the same last-wins semantics the old loop had.
   async function bulkUpsert(entries: BulkUpsertEntry[], updatedBy: string): Promise<number> {
     if (entries.length === 0) return 0
 
-    const client = await pg.getPool().connect()
-    try {
-      await client.query('BEGIN')
-      for (const entry of entries) {
-        const normalized = normalizeSoc(entry.soc)
-        await client.query(SQL`
-          INSERT INTO device_soc_support (soc_model, decision, updated_by)
-          VALUES (${normalized}, ${entry.decision}, ${updatedBy})
-          ON CONFLICT (soc_key)
-          DO UPDATE SET soc_model = EXCLUDED.soc_model, decision = EXCLUDED.decision, updated_at = NOW(), updated_by = EXCLUDED.updated_by
-        `)
-      }
-      await client.query('COMMIT')
-      return entries.length
-    } catch (error) {
-      await client.query('ROLLBACK')
-      throw error
-    } finally {
-      client.release()
+    const bySocKey = new Map<string, BulkUpsertEntry>()
+    for (const entry of entries) {
+      bySocKey.set(normalizeSoc(entry.soc).replace(/ /g, ''), entry)
     }
+    const deduped = [...bySocKey.values()]
+
+    const query = SQL`INSERT INTO device_soc_support (soc_model, decision, updated_by) VALUES `
+    deduped.forEach((entry, index) => {
+      if (index > 0) query.append(SQL`, `)
+      query.append(SQL`(${normalizeSoc(entry.soc)}, ${entry.decision}, ${updatedBy})`)
+    })
+    query.append(SQL`
+      ON CONFLICT (soc_key)
+      DO UPDATE SET soc_model = EXCLUDED.soc_model, decision = EXCLUDED.decision, updated_at = NOW(), updated_by = EXCLUDED.updated_by
+    `)
+
+    await pg.query(query)
+    return deduped.length
   }
 
   // Same unique index guarantees this deletes at most one row.

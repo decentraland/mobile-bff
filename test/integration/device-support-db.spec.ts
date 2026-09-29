@@ -157,9 +157,9 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
 
     it('should roll back the whole batch when one entry violates the decision CHECK constraint', async () => {
       // Bypasses the handler's own validation (which would reject this before it ever reaches
-      // the db) to exercise the adapter's transaction directly: if bulkUpsert only *claimed* to
-      // be atomic (see the P1 this replaced -- pg.query() per call, no shared connection), the
-      // first entry would have committed on its own connection before the second one failed.
+      // the db) to exercise the adapter directly: bulkUpsert is a single multi-row INSERT, so
+      // Postgres's own statement-level atomicity is what guarantees neither row lands -- there's
+      // no explicit transaction to rely on.
       await expect(
         deviceSupportDb.bulkUpsert(
           [
@@ -172,6 +172,25 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
 
       expect(await deviceSupportDb.getDecision('test-rollback-1')).toBe('keep')
       expect(await deviceSupportDb.getDecision('test-rollback-2')).toBe('keep')
+    })
+
+    it('should dedupe same-batch entries that collide on soc_key, keeping the last decision', async () => {
+      // Two spellings of the same chip in one paste would make Postgres reject the whole
+      // statement ("ON CONFLICT DO UPDATE command cannot affect row a second time") if they
+      // both reached the VALUES list -- bulkUpsert dedupes by soc_key first, last one wins.
+      const count = await deviceSupportDb.bulkUpsert(
+        [
+          { soc: 'test dup spaced', decision: 'exclude' },
+          { soc: 'testdupspaced', decision: 'below-minspec' }
+        ],
+        TEST_ADDRESS
+      )
+
+      expect(count).toBe(1)
+      expect(await deviceSupportDb.getDecision('TESTDUPSPACED')).toBe('below-minspec')
+
+      const all = await deviceSupportDb.getAll()
+      expect(all.filter(e => e.soc.replace(/ /g, '') === 'TESTDUPSPACED')).toHaveLength(1)
     })
   })
 
