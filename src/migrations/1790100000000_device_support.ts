@@ -17,6 +17,13 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
   // Real decision list from the PM's "Android - Per Chipset Exclusion List" spreadsheet
   // (its "List - Per Chipset" tab, Decision column), as of 2026-09-28. A SoC absent from
   // this table is implicitly 'keep' -- only the non-default decisions are stored.
+  //
+  // This is a point-in-time snapshot, not a live sync -- it will drift from the spreadsheet
+  // (new chipsets ship, existing ones get reclassified). The spreadsheet remains the source of
+  // truth going forward; use PUT /backoffice/device-support (bulk upsert) to apply updates from
+  // it, not a new migration. ON CONFLICT DO NOTHING below only guards against this specific
+  // migration being re-applied to a database that already has these rows (e.g. a reset local/CI
+  // run) -- it is not itself an update mechanism.
   pgm.sql(`
 INSERT INTO device_soc_support (soc_model, decision) VALUES
     ('3215U', 'exclude'),
@@ -339,6 +346,7 @@ INSERT INTO device_soc_support (soc_model, decision) VALUES
     ('UMS9621S', 'below-minspec'),
     ('UMS9632', 'below-minspec'),
     ('UMS9632S', 'below-minspec')
+  ON CONFLICT (soc_model) DO NOTHING
   `)
 }
 

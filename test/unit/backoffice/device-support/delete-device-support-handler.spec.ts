@@ -37,6 +37,21 @@ describe('delete-device-support-handler', () => {
     expect(response.status).toBe(403)
   })
 
+  it('should return 400 for an empty soc path param', async () => {
+    const response = await deleteDeviceSupportHandler(createContext(ALLOWED_ADDRESS, '') as any)
+
+    expect(response.status).toBe(400)
+    expect(response.body.error).toContain("'soc' is required")
+    expect(mockDeviceSupportDb.delete).not.toHaveBeenCalled()
+  })
+
+  it('should return 400 when soc is longer than 64 characters', async () => {
+    const response = await deleteDeviceSupportHandler(createContext(ALLOWED_ADDRESS, 'X'.repeat(65)) as any)
+
+    expect(response.status).toBe(400)
+    expect(response.body.error).toContain('64 characters')
+  })
+
   it('should delete an existing entry and return 200', async () => {
     const response = await deleteDeviceSupportHandler(createContext(ALLOWED_ADDRESS, 'MT6765') as any)
 

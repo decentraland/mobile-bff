@@ -70,7 +70,7 @@ export async function initComponents(): Promise<AppComponents> {
   const destinationsApi = await createDestinationsApiComponent({ fetch, config, cache, logs })
   const appVersionsDb = await createAppVersionsDbComponent({ pg })
   const featureFlagsDb = await createFeatureFlagsDbComponent({ pg })
-  const deviceSupportDb = await createDeviceSupportDbComponent({ pg })
+  const deviceSupportDb = await createDeviceSupportDbComponent({ pg, metrics })
   const campaignsDb = await createCampaignsDbComponent({ pg })
   const pushDb = await createPushDbComponent({ pg })
   const fcm = await createFcmComponent({ config, logs })

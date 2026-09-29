@@ -1,6 +1,7 @@
 import { DecentralandSignatureContext } from '@dcl/crypto-middleware'
 import { HandlerContextWithPath } from '../../../../types'
 import { isAllowedUser } from '../../../../logic/allowed-users'
+import { validateSoc } from '../../../../logic/device-support'
 
 export async function deleteDeviceSupportHandler(
   context: HandlerContextWithPath<'deviceSupportDb' | 'logs' | 'config', '/backoffice/device-support/:soc'>
@@ -22,6 +23,11 @@ export async function deleteDeviceSupportHandler(
 
   if (!(await isAllowedUser(config, userAddress))) {
     return { status: 403, body: { ok: false, error: 'Forbidden: User not in allowed list' } }
+  }
+
+  const socError = validateSoc(soc)
+  if (socError) {
+    return { status: 400, body: { ok: false, error: socError } }
   }
 
   try {

@@ -36,7 +36,7 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
     // Start the pg component to run migrations
     await pg.start()
 
-    deviceSupportDb = await createDeviceSupportDbComponent({ pg })
+    deviceSupportDb = await createDeviceSupportDbComponent({ pg, metrics })
   })
 
   afterAll(async () => {
@@ -81,6 +81,13 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
     it("should default to 'keep' for a SoC with no row", async () => {
       expect(await deviceSupportDb.getDecision('SM8750')).toBe('keep')
     })
+
+    it('should match a space-containing seeded SoC even when the query omits the space', async () => {
+      // "EXYNOS 7420" is one of the 18 seeded socs with an internal space (Samsung's older
+      // Exynos naming, as opposed to the newer "s5eXXXX" codename format).
+      expect(await deviceSupportDb.getDecision('EXYNOS7420')).toBe('exclude')
+      expect(await deviceSupportDb.getDecision('exynos 7420')).toBe('exclude')
+    })
   })
 
   describe('getAll', () => {
@@ -122,6 +129,25 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
       expect(count).toBe(2)
       expect(await deviceSupportDb.getDecision('test-bulk-1')).toBe('exclude')
       expect(await deviceSupportDb.getDecision('test-bulk-2')).toBe('below-minspec')
+    })
+
+    it('should roll back the whole batch when one entry violates the decision CHECK constraint', async () => {
+      // Bypasses the handler's own validation (which would reject this before it ever reaches
+      // the db) to exercise the adapter's transaction directly: if bulkUpsert only *claimed* to
+      // be atomic (see the P1 this replaced -- pg.query() per call, no shared connection), the
+      // first entry would have committed on its own connection before the second one failed.
+      await expect(
+        deviceSupportDb.bulkUpsert(
+          [
+            { soc: 'test-rollback-1', decision: 'exclude' },
+            { soc: 'test-rollback-2', decision: 'not-a-real-decision' as any }
+          ],
+          TEST_ADDRESS
+        )
+      ).rejects.toThrow()
+
+      expect(await deviceSupportDb.getDecision('test-rollback-1')).toBe('keep')
+      expect(await deviceSupportDb.getDecision('test-rollback-2')).toBe('keep')
     })
   })
 

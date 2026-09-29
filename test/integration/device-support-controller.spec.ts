@@ -51,15 +51,22 @@ test('device support endpoints', function ({ components }) {
 
 test('backoffice device support endpoints with signed fetch', function ({ components }) {
   let identity: Identity
+  let originalAllowedUsers: string | undefined
 
   beforeAll(async () => {
     identity = await getIdentity()
+    originalAllowedUsers = process.env.ALLOWED_USERS
     process.env.ALLOWED_USERS = identity.realAccount.address
   })
 
   afterAll(async () => {
     // Leave the shared mobile_test database in its seeded state for other suites
     await components.pg.query(`DELETE FROM device_soc_support WHERE updated_by IS NOT NULL`)
+    if (originalAllowedUsers === undefined) {
+      delete process.env.ALLOWED_USERS
+    } else {
+      process.env.ALLOWED_USERS = originalAllowedUsers
+    }
   })
 
   function makeSignedRequest(signer: Identity, method: string, path: string, body?: any) {

@@ -7,9 +7,9 @@ type BulkUpsertBody = {
   entries?: unknown
 }
 
-// Sized to comfortably fit the real ~320-entry list with headroom, matching the SoC-list caps
-// already used for the (now-abandoned) feature-flags approach.
-export const MAX_BULK_ENTRIES = 2000
+// The real seed is ~320 entries; this gives ~3x headroom for the list to grow before the cap
+// needs revisiting, without being large enough to make one bad request pathological to process.
+export const MAX_BULK_ENTRIES = 1000
 
 export async function bulkUpsertDeviceSupportHandler(
   context: HandlerContextWithPath<'deviceSupportDb' | 'logs' | 'config', '/backoffice/device-support'>

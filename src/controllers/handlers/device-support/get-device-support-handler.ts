@@ -1,5 +1,5 @@
 import { HandlerContextWithPath } from '../../../types'
-import { validateSoc } from '../../../logic/device-support'
+import { validateSoc, normalizeSoc } from '../../../logic/device-support'
 
 export async function getDeviceSupportHandler(
   context: HandlerContextWithPath<'deviceSupportDb' | 'logs', '/device-support'>
@@ -20,11 +20,14 @@ export async function getDeviceSupportHandler(
       return { status: 400, body: { ok: false, error: socError } }
     }
 
-    const decision = await deviceSupportDb.getDecision(soc as string)
+    const normalized = normalizeSoc(soc as string)
+    const decision = await deviceSupportDb.getDecision(normalized)
 
+    // Echoes the normalized value, not the raw query param, so the client can confirm exactly
+    // what was looked up rather than what it happened to send.
     return {
       status: 200,
-      body: { ok: true, data: { soc, decision } }
+      body: { ok: true, data: { soc: normalized, decision } }
     }
   } catch (error) {
     logger.error('Error fetching device support decision', { error: (error as Error).message })
