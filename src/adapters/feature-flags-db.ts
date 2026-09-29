@@ -3,8 +3,8 @@ import { AppComponents } from '../types'
 import { FlagType } from '../logic/feature-flags'
 
 // on-off flags map to their enabled boolean, text flags to their string value,
-// number flags to their parsed numeric value
-export type FeatureFlagsMap = Record<string, boolean | string | number>
+// number flags to their parsed numeric value, string-list flags to their parsed string array
+export type FeatureFlagsMap = Record<string, boolean | string | number | string[]>
 
 export type FeatureFlag = {
   name: string
@@ -63,12 +63,14 @@ function toFeatureFlag(row: FeatureFlagRow): FeatureFlag {
   }
 }
 
-function toPublicValue(row: Pick<FeatureFlagRow, 'type' | 'enabled' | 'value'>): boolean | string | number {
+function toPublicValue(row: Pick<FeatureFlagRow, 'type' | 'enabled' | 'value'>): boolean | string | number | string[] {
   switch (row.type) {
     case 'text':
       return row.value ?? ''
     case 'number':
       return Number(row.value)
+    case 'string-list':
+      return row.value ? JSON.parse(row.value) : []
     default:
       return row.enabled
   }

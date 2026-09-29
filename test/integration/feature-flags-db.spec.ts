@@ -52,7 +52,10 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
   async function restoreSeededState() {
     await pg.query(`
       DELETE FROM feature_flags
-      WHERE name NOT IN ('pulse', 'dual-channel', 'sentry-sample-rate', 'sentry-traces-sample-rate')
+      WHERE name NOT IN (
+        'pulse', 'dual-channel', 'sentry-sample-rate', 'sentry-traces-sample-rate',
+        'android-excluded-socs', 'android-below-minspec-socs'
+      )
     `)
     await pg.query(`
       UPDATE feature_flags SET enabled = false, updated_by = NULL,
@@ -171,6 +174,22 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
       expect(map['welcome-message']).toBe('Hello there')
     })
 
+    it('should insert a string-list flag and expose its parsed array value', async () => {
+      await featureFlagsDb.create(
+        {
+          name: 'excluded-socs',
+          type: 'string-list',
+          enabled: false,
+          value: JSON.stringify(['MT6765', 'SM6125']),
+          description: null
+        },
+        TEST_ADDRESS
+      )
+
+      const map = await featureFlagsDb.getAll()
+      expect(map['excluded-socs']).toEqual(['MT6765', 'SM6125'])
+    })
+
     it('should throw a unique violation for a duplicate name', async () => {
       await expect(
         featureFlagsDb.create({ name: 'pulse', type: 'on-off', enabled: false, value: null, description: null }, TEST_ADDRESS)
@@ -193,6 +212,15 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
     it('should be rejected by the db CHECK constraint when a text flag has no value', async () => {
       await expect(
         featureFlagsDb.create({ name: 'bad-text', type: 'text', enabled: false, value: null, description: null }, TEST_ADDRESS)
+      ).rejects.toMatchObject({ code: '23514' })
+    })
+
+    it('should be rejected by the db CHECK constraint when a string-list flag has no value', async () => {
+      await expect(
+        featureFlagsDb.create(
+          { name: 'bad-string-list', type: 'string-list', enabled: false, value: null, description: null },
+          TEST_ADDRESS
+        )
       ).rejects.toMatchObject({ code: '23514' })
     })
   })

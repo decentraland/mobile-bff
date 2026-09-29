@@ -29,12 +29,13 @@ describe('get-feature-flags-handler', () => {
     expect(response.body).toEqual({ ok: true, data: { flags: { pulse: false, 'dual-channel': true } } })
   })
 
-  it('should pass through text and number flag values untouched', async () => {
+  it('should pass through text, number and string-list flag values untouched', async () => {
     mockFeatureFlagsDb.getAll.mockResolvedValue({
       pulse: false,
       'sentry-sample-rate': 1,
       'sentry-traces-sample-rate': 0.1,
-      'welcome-message': 'Hello there'
+      'welcome-message': 'Hello there',
+      'excluded-socs': ['MT6765', 'SM6125']
     })
 
     const response = await getFeatureFlagsHandler(createContext() as any)
@@ -44,7 +45,8 @@ describe('get-feature-flags-handler', () => {
       pulse: false,
       'sentry-sample-rate': 1,
       'sentry-traces-sample-rate': 0.1,
-      'welcome-message': 'Hello there'
+      'welcome-message': 'Hello there',
+      'excluded-socs': ['MT6765', 'SM6125']
     })
   })
 

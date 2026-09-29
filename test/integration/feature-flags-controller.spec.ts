@@ -50,7 +50,10 @@ test('backoffice feature flags endpoints with signed fetch', function ({ compone
     // Leave the shared mobile_test database in its seeded state for other suites
     await components.pg.query(`
       DELETE FROM feature_flags
-      WHERE name NOT IN ('pulse', 'dual-channel', 'sentry-sample-rate', 'sentry-traces-sample-rate')
+      WHERE name NOT IN (
+        'pulse', 'dual-channel', 'sentry-sample-rate', 'sentry-traces-sample-rate',
+        'android-excluded-socs', 'android-below-minspec-socs'
+      )
     `)
     await components.pg.query("UPDATE feature_flags SET enabled = false, updated_by = NULL WHERE name = 'pulse'")
     await components.pg.query("UPDATE feature_flags SET enabled = true, updated_by = NULL WHERE name = 'dual-channel'")
@@ -175,6 +178,49 @@ test('backoffice feature flags endpoints with signed fetch', function ({ compone
       identity, 'DELETE', '/backoffice/feature-flags/integration-number-flag'
     )
     expect(deleteResponse.status).toBe(200)
+  })
+
+  it('creates a string-list flag, updates it and exposes it as an array', async () => {
+    // Create
+    const createResponse = await makeSignedRequest(identity, 'POST', '/backoffice/feature-flags', {
+      name: 'integration-string-list-flag',
+      type: 'string-list',
+      value: ['MT6765', 'SM6125', 'MT6765']
+    })
+    const created = await createResponse.json()
+
+    expect(createResponse.status).toBe(201)
+    expect(created.data).toMatchObject({ name: 'integration-string-list-flag', type: 'string-list' })
+
+    // Publicly visible as a deduped, sorted array
+    const publicResponse = await components.localFetch.fetch('/feature-flags')
+    const publicBody = await publicResponse.json()
+    expect(publicBody.data.flags['integration-string-list-flag']).toEqual(['MT6765', 'SM6125'])
+
+    // Update the value
+    const updateResponse = await makeSignedRequest(
+      identity, 'PUT', '/backoffice/feature-flags/integration-string-list-flag', { value: ['T606'] }
+    )
+    expect(updateResponse.status).toBe(200)
+
+    const afterUpdate = await components.localFetch.fetch('/feature-flags')
+    expect((await afterUpdate.json()).data.flags['integration-string-list-flag']).toEqual(['T606'])
+
+    // Delete
+    const deleteResponse = await makeSignedRequest(
+      identity, 'DELETE', '/backoffice/feature-flags/integration-string-list-flag'
+    )
+    expect(deleteResponse.status).toBe(200)
+  })
+
+  it('rejects a non-array value for a string-list flag with 400', async () => {
+    const response = await makeSignedRequest(identity, 'POST', '/backoffice/feature-flags', {
+      name: 'bad-string-list-flag',
+      type: 'string-list',
+      value: 'not-an-array'
+    })
+
+    expect(response.status).toBe(400)
   })
 
   it('rejects a non-numeric value for a number flag with 400', async () => {

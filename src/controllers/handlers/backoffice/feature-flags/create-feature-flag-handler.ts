@@ -56,14 +56,14 @@ export async function createFeatureFlagHandler(
     let value: string | null = null
     if (type === 'on-off') {
       if (body.value !== undefined) {
-        return { status: 400, body: { ok: false, error: "'value' is only valid for text and number flags; on-off flags use 'enabled'" } }
+        return { status: 400, body: { ok: false, error: "'value' is only valid for text, number and string-list flags; on-off flags use 'enabled'" } }
       }
       if (body.enabled !== undefined && typeof body.enabled !== 'boolean') {
         return { status: 400, body: { ok: false, error: "'enabled' must be a boolean" } }
       }
     } else {
       if (body.enabled !== undefined) {
-        return { status: 400, body: { ok: false, error: "'enabled' is only valid for on-off flags; text and number flags use 'value'" } }
+        return { status: 400, body: { ok: false, error: "'enabled' is only valid for on-off flags; text, number and string-list flags use 'value'" } }
       }
       const normalized = normalizeFlagValue(type, body.value)
       if ('error' in normalized) {

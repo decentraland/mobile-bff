@@ -123,7 +123,7 @@ describe('update-feature-flag-handler', () => {
       )
 
       expect(response.status).toBe(400)
-      expect(response.body.error).toContain("'value' is only valid for text and number flags")
+      expect(response.body.error).toContain("'value' is only valid for text, number and string-list flags")
       expect(mockFeatureFlagsDb.update).not.toHaveBeenCalled()
     })
 

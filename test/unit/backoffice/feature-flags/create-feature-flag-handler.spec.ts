@@ -156,7 +156,7 @@ describe('create-feature-flag-handler', () => {
       )
 
       expect(response.status).toBe(400)
-      expect(response.body.error).toContain("'value' is only valid for text and number flags")
+      expect(response.body.error).toContain("'value' is only valid for text, number and string-list flags")
     })
 
     it('should return 400 when a text/number flag is given enabled', async () => {
@@ -216,6 +216,49 @@ describe('create-feature-flag-handler', () => {
       expect(response.status).toBe(201)
       expect(mockFeatureFlagsDb.create).toHaveBeenCalledWith(
         { name: 'sentry-sample-rate', type: 'number', enabled: false, value: stored, description: null },
+        ALLOWED_ADDRESS
+      )
+    })
+
+    it('should return 400 when a string-list flag is missing its value', async () => {
+      const response = await createFeatureFlagHandler(
+        createContext(ALLOWED_ADDRESS, { name: 'excluded-socs', type: 'string-list' }) as any
+      )
+
+      expect(response.status).toBe(400)
+      expect(response.body.error).toContain("'value' must be an array of strings")
+    })
+
+    it.each([['not-an-array'], [42], [{ a: 1 }], [['ok', 42]], [['ok', '']], [['ok', '  ']]])(
+      'should return 400 when a string-list flag gets invalid value %p',
+      async (value) => {
+        const response = await createFeatureFlagHandler(
+          createContext(ALLOWED_ADDRESS, { name: 'excluded-socs', type: 'string-list', value }) as any
+        )
+
+        expect(response.status).toBe(400)
+        expect(mockFeatureFlagsDb.create).not.toHaveBeenCalled()
+      }
+    )
+
+    it('should create a string-list flag storing a deduped, sorted JSON array', async () => {
+      const response = await createFeatureFlagHandler(
+        createContext(ALLOWED_ADDRESS, {
+          name: 'excluded-socs',
+          type: 'string-list',
+          value: ['MT6765', 'SM6125', 'MT6765']
+        }) as any
+      )
+
+      expect(response.status).toBe(201)
+      expect(mockFeatureFlagsDb.create).toHaveBeenCalledWith(
+        {
+          name: 'excluded-socs',
+          type: 'string-list',
+          enabled: false,
+          value: JSON.stringify(['MT6765', 'SM6125']),
+          description: null
+        },
         ALLOWED_ADDRESS
       )
     })

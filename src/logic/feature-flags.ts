@@ -5,7 +5,14 @@ export const FLAG_NAME_MAX_LENGTH = 64
 export const FLAG_DESCRIPTION_MAX_LENGTH = 500
 export const FLAG_VALUE_MAX_LENGTH = 500
 
-export const FLAG_TYPES = ['on-off', 'text', 'number'] as const
+// string-list flags store a canonical (deduped, sorted) JSON array as their text value.
+// Limits sized for device/SoC allow/deny lists (godot-explorer's device-support-modals feature):
+// a few hundred short identifiers, with headroom to grow.
+export const LIST_MAX_ITEMS = 2000
+export const LIST_ITEM_MAX_LENGTH = 64
+export const LIST_VALUE_MAX_LENGTH = 20000
+
+export const FLAG_TYPES = ['on-off', 'text', 'number', 'string-list'] as const
 export type FlagType = (typeof FLAG_TYPES)[number]
 
 // Mirrors the CHECK constraint on the feature_flags table: plain decimals only,
@@ -58,6 +65,31 @@ export function normalizeFlagValue(type: FlagType, value: unknown): { value: str
       return { error: `'value' must be at most ${FLAG_VALUE_MAX_LENGTH} characters` }
     }
     return { value }
+  }
+
+  if (type === 'string-list') {
+    if (!Array.isArray(value)) {
+      return { error: "'value' must be an array of strings for string-list flags" }
+    }
+    if (value.length > LIST_MAX_ITEMS) {
+      return { error: `'value' must have at most ${LIST_MAX_ITEMS} items` }
+    }
+    const items: string[] = []
+    for (const item of value) {
+      if (typeof item !== 'string' || item.trim().length === 0) {
+        return { error: "'value' items must be non-empty strings" }
+      }
+      if (item.length > LIST_ITEM_MAX_LENGTH) {
+        return { error: `'value' items must be at most ${LIST_ITEM_MAX_LENGTH} characters` }
+      }
+      items.push(item)
+    }
+    // Canonicalize (dedupe + sort) so the stored value is stable regardless of submission order
+    const canonical = JSON.stringify([...new Set(items)].sort())
+    if (canonical.length > LIST_VALUE_MAX_LENGTH) {
+      return { error: `'value' must be at most ${LIST_VALUE_MAX_LENGTH} characters once serialized` }
+    }
+    return { value: canonical }
   }
 
   // type === 'number'

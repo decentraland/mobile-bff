@@ -63,7 +63,7 @@ export async function updateFeatureFlagHandler(
     let value: string | undefined
     if (body.value !== undefined) {
       if (existing.type === 'on-off') {
-        return { status: 400, body: { ok: false, error: `'value' is only valid for text and number flags; '${name}' is an on-off flag` } }
+        return { status: 400, body: { ok: false, error: `'value' is only valid for text, number and string-list flags; '${name}' is an on-off flag` } }
       }
       const normalized = normalizeFlagValue(existing.type, body.value)
       if ('error' in normalized) {
