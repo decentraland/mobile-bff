@@ -88,12 +88,20 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
     it('should return the seeded flags as a typed map', async () => {
       const flags = await featureFlagsDb.getAll()
 
-      expect(flags).toEqual({
-        pulse: false,
-        'dual-channel': true,
-        'sentry-sample-rate': 1,
-        'sentry-traces-sample-rate': 0.1
-      })
+      // The two android-*-socs string-list flags are asserted by shape/length below, not by
+      // full content, so this test doesn't have to duplicate their ~200-entry seed data.
+      expect(flags).toEqual(
+        expect.objectContaining({
+          pulse: false,
+          'dual-channel': true,
+          'sentry-sample-rate': 1,
+          'sentry-traces-sample-rate': 0.1
+        })
+      )
+      expect(flags['android-excluded-socs']).toEqual(expect.any(Array))
+      expect((flags['android-excluded-socs'] as string[]).length).toBe(222)
+      expect(flags['android-below-minspec-socs']).toEqual(expect.any(Array))
+      expect((flags['android-below-minspec-socs'] as string[]).length).toBe(98)
     })
   })
 
@@ -102,21 +110,27 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
       const flags = await featureFlagsDb.getAllDetailed()
 
       expect(flags.map(f => f.name)).toEqual([
+        'android-below-minspec-socs',
+        'android-excluded-socs',
         'dual-channel',
         'pulse',
         'sentry-sample-rate',
         'sentry-traces-sample-rate'
       ])
-      expect(flags[1]).toMatchObject({
+      expect(flags[0]).toMatchObject({ name: 'android-below-minspec-socs', type: 'string-list' })
+      expect(JSON.parse(flags[0].value as string)).toHaveLength(98)
+      expect(flags[1]).toMatchObject({ name: 'android-excluded-socs', type: 'string-list' })
+      expect(JSON.parse(flags[1].value as string)).toHaveLength(222)
+      expect(flags[3]).toMatchObject({
         name: 'pulse',
         type: 'on-off',
         enabled: false,
         value: null,
         updatedBy: null
       })
-      expect(flags[1].description).toContain('Pulse')
-      expect(new Date(flags[1].updatedAt).getTime()).not.toBeNaN()
-      expect(flags[2]).toMatchObject({ name: 'sentry-sample-rate', type: 'number', value: 1 })
+      expect(flags[3].description).toContain('Pulse')
+      expect(new Date(flags[3].updatedAt).getTime()).not.toBeNaN()
+      expect(flags[4]).toMatchObject({ name: 'sentry-sample-rate', type: 'number', value: 1 })
     })
   })
 
