@@ -20,14 +20,14 @@ export async function getDeviceSupportHandler(
       return { status: 400, body: { ok: false, error: socError } }
     }
 
-    const normalized = normalizeSoc(soc as string)
-    const decision = await deviceSupportDb.getDecision(normalized)
+    // getDecision normalizes internally (see toSocKey), so the raw value is passed through here --
+    // normalizeSoc is only needed for the echoed response, so the client can confirm exactly what
+    // was looked up rather than what it happened to send.
+    const decision = await deviceSupportDb.getDecision(soc as string)
 
-    // Echoes the normalized value, not the raw query param, so the client can confirm exactly
-    // what was looked up rather than what it happened to send.
     return {
       status: 200,
-      body: { ok: true, data: { soc: normalized, decision } }
+      body: { ok: true, data: { soc: normalizeSoc(soc as string), decision } }
     }
   } catch (error) {
     logger.error('Error fetching device support decision', { error: (error as Error).message })

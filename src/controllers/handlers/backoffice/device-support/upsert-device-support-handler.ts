@@ -35,14 +35,23 @@ export async function upsertDeviceSupportHandler(
     return { status: 400, body: { ok: false, error: socError } }
   }
 
+  let body: UpsertBody
   try {
-    const body = (await request.json()) as UpsertBody
+    body = (await request.json()) as UpsertBody
+  } catch (error) {
+    return { status: 400, body: { ok: false, error: 'Invalid JSON body' } }
+  }
 
-    const decisionError = validateDecision(body.decision)
-    if (decisionError) {
-      return { status: 400, body: { ok: false, error: decisionError } }
-    }
+  if (typeof body !== 'object' || body === null) {
+    return { status: 400, body: { ok: false, error: validateDecision(undefined) } }
+  }
 
+  const decisionError = validateDecision(body.decision)
+  if (decisionError) {
+    return { status: 400, body: { ok: false, error: decisionError } }
+  }
+
+  try {
     const entry = await deviceSupportDb.upsert(soc, body.decision as Decision, userAddress)
 
     logger.info('Device support entry upserted', { soc, decision: entry.decision, updatedBy: userAddress })

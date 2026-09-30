@@ -777,12 +777,15 @@ paths:
         - Device Support
       summary: Bulk upsert device-support entries (backoffice)
       description: |
-        Replaces (or creates) the decision for many SoCs in one call — the intended way to load
-        or refresh the list from the PM's spreadsheet. Runs as a single atomic statement: an
-        invalid entry anywhere in the array rejects the whole request with no partial writes.
-        Entries that normalize to the same SoC (matching case/whitespace) are deduped first,
-        keeping the last occurrence — see `count` below. Requires signed fetch (ADR-44) and the
-        signer address in `ALLOWED_USERS`.
+        Creates, updates or deletes the decision for many SoCs in one call — the intended way to
+        load or refresh the list from the PM's spreadsheet. A `decision` of `keep` deletes that
+        SoC's row instead of upserting it, which is how a paste of the full sheet reverts a SoC
+        that moved back to `keep` or was dropped from the sheet entirely — without it, only a
+        per-soc DELETE could revert an already-loaded SoC. Runs atomically: an invalid entry
+        anywhere in the array, or a DB error partway through, leaves no partial writes. Entries
+        that normalize to the same SoC (matching case/whitespace) are deduped first, keeping the
+        last occurrence — see `count` below. Requires signed fetch (ADR-44) and the signer address
+        in `ALLOWED_USERS`.
       operationId: bulkUpsertDeviceSupport
       security:
         - signedFetch: []
@@ -798,6 +801,8 @@ paths:
                   decision: exclude
                 - soc: SM4350
                   decision: below-minspec
+                - soc: SDM845
+                  decision: keep
       responses:
         '200':
           description: Entries upserted
@@ -815,19 +820,22 @@ paths:
                       count:
                         type: integer
                         description: >-
-                          Number of distinct SoCs written. Entries in the request that normalize
-                          to the same SoC are deduped before writing, so this can be lower than
-                          the submitted array length.
+                          Number of distinct SoCs processed (written, or deleted for entries whose
+                          decision is `keep`). Entries in the request that normalize to the same
+                          SoC are deduped before processing, so this can be lower than the
+                          submitted array length.
                         example: 2
         '400':
-          description: Invalid body (not an array, empty, too many entries, or an invalid soc/decision)
+          description: >-
+            Invalid body (malformed JSON, not an array, empty, too many entries, or an invalid
+            soc/decision)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
               example:
                 ok: false
-                error: "entries[0]: 'decision' must be one of: exclude, below-minspec"
+                error: "entries[0]: 'decision' must be one of: exclude, below-minspec, keep"
         '401':
           $ref: '#/components/responses/DeviceSupportUnauthorized'
         '403':
@@ -844,6 +852,10 @@ paths:
           type: string
           maxLength: 64
         example: MT6765
+        description: >-
+          56 of the seeded SoCs contain a literal `/` (e.g. `MT6761V/CA`) -- percent-encode it as
+          `%2F` in the path (e.g. `/backoffice/device-support/MT6761V%2FCA`). An un-encoded slash
+          is parsed as an extra path segment and never reaches this route.
     put:
       tags:
         - Device Support
@@ -870,7 +882,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/DeviceSupportEntryResponse'
         '400':
-          description: Invalid soc or decision
+          description: Invalid soc or decision (or malformed JSON body)
           content:
             application/json:
               schema:
@@ -1873,7 +1885,13 @@ components:
       description: |
         'exclude' (Play Store excluded) and 'below-minspec' (kept but under the recommended
         spec) are stored per-SoC; 'keep' is the implicit default for any SoC with no row and is
-        never itself stored.
+        never itself stored -- except as an input to the bulk-upsert request, where it means
+        "delete this row" (see BulkUpsertDeviceSupportRequest).
+
+    DeviceSupportStoredDecision:
+      type: string
+      enum: [exclude, below-minspec]
+      description: The two values a device_soc_support row can actually hold.
 
     DeviceSupportResponse:
       type: object
@@ -1909,7 +1927,7 @@ components:
           description: Stored with its natural spacing; lookups are case- and whitespace-insensitive
           example: MT6765
         decision:
-          $ref: '#/components/schemas/DeviceSupportDecision'
+          $ref: '#/components/schemas/DeviceSupportStoredDecision'
         updatedAt:
           type: string
           format: date-time
@@ -1981,7 +1999,8 @@ components:
                 maxLength: 64
               decision:
                 type: string
-                enum: [exclude, below-minspec]
+                enum: [exclude, below-minspec, keep]
+                description: "'keep' deletes this soc's row instead of upserting it"
 
     AttestChallengeResponse:
       type: object

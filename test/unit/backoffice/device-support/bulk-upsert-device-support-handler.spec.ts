@@ -111,4 +111,33 @@ describe('bulk-upsert-device-support-handler', () => {
 
     expect(response.status).toBe(500)
   })
+
+  it("should accept a 'keep' decision (reverts that soc instead of storing it)", async () => {
+    const entries = [{ soc: 'MT6765', decision: 'keep' }]
+
+    const response = await bulkUpsertDeviceSupportHandler(createContext(ALLOWED_ADDRESS, { entries }) as any)
+
+    expect(response.status).toBe(200)
+    expect(mockDeviceSupportDb.bulkUpsert).toHaveBeenCalledWith(entries, ALLOWED_ADDRESS)
+  })
+
+  it('should return 400, not 500, for a malformed JSON body', async () => {
+    const context = {
+      components: { deviceSupportDb: mockDeviceSupportDb, logs: mockLogs, config: mockConfig },
+      verification: { auth: ALLOWED_ADDRESS },
+      request: { json: () => Promise.reject(new SyntaxError('Unexpected end of JSON input')) }
+    }
+
+    const response = await bulkUpsertDeviceSupportHandler(context as any)
+
+    expect(response.status).toBe(400)
+    expect(mockDeviceSupportDb.bulkUpsert).not.toHaveBeenCalled()
+  })
+
+  it('should return 400, not 500, when the parsed body is null', async () => {
+    const response = await bulkUpsertDeviceSupportHandler(createContext(ALLOWED_ADDRESS, null) as any)
+
+    expect(response.status).toBe(400)
+    expect(mockDeviceSupportDb.bulkUpsert).not.toHaveBeenCalled()
+  })
 })

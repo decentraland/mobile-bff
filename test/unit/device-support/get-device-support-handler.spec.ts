@@ -54,13 +54,20 @@ describe('get-device-support-handler', () => {
     expect(mockDeviceSupportDb.getDecision).toHaveBeenCalledWith('MT6765')
   })
 
-  it('should query and echo back the normalized (trimmed, uppercased) soc, not the raw query value', async () => {
+  it('should echo back the normalized (trimmed, uppercased) soc, not the raw query value', async () => {
     mockDeviceSupportDb.getDecision.mockResolvedValue('below-minspec')
 
     const response = await getDeviceSupportHandler(createContext(' exynos 7420 ') as any)
 
-    expect(mockDeviceSupportDb.getDecision).toHaveBeenCalledWith('EXYNOS 7420')
     expect(response.body.data.soc).toBe('EXYNOS 7420')
+  })
+
+  it('should pass the raw (unnormalized) soc to getDecision -- it normalizes internally', async () => {
+    mockDeviceSupportDb.getDecision.mockResolvedValue('below-minspec')
+
+    await getDeviceSupportHandler(createContext(' exynos 7420 ') as any)
+
+    expect(mockDeviceSupportDb.getDecision).toHaveBeenCalledWith(' exynos 7420 ')
   })
 
   it("should default to 'keep' for an unknown soc", async () => {

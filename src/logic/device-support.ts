@@ -31,14 +31,23 @@ export function validateDecision(decision: unknown): string | null {
   return null
 }
 
-// Only handles case here (trim + uppercase). Whitespace-insensitivity is a separate concern
-// handled at the db layer (device-support-db.ts's soc_key generated column, backed by a unique
-// index), not here -- 18 of the 320 seeded socs have an internal space (e.g. "EXYNOS 7420"), and
-// callers should not assume this function's output is what actually gets matched against.
-// The exact string the client sends can't be verified from this repo (the godot-explorer side of
-// this feature isn't committed there yet), so treat this as a best-effort normalization, not a
-// guarantee: device_support_lookup_total{found=false} (see the adapter) is what actually catches
-// a real-world mismatch this function doesn't anticipate.
+// Bulk entries may also carry 'keep' -- see BulkUpsertEntry in device-support-db.ts, where it
+// means "delete this row if present" rather than "store it".
+export function validatePublicDecision(decision: unknown): string | null {
+  if (typeof decision !== 'string' || !PUBLIC_DECISIONS.includes(decision as PublicDecision)) {
+    return `'decision' must be one of: ${PUBLIC_DECISIONS.join(', ')}`
+  }
+  return null
+}
+
+// Case-folds and trims for display/storage (soc_model keeps its natural spacing).
 export function normalizeSoc(soc: string): string {
   return soc.trim().toUpperCase()
+}
+
+// Mirrors the db's soc_key generated column (UPPER(REPLACE(TRIM(soc_model), ' ', ''))). The one
+// place that derives the matching key, so lookups, upserts, deletes and the bulk dedupe can never
+// drift from what ON CONFLICT (soc_key) actually matches against.
+export function toSocKey(soc: string): string {
+  return normalizeSoc(soc).replace(/ /g, '')
 }

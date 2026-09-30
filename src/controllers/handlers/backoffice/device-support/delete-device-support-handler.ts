@@ -1,7 +1,7 @@
 import { DecentralandSignatureContext } from '@dcl/crypto-middleware'
 import { HandlerContextWithPath } from '../../../../types'
 import { isAllowedUser } from '../../../../logic/allowed-users'
-import { validateSoc } from '../../../../logic/device-support'
+import { validateSoc, normalizeSoc } from '../../../../logic/device-support'
 
 export async function deleteDeviceSupportHandler(
   context: HandlerContextWithPath<'deviceSupportDb' | 'logs' | 'config', '/backoffice/device-support/:soc'>
@@ -38,7 +38,9 @@ export async function deleteDeviceSupportHandler(
 
     logger.info('Device support entry deleted', { soc, deletedBy: userAddress })
 
-    return { status: 200, body: { ok: true, data: { soc } } }
+    // Echoes the normalized soc, matching upsert and the public GET -- a raw-cased path param
+    // (e.g. 'mt6765') would otherwise disagree with the stored 'MT6765' a caller is tracking.
+    return { status: 200, body: { ok: true, data: { soc: normalizeSoc(soc) } } }
   } catch (error) {
     logger.error('Error deleting device support entry', {
       error: (error as Error).message,

@@ -82,4 +82,18 @@ describe('upsert-device-support-handler', () => {
 
     expect(response.status).toBe(500)
   })
+
+  it('should return 400, not 500, for a malformed JSON body', async () => {
+    const context = {
+      components: { deviceSupportDb: mockDeviceSupportDb, logs: mockLogs, config: mockConfig },
+      verification: { auth: ALLOWED_ADDRESS },
+      params: { soc: 'MT6765' },
+      request: { json: () => Promise.reject(new SyntaxError('Unexpected end of JSON input')) }
+    }
+
+    const response = await upsertDeviceSupportHandler(context as any)
+
+    expect(response.status).toBe(400)
+    expect(mockDeviceSupportDb.upsert).not.toHaveBeenCalled()
+  })
 })

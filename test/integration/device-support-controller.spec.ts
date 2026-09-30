@@ -1,6 +1,7 @@
 import { Authenticator } from '@dcl/crypto'
 import { test } from '../components'
 import { getAuthHeaders, getIdentity, Identity } from '../utils/signed-fetch'
+import { restoreDeviceSupportSeededState } from '../utils/device-support-seed-state'
 
 test('device support endpoints', function ({ components }) {
   it('GET /device-support?soc=MT6765 responds with the seeded decision', async () => {
@@ -60,8 +61,11 @@ test('backoffice device support endpoints with signed fetch', function ({ compon
   })
 
   afterAll(async () => {
-    // Leave the shared mobile_test database in its seeded state for other suites
-    await components.pg.query(`DELETE FROM device_soc_support WHERE updated_by IS NOT NULL`)
+    // Leave the shared mobile_test database (and this process's device-support cache) in their
+    // seeded state for other suites/tests -- see restoreDeviceSupportSeededState for why this
+    // restores rather than just deletes rows with a non-null updated_by.
+    await restoreDeviceSupportSeededState(components.pg)
+    await components.cache.clear()
     if (originalAllowedUsers === undefined) {
       delete process.env.ALLOWED_USERS
     } else {
@@ -145,6 +149,20 @@ test('backoffice device support endpoints with signed fetch', function ({ compon
     expect((await check1.json()).data.decision).toBe('exclude')
   })
 
+  it("bulk-upsert deletes a soc whose decision is 'keep', reverting it to the public default", async () => {
+    await makeSignedRequest(identity, 'PUT', '/backoffice/device-support/integration-bulk-keep', { decision: 'exclude' })
+
+    const response = await makeSignedRequest(identity, 'PUT', '/backoffice/device-support', {
+      entries: [{ soc: 'integration-bulk-keep', decision: 'keep' }]
+    })
+
+    expect(response.status).toBe(200)
+    expect((await response.json()).data.count).toBe(1)
+
+    const check = await components.localFetch.fetch('/device-support?soc=integration-bulk-keep')
+    expect((await check.json()).data.decision).toBe('keep')
+  })
+
   it('rejects an invalid decision with 400', async () => {
     const response = await makeSignedRequest(
       identity, 'PUT', '/backoffice/device-support/bad-entry', { decision: 'nope' }
@@ -153,10 +171,44 @@ test('backoffice device support endpoints with signed fetch', function ({ compon
     expect(response.status).toBe(400)
   })
 
+  it('rejects a malformed JSON body with 400, not 500', async () => {
+    const { localFetch } = components
+    const headers: Record<string, string> = {
+      ...getAuthHeaders('PUT', '/backoffice/device-support/bad-json', { origin: 'https://play.decentraland.org' }, (payload) =>
+        Authenticator.signPayload(
+          {
+            ephemeralIdentity: identity.ephemeralIdentity,
+            expiration: new Date(Date.now() + 60 * 1000),
+            authChain: identity.authChain.authChain
+          },
+          payload
+        )
+      ),
+      'Content-Type': 'application/json'
+    }
+
+    const response = await localFetch.fetch('/backoffice/device-support/bad-json', {
+      method: 'PUT',
+      headers,
+      body: '{not valid json'
+    })
+
+    expect(response.status).toBe(400)
+  })
+
   it('responds 404 when deleting a missing entry', async () => {
     const response = await makeSignedRequest(identity, 'DELETE', '/backoffice/device-support/does-not-exist')
 
     expect(response.status).toBe(404)
+  })
+
+  it('deletes a soc containing a slash when percent-encoded', async () => {
+    await makeSignedRequest(identity, 'PUT', '/backoffice/device-support/integration%2Fslashed', { decision: 'exclude' })
+
+    const response = await makeSignedRequest(identity, 'DELETE', '/backoffice/device-support/integration%2Fslashed')
+
+    expect(response.status).toBe(200)
+    expect((await response.json()).data.soc).toBe('INTEGRATION/SLASHED')
   })
 
   it('responds 403 when signed by a user not in ALLOWED_USERS', async () => {

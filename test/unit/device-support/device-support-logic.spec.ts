@@ -1,4 +1,11 @@
-import { validateSoc, validateDecision, normalizeSoc, SOC_MAX_LENGTH } from '../../../src/logic/device-support'
+import {
+  validateSoc,
+  validateDecision,
+  validatePublicDecision,
+  normalizeSoc,
+  toSocKey,
+  SOC_MAX_LENGTH
+} from '../../../src/logic/device-support'
 
 describe('device-support logic', () => {
   describe('validateSoc', () => {
@@ -35,10 +42,32 @@ describe('device-support logic', () => {
     })
   })
 
+  describe('validatePublicDecision', () => {
+    it('accepts the two stored decisions plus keep, and rejects anything else', () => {
+      expect(validatePublicDecision('exclude')).toBeNull()
+      expect(validatePublicDecision('below-minspec')).toBeNull()
+      expect(validatePublicDecision('keep')).toBeNull()
+      expect(validatePublicDecision('nope')).toMatch(/must be one of/)
+      expect(validatePublicDecision(undefined)).toMatch(/must be one of/)
+    })
+  })
+
   describe('normalizeSoc', () => {
     it('trims and uppercases without touching internal spacing', () => {
       expect(normalizeSoc('  exynos 7420  ')).toBe('EXYNOS 7420')
       expect(normalizeSoc('mt6765')).toBe('MT6765')
+    })
+  })
+
+  describe('toSocKey', () => {
+    it('trims, uppercases and strips internal spaces', () => {
+      expect(toSocKey('  exynos 7420  ')).toBe('EXYNOS7420')
+      expect(toSocKey('EXYNOS7420')).toBe('EXYNOS7420')
+      expect(toSocKey('mt6765')).toBe('MT6765')
+    })
+
+    it('produces the same key for spacing/casing variants of the same chip', () => {
+      expect(toSocKey('Exynos 7420')).toBe(toSocKey('EXYNOS7420'))
     })
   })
 })

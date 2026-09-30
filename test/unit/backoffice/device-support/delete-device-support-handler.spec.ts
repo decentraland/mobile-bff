@@ -60,6 +60,14 @@ describe('delete-device-support-handler', () => {
     expect(response.body).toEqual({ ok: true, data: { soc: 'MT6765' } })
   })
 
+  it('should echo the normalized soc, not the raw path param', async () => {
+    const response = await deleteDeviceSupportHandler(createContext(ALLOWED_ADDRESS, ' mt6765 ') as any)
+
+    expect(response.status).toBe(200)
+    expect(mockDeviceSupportDb.delete).toHaveBeenCalledWith(' mt6765 ')
+    expect(response.body).toEqual({ ok: true, data: { soc: 'MT6765' } })
+  })
+
   it('should return 404 for a missing entry', async () => {
     mockDeviceSupportDb.delete.mockResolvedValue(false)
 

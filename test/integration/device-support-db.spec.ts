@@ -4,6 +4,8 @@ import { createMetricsComponent } from '@well-known-components/metrics'
 import { createPgComponent, IPgComponent } from '@well-known-components/pg-component'
 import { metricDeclarations } from '../../src/metrics'
 import { createDeviceSupportDbComponent, IDeviceSupportDbComponent } from '../../src/adapters/device-support-db'
+import { createCacheComponent, ICacheComponent } from '../../src/adapters/cache'
+import { restoreDeviceSupportSeededState } from '../utils/device-support-seed-state'
 
 // These tests require a real PostgreSQL database and are designed to run in CI
 // Skip locally if PostgreSQL is not available
@@ -13,6 +15,7 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
   const TEST_ADDRESS = '0x1234567890123456789012345678901234567890'
 
   let pg: IPgComponent
+  let cache: ICacheComponent
   let deviceSupportDb: IDeviceSupportDbComponent
 
   beforeAll(async () => {
@@ -36,24 +39,25 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
     // Start the pg component to run migrations
     await pg.start()
 
-    deviceSupportDb = await createDeviceSupportDbComponent({ pg, metrics })
+    cache = await createCacheComponent({ config })
+    deviceSupportDb = await createDeviceSupportDbComponent({ pg, metrics, cache })
   })
 
   afterAll(async () => {
     if (pg) {
       // Leave the shared mobile_test database in its seeded state for other suites
-      await restoreSeededState()
+      await restoreDeviceSupportSeededState(pg)
       await pg.stop()
     }
   })
 
-  beforeEach(restoreSeededState)
-
-  // The migration's ~320 seed rows all have updated_by = NULL. Every test below writes only to
-  // synthetic soc names, so anything with updated_by set is test fallout, safe to sweep away.
-  async function restoreSeededState() {
-    await pg.query(`DELETE FROM device_soc_support WHERE updated_by IS NOT NULL`)
-  }
+  // restoreDeviceSupportSeededState writes with raw SQL, bypassing deviceSupportDb's own
+  // invalidation -- clearing the cache here (rather than relying on every test using a soc no
+  // other test touches) is what keeps a decision cached in one test from leaking into the next.
+  beforeEach(async () => {
+    await restoreDeviceSupportSeededState(pg)
+    await cache.clear()
+  })
 
   async function getDbConnectionString(config: any): Promise<string> {
     let databaseUrl: string | undefined = await config.getString('PG_COMPONENT_PSQL_CONNECTION_STRING')
@@ -157,9 +161,8 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
 
     it('should roll back the whole batch when one entry violates the decision CHECK constraint', async () => {
       // Bypasses the handler's own validation (which would reject this before it ever reaches
-      // the db) to exercise the adapter directly: bulkUpsert is a single multi-row INSERT, so
-      // Postgres's own statement-level atomicity is what guarantees neither row lands -- there's
-      // no explicit transaction to rely on.
+      // the db) to exercise the adapter directly: bulkUpsert runs in a transaction, so a CHECK
+      // violation on the insert rolls back the whole batch, not just the offending row.
       await expect(
         deviceSupportDb.bulkUpsert(
           [
@@ -191,6 +194,39 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
 
       const all = await deviceSupportDb.getAll()
       expect(all.filter(e => e.soc.replace(/ /g, '') === 'TESTDUPSPACED')).toHaveLength(1)
+    })
+
+    it("should delete a row when its bulk entry's decision is 'keep'", async () => {
+      await deviceSupportDb.upsert('test-bulk-keep', 'exclude', TEST_ADDRESS)
+
+      const count = await deviceSupportDb.bulkUpsert([{ soc: 'test-bulk-keep', decision: 'keep' }], TEST_ADDRESS)
+
+      expect(count).toBe(1)
+      expect(await deviceSupportDb.getDecision('test-bulk-keep')).toBe('keep')
+      expect((await deviceSupportDb.getAll()).find(e => e.soc === 'TEST-BULK-KEEP')).toBeUndefined()
+    })
+
+    it('should mix deletes and upserts in the same call, atomically', async () => {
+      await deviceSupportDb.upsert('test-bulk-mixed-keep', 'exclude', TEST_ADDRESS)
+
+      const count = await deviceSupportDb.bulkUpsert(
+        [
+          { soc: 'test-bulk-mixed-keep', decision: 'keep' },
+          { soc: 'test-bulk-mixed-new', decision: 'below-minspec' }
+        ],
+        TEST_ADDRESS
+      )
+
+      expect(count).toBe(2)
+      expect(await deviceSupportDb.getDecision('test-bulk-mixed-keep')).toBe('keep')
+      expect(await deviceSupportDb.getDecision('test-bulk-mixed-new')).toBe('below-minspec')
+    })
+
+    it("no-ops on a 'keep' entry for a soc that has no row", async () => {
+      const count = await deviceSupportDb.bulkUpsert([{ soc: 'test-bulk-keep-missing', decision: 'keep' }], TEST_ADDRESS)
+
+      expect(count).toBe(1)
+      expect(await deviceSupportDb.getDecision('test-bulk-keep-missing')).toBe('keep')
     })
   })
 
