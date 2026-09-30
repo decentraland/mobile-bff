@@ -46,6 +46,14 @@ export const metricDeclarations = {
     help: 'Calls forwarded to the Thirdweb sign-message endpoint',
     type: IMetricsComponent.CounterType,
     labelNames: ['status_class']
+  },
+  // `found=false` is the only server-side signal that a client sent a SoC identifier this table
+  // has no opinion on -- which silently resolves to 'keep' either way, so without this a format
+  // mismatch (missing space, unstripped vendor prefix, an unseen chip) is invisible in production.
+  device_support_lookup_total: {
+    help: 'GET /device-support lookups by whether the queried SoC had a row',
+    type: IMetricsComponent.CounterType,
+    labelNames: ['found']
   }
 }
 

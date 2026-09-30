@@ -39,6 +39,10 @@ tags:
     description: Wallet operations gated by platform attestation
   - name: Feature Flags
     description: Runtime feature toggles consumed by the mobile clients (e.g. pulse, dual-channel)
+  - name: Device Support
+    description: |
+      Per-SoC device support decisions for godot-explorer's device-support-modals feature. The
+      client queries its own chipset instead of downloading the full exclude/below-minspec list.
   - name: Campaigns
     description: Ad/referrer campaign token to target scene mapping, resolved by the client on boot
   - name: Push
@@ -698,6 +702,244 @@ paths:
         '500':
           $ref: '#/components/responses/FeatureFlagServerError'
 
+  /device-support:
+    get:
+      tags:
+        - Device Support
+      summary: Get the support decision for one SoC
+      description: |
+        Answers "is this specific chipset supported?" for godot-explorer's device-support-modals
+        feature. The client sends the one SoC it detected on the device — not a list to check
+        locally — and gets back `exclude` (Play Store excluded), `below-minspec` (kept but under
+        the recommended spec) or `keep` (the default for any SoC with no override row).
+      operationId: getDeviceSupport
+      security: []
+      parameters:
+        - name: soc
+          in: query
+          required: true
+          schema:
+            type: string
+            maxLength: 64
+          example: MT6765
+          description: The chipset identifier as detected by the client (case- and whitespace-insensitive).
+      responses:
+        '200':
+          description: Decision for this SoC
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceSupportResponse'
+              example:
+                ok: true
+                data:
+                  soc: MT6765
+                  decision: exclude
+        '400':
+          description: Missing or invalid `soc` query parameter
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                ok: false
+                error: "'soc' is required and must be a non-empty string"
+        '500':
+          $ref: '#/components/responses/DeviceSupportServerError'
+
+  /backoffice/device-support:
+    get:
+      tags:
+        - Device Support
+      summary: List every device-support entry (backoffice)
+      description: |
+        Returns every SoC with a non-default decision (excludes 'keep' — those simply have no
+        row). Requires signed fetch (ADR-44) and the signer address in `ALLOWED_USERS`.
+      operationId: getBackofficeDeviceSupport
+      security:
+        - signedFetch: []
+      responses:
+        '200':
+          description: Device support entries retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceSupportListResponse'
+        '401':
+          $ref: '#/components/responses/DeviceSupportUnauthorized'
+        '403':
+          $ref: '#/components/responses/DeviceSupportForbidden'
+        '500':
+          $ref: '#/components/responses/DeviceSupportServerError'
+
+    put:
+      tags:
+        - Device Support
+      summary: Bulk upsert device-support entries (backoffice)
+      description: |
+        Creates, updates or deletes the decision for many SoCs in one call — the intended way to
+        load or refresh the list from the PM's spreadsheet. A `decision` of `keep` deletes that
+        SoC's row instead of upserting it, which is how a paste of the full sheet reverts a SoC
+        that moved back to `keep` or was dropped from the sheet entirely — without it, only a
+        per-soc DELETE could revert an already-loaded SoC. Runs atomically: an invalid entry
+        anywhere in the array, or a DB error partway through, leaves no partial writes. Entries
+        that normalize to the same SoC (matching case/whitespace) are deduped first, keeping the
+        last occurrence — see `count` below. Requires signed fetch (ADR-44) and the signer address
+        in `ALLOWED_USERS`.
+      operationId: bulkUpsertDeviceSupport
+      security:
+        - signedFetch: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BulkUpsertDeviceSupportRequest'
+            example:
+              entries:
+                - soc: MT6765
+                  decision: exclude
+                - soc: SM4350
+                  decision: below-minspec
+                - soc: SDM845
+                  decision: keep
+      responses:
+        '200':
+          description: Entries upserted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      count:
+                        type: integer
+                        description: >-
+                          Number of distinct SoCs processed (written, or deleted for entries whose
+                          decision is `keep`). Entries in the request that normalize to the same
+                          SoC are deduped before processing, so this can be lower than the
+                          submitted array length.
+                        example: 2
+        '400':
+          description: >-
+            Invalid body (malformed JSON, not an array, empty, too many entries, or an invalid
+            soc/decision)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                ok: false
+                error: "entries[0]: 'decision' must be one of: exclude, below-minspec, keep"
+        '401':
+          $ref: '#/components/responses/DeviceSupportUnauthorized'
+        '403':
+          $ref: '#/components/responses/DeviceSupportForbidden'
+        '500':
+          $ref: '#/components/responses/DeviceSupportServerError'
+
+  /backoffice/device-support/{soc}:
+    parameters:
+      - name: soc
+        in: path
+        required: true
+        schema:
+          type: string
+          maxLength: 64
+        example: MT6765
+        description: >-
+          56 of the seeded SoCs contain a literal `/` (e.g. `MT6761V/CA`) -- percent-encode it as
+          `%2F` in the path (e.g. `/backoffice/device-support/MT6761V%2FCA`). An un-encoded slash
+          is parsed as an extra path segment and never reaches this route.
+    put:
+      tags:
+        - Device Support
+      summary: Upsert one device-support entry (backoffice)
+      description: |
+        Creates or updates the decision for a single SoC. Requires signed fetch (ADR-44) and the
+        signer address in `ALLOWED_USERS`.
+      operationId: upsertDeviceSupport
+      security:
+        - signedFetch: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpsertDeviceSupportRequest'
+            example:
+              decision: exclude
+      responses:
+        '200':
+          description: Entry upserted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceSupportEntryResponse'
+        '400':
+          description: Invalid soc or decision (or malformed JSON body)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                ok: false
+                error: "'decision' must be one of: exclude, below-minspec"
+        '401':
+          $ref: '#/components/responses/DeviceSupportUnauthorized'
+        '403':
+          $ref: '#/components/responses/DeviceSupportForbidden'
+        '500':
+          $ref: '#/components/responses/DeviceSupportServerError'
+
+    delete:
+      tags:
+        - Device Support
+      summary: Delete a device-support entry (backoffice)
+      description: |
+        Removes the override for this SoC — it reverts to the default `keep` decision. Requires
+        signed fetch (ADR-44) and the signer address in `ALLOWED_USERS`.
+      operationId: deleteDeviceSupport
+      security:
+        - signedFetch: []
+      responses:
+        '200':
+          description: Entry deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      soc:
+                        type: string
+                        example: MT6765
+        '401':
+          $ref: '#/components/responses/DeviceSupportUnauthorized'
+        '403':
+          $ref: '#/components/responses/DeviceSupportForbidden'
+        '404':
+          description: No device-support entry for this SoC
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                ok: false
+                error: "No device-support entry for 'not-a-soc'"
+        '500':
+          $ref: '#/components/responses/DeviceSupportServerError'
+
   /campaigns:
     get:
       tags:
@@ -1268,6 +1510,35 @@ components:
           example:
             ok: false
             error: Internal server error
+    DeviceSupportUnauthorized:
+      description: Unauthorized - Invalid or missing signed fetch
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            unauthorized:
+              $ref: '#/components/examples/UnauthorizedError'
+            signedFetchError:
+              $ref: '#/components/examples/SignedFetchError'
+    DeviceSupportForbidden:
+      description: Forbidden - signer address not in ALLOWED_USERS
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            ok: false
+            error: "Forbidden: User not in allowed list"
+    DeviceSupportServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            ok: false
+            error: Internal server error
     CampaignUnauthorized:
       description: Unauthorized - Invalid or missing signed fetch
       content:
@@ -1607,6 +1878,129 @@ components:
           maxLength: 500
           nullable: true
           description: Pass null to clear the description
+
+    DeviceSupportDecision:
+      type: string
+      enum: [exclude, below-minspec, keep]
+      description: |
+        'exclude' (Play Store excluded) and 'below-minspec' (kept but under the recommended
+        spec) are stored per-SoC; 'keep' is the implicit default for any SoC with no row and is
+        never itself stored -- except as an input to the bulk-upsert request, where it means
+        "delete this row" (see BulkUpsertDeviceSupportRequest).
+
+    DeviceSupportStoredDecision:
+      type: string
+      enum: [exclude, below-minspec]
+      description: The two values a device_soc_support row can actually hold.
+
+    DeviceSupportResponse:
+      type: object
+      required:
+        - ok
+        - data
+      properties:
+        ok:
+          type: boolean
+          example: true
+        data:
+          type: object
+          required:
+            - soc
+            - decision
+          properties:
+            soc:
+              type: string
+              example: MT6765
+            decision:
+              $ref: '#/components/schemas/DeviceSupportDecision'
+
+    DeviceSupportEntry:
+      type: object
+      required:
+        - soc
+        - decision
+        - updatedAt
+        - updatedBy
+      properties:
+        soc:
+          type: string
+          description: Stored with its natural spacing; lookups are case- and whitespace-insensitive
+          example: MT6765
+        decision:
+          $ref: '#/components/schemas/DeviceSupportStoredDecision'
+        updatedAt:
+          type: string
+          format: date-time
+          example: "2026-09-29T00:00:00.000Z"
+        updatedBy:
+          type: string
+          nullable: true
+          description: Wallet address of the last editor (null for untouched seeds)
+          example: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+
+    DeviceSupportEntryResponse:
+      type: object
+      required:
+        - ok
+        - data
+      properties:
+        ok:
+          type: boolean
+          example: true
+        data:
+          $ref: '#/components/schemas/DeviceSupportEntry'
+
+    DeviceSupportListResponse:
+      type: object
+      required:
+        - ok
+        - data
+      properties:
+        ok:
+          type: boolean
+          example: true
+        data:
+          type: object
+          required:
+            - entries
+          properties:
+            entries:
+              type: array
+              items:
+                $ref: '#/components/schemas/DeviceSupportEntry'
+
+    UpsertDeviceSupportRequest:
+      type: object
+      required:
+        - decision
+      properties:
+        decision:
+          type: string
+          enum: [exclude, below-minspec]
+          description: "'keep' is not a storable value -- delete the entry instead to revert to it"
+
+    BulkUpsertDeviceSupportRequest:
+      type: object
+      required:
+        - entries
+      properties:
+        entries:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items:
+            type: object
+            required:
+              - soc
+              - decision
+            properties:
+              soc:
+                type: string
+                maxLength: 64
+              decision:
+                type: string
+                enum: [exclude, below-minspec, keep]
+                description: "'keep' deletes this soc's row instead of upserting it"
 
     AttestChallengeResponse:
       type: object

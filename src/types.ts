@@ -19,6 +19,7 @@ import { ICacheComponent } from './adapters/cache'
 import { IDestinationsApiComponent } from './adapters/destinations-api'
 import { IAppVersionsDbComponent } from './adapters/app-versions-db'
 import { IFeatureFlagsDbComponent } from './adapters/feature-flags-db'
+import { IDeviceSupportDbComponent } from './adapters/device-support-db'
 import { ICampaignsDbComponent } from './adapters/campaigns-db'
 import { IPushDbComponent } from './adapters/push-db'
 import { IFcmComponent } from './adapters/fcm'
@@ -54,6 +55,7 @@ export type BaseComponents = {
   destinationsApi: IDestinationsApiComponent
   appVersionsDb: IAppVersionsDbComponent
   featureFlagsDb: IFeatureFlagsDbComponent
+  deviceSupportDb: IDeviceSupportDbComponent
   campaignsDb: ICampaignsDbComponent
   pushDb: IPushDbComponent
   fcm: IFcmComponent

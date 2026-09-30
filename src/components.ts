@@ -21,6 +21,7 @@ import { createCacheComponent } from './adapters/cache'
 import { createDestinationsApiComponent } from './adapters/destinations-api'
 import { createAppVersionsDbComponent } from './adapters/app-versions-db'
 import { createFeatureFlagsDbComponent } from './adapters/feature-flags-db'
+import { createDeviceSupportDbComponent } from './adapters/device-support-db'
 import { createCampaignsDbComponent } from './adapters/campaigns-db'
 import { createPushDbComponent } from './adapters/push-db'
 import { createFcmComponent } from './adapters/fcm'
@@ -69,6 +70,7 @@ export async function initComponents(): Promise<AppComponents> {
   const destinationsApi = await createDestinationsApiComponent({ fetch, config, cache, logs })
   const appVersionsDb = await createAppVersionsDbComponent({ pg })
   const featureFlagsDb = await createFeatureFlagsDbComponent({ pg })
+  const deviceSupportDb = await createDeviceSupportDbComponent({ pg, metrics, cache })
   const campaignsDb = await createCampaignsDbComponent({ pg })
   const pushDb = await createPushDbComponent({ pg })
   const fcm = await createFcmComponent({ config, logs })
@@ -107,6 +109,7 @@ export async function initComponents(): Promise<AppComponents> {
     destinationsApi,
     appVersionsDb,
     featureFlagsDb,
+    deviceSupportDb,
     campaignsDb,
     pushDb,
     fcm,
