@@ -74,7 +74,7 @@ export async function initComponents(): Promise<AppComponents> {
   const pushDb = await createPushDbComponent({ pg })
   const fcm = await createFcmComponent({ config, logs })
   const apns = await createApnsComponent({ config, logs })
-  const pushDispatcher = await createPushDispatcherComponent({ config, logs, pushDb, fcm })
+  const pushDispatcher = await createPushDispatcherComponent({ config, logs, pushDb, fcm, apns })
   const appAttest = await createAppAttestComponent({ config })
   const playIntegrity = await createPlayIntegrityComponent({ config })
   const attestationVerifier = await createAttestationVerifierComponent({

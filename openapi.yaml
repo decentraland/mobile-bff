@@ -1020,8 +1020,10 @@ paths:
         - Push
       summary: Upload the audience (backoffice)
       description: |
-        Replaces the campaign's audience with a `user_id,fcm_token` CSV exported from the
-        warehouse. An optional header row is skipped.
+        Replaces the campaign's audience with a `user_id,token[,platform]` CSV exported
+        from the warehouse. An optional header row is skipped. `platform` is `android` (FCM)
+        or `ios` (APNs); when the column is missing it is read off the token's shape, so a
+        plain `user_id,fcm_token` export still works.
 
         Uploading means "this is the list", not "add these". Rows are de-duplicated by
         `user_id` (the last one wins), tokens already known to be dead are subtracted, and
@@ -1047,8 +1049,9 @@ paths:
             schema:
               type: string
               example: |
-                user_id,fcm_token
-                8f2c...,fMEP9...
+                user_id,token,platform
+                8f2c...,fMEP9...,android
+                91ab...,3f0a...(64 hex),ios
       responses:
         '200':
           description: Audience replaced, with a report of what was accepted
