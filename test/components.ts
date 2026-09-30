@@ -1,6 +1,7 @@
 // This file is the "test-environment" analogous for src/components.ts
 // Here we define the test components to be used in the testing environment
 
+import { generateKeyPairSync } from "node:crypto"
 import { createRunner, createLocalFetchCompoment } from "@well-known-components/test-helpers"
 import { createDotEnvConfigComponent } from "@well-known-components/env-config-provider"
 
@@ -63,6 +64,15 @@ async function initComponents(): Promise<TestComponents> {
       }),
       'utf8'
     ).toString('base64')
+
+  // APNs auth key: createApnsComponent parses the .p8 at construction and only signs at
+  // send time, which the integration tests never reach, so a throwaway EC key is enough.
+  if (!process.env.APNS_KEY_P8) {
+    const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
+    process.env.APNS_KEY_P8 = Buffer.from(privateKey.export({ type: 'pkcs8', format: 'pem' })).toString('base64')
+    process.env.APNS_KEY_ID = 'TESTKEYID0'
+    process.env.APNS_TEAM_ID = 'TESTTEAM00'
+  }
 
   const components = await originalInitComponents()
 
