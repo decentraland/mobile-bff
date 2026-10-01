@@ -1,6 +1,7 @@
 import { DecentralandSignatureContext } from '@dcl/crypto-middleware'
 import { HandlerContextWithPath } from '../../../../types'
 import { withAttribution } from '../../../../adapters/push-dispatcher'
+import { platformForToken } from '../../../../logic/push'
 import { requireBackofficeUser, notFound } from './shared'
 
 // Small on purpose: this is "check it on my phone", not a second way to run a campaign.
@@ -15,14 +16,18 @@ const MAX_TEST_TOKENS = 5
  *
  * Recipients come from the request when given, otherwise from PUSH_TEST_TOKENS. The env var
  * is a placeholder for a decision that is still open (who the team test list is); it works
- * today because whoever is testing can paste their own device token.
+ * today because whoever is testing can paste their own device token. FCM and APNs tokens
+ * can be mixed: each is routed by its shape.
  */
 export async function testSendPushCampaignHandler(
-  context: HandlerContextWithPath<'pushDb' | 'fcm' | 'logs' | 'config', '/backoffice/push/campaigns/:id/test'> &
+  context: HandlerContextWithPath<
+    'pushDb' | 'fcm' | 'apns' | 'logs' | 'config',
+    '/backoffice/push/campaigns/:id/test'
+  > &
     DecentralandSignatureContext<any>
 ) {
   const {
-    components: { pushDb, fcm, logs, config },
+    components: { pushDb, fcm, apns, logs, config },
     verification,
     params,
     request
@@ -75,7 +80,8 @@ export async function testSendPushCampaignHandler(
         // A fresh push_id per test send, so re-testing the same campaign on the same device
         // is not swallowed by the client's de-duplication.
         const pushId = `push_test_${campaign.id}_${Date.now()}_${index}`
-        const result = await fcm.send({
+        const sender = platformForToken(token) === 'ios' ? apns : fcm
+        const result = await sender.send({
           token,
           pushId,
           campaignKey: campaign.campaignKey,

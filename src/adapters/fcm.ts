@@ -19,33 +19,12 @@
 
 import { google } from 'googleapis'
 import { AppComponents } from '../types'
+import { IPushSender, PushMessage, SendResult } from './push-sender'
 
 const FCM_SCOPE = 'https://www.googleapis.com/auth/firebase.messaging'
 const SEND_TIMEOUT_MS = 10_000
 
-export type PushMessage = {
-  token: string
-  /** Unique per delivery; the client de-duplicates on it. */
-  pushId: string
-  campaignKey: string
-  title: string
-  body: string
-  deepLink: string
-  imageUrl: string | null
-  category: string
-  ttlSeconds: number
-}
-
-// Discriminated by a string rather than a boolean `ok`: the test tsconfig does not enable
-// strict mode, and without strictNullChecks a boolean-literal discriminant does not narrow,
-// so every consumer would need a cast to read the failure fields.
-export type SendResult =
-  | { status: 'sent'; providerMsgId: string }
-  | { status: 'error'; errorCode: string; retryable: boolean; tokenIsDead: boolean }
-
-export type IFcmComponent = {
-  send(message: PushMessage): Promise<SendResult>
-}
+export type IFcmComponent = IPushSender
 
 // FCM's documented error codes, split by what we should do about them.
 //
