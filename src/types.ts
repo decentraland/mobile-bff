@@ -23,6 +23,8 @@ import { ICampaignsDbComponent } from './adapters/campaigns-db'
 import { IPushDbComponent } from './adapters/push-db'
 import { IFcmComponent } from './adapters/fcm'
 import { IApnsComponent } from './adapters/apns'
+import { ISnowflakeComponent } from './adapters/snowflake'
+import { IPushFeedComponent } from './adapters/push-feed'
 import { IPushDispatcherComponent } from './adapters/push-dispatcher'
 import { IAppAttestComponent } from './adapters/app-attest'
 import { IPlayIntegrityComponent } from './adapters/play-integrity'
@@ -60,6 +62,8 @@ export type BaseComponents = {
   fcm: IFcmComponent
   apns: IApnsComponent
   pushDispatcher: IPushDispatcherComponent
+  snowflake: ISnowflakeComponent
+  pushFeed: IPushFeedComponent
   appAttest: IAppAttestComponent
   playIntegrity: IPlayIntegrityComponent
   attestationVerifier: IAttestationVerifierComponent
