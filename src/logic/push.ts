@@ -38,6 +38,7 @@ export type CampaignContent = {
   imageUrl: string | null
   ttlSeconds: number
   scheduledAt: string | null
+  isRecurring: boolean
 }
 
 export function validateCampaignKey(key: unknown): string | null {
@@ -155,6 +156,14 @@ export function validateCampaignContent(body: any): { error: string } | { conten
     }
   }
 
+  // A recurring campaign is fed by the warehouse instead of by an uploaded audience, and never
+  // closes itself when its queue empties. Defaults to false: a campaign somebody is creating by
+  // hand in the backoffice is the one-shot kind unless they say otherwise.
+  const isRecurring = body?.isRecurring ?? false
+  if (typeof isRecurring !== 'boolean') {
+    return { error: "'isRecurring' must be a boolean when present" }
+  }
+
   return {
     content: {
       title: body.title.trim(),
@@ -162,7 +171,8 @@ export function validateCampaignContent(body: any): { error: string } | { conten
       deepLink,
       imageUrl,
       ttlSeconds,
-      scheduledAt
+      scheduledAt,
+      isRecurring
     }
   }
 }

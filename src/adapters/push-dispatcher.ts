@@ -21,7 +21,8 @@ export type TickResult = {
   sent: number
   failed: number
   retrying: number
-  finishedCampaigns: number
+  /** Campaigns whose queue emptied on this pass: closed, or returned to idle if recurring. */
+  drainedCampaigns: number
 }
 
 export type IPushDispatcherComponent = IBaseComponent & {
@@ -100,7 +101,7 @@ export async function createPushDispatcherComponent({
       sent: 0,
       failed: 0,
       retrying: 0,
-      finishedCampaigns: 0
+      drainedCampaigns: 0
     }
 
     result.reclaimed = await pushDb.reclaimStaleDeliveries(LEASE_SECONDS, MAX_ATTEMPTS)
@@ -133,7 +134,7 @@ export async function createPushDispatcherComponent({
     }
 
     const finished = await pushDb.finishDrainedCampaigns()
-    result.finishedCampaigns = finished.length
+    result.drainedCampaigns = finished.length
 
     if (result.claimed > 0 || result.reclaimed > 0 || finished.length > 0) {
       logger.info('Dispatch tick', {
@@ -142,7 +143,7 @@ export async function createPushDispatcherComponent({
         sent: result.sent,
         failed: result.failed,
         retrying: result.retrying,
-        finishedCampaigns: result.finishedCampaigns
+        drainedCampaigns: result.drainedCampaigns
       })
     }
 

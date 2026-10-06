@@ -24,8 +24,11 @@ export async function submitPushCampaignHandler(
       return notFound(params.id)
     }
     // An approver would otherwise be asked to sign off on a campaign that reaches nobody,
-    // and it would sit in `scheduled` forever with an empty queue.
-    if (campaign.audienceCount === 0) {
+    // and it would sit in `scheduled` forever with an empty queue. A recurring campaign is
+    // the exception: its audience arrives from the warehouse feed after approval, which is
+    // what approval unlocks, so it is submitted empty and stays that way until the first
+    // ingest. What the approver signs off on there is the copy and the fallback destination.
+    if (campaign.audienceCount === 0 && !campaign.isRecurring) {
       return { status: 409, body: { ok: false, error: 'Upload an audience before submitting for approval' } }
     }
 

@@ -84,7 +84,7 @@ describe('push attribution links', () => {
   })
 
 
-  function newCampaign(key: string) {
+  function newCampaign(key: string, isRecurring = false) {
     return {
       campaignKey: key,
       title: 'Come back',
@@ -93,6 +93,7 @@ describe('push attribution links', () => {
       imageUrl: null,
       ttlSeconds: 86400,
       scheduledAt: null,
+      isRecurring,
       createdBy: CREATOR
     }
   }
@@ -262,6 +263,7 @@ describe('push attribution links', () => {
       imageUrl: null,
       ttlSeconds: 86400,
       scheduledAt: null,
+      isRecurring: false,
       createdBy: CREATOR
     })
     await pushDb.replaceAudience(campaign.id, audience)
@@ -279,7 +281,7 @@ describe('push attribution links', () => {
 
     const result = await dispatcher.tick()
 
-    expect(result).toMatchObject({ claimed: 2, sent: 2, failed: 0, retrying: 0, finishedCampaigns: 1 })
+    expect(result).toMatchObject({ claimed: 2, sent: 2, failed: 0, retrying: 0, drainedCampaigns: 1 })
     expect((await pushDb.getCampaign(campaign.id))?.status).toBe('sent')
 
     // Each delivery carries its own push_id, and the deep link is attributed.
@@ -298,7 +300,7 @@ describe('push attribution links', () => {
 
     const result = await dispatcher.tick()
 
-    expect(result).toMatchObject({ claimed: 2, sent: 2, failed: 0, finishedCampaigns: 1 })
+    expect(result).toMatchObject({ claimed: 2, sent: 2, failed: 0, drainedCampaigns: 1 })
     expect(sent.map((m) => m.token)).toEqual(['token-android'])
     expect(sentIos.map((m) => m.token)).toEqual(['a'.repeat(64)])
     expect((await pushDb.getCampaign(campaign.id))?.status).toBe('sent')
@@ -319,7 +321,7 @@ describe('push attribution links', () => {
     const first = await dispatcher.tick()
     expect(first).toMatchObject({ claimed: 2, sent: 0, failed: 1, retrying: 1 })
     // The campaign is not finished while something is still queued for another attempt.
-    expect(first.finishedCampaigns).toBe(0)
+    expect(first.drainedCampaigns).toBe(0)
     expect((await pushDb.getCampaign(campaign.id))?.status).toBe('sending')
 
     // The uninstalled device is struck off so the next audience never pays for it again.
@@ -329,7 +331,7 @@ describe('push attribution links', () => {
     // Second pass: the retryable one is claimable again, and now it works.
     respond = () => ({ status: 'sent', providerMsgId: 'projects/test/messages/2' })
     const second = await dispatcher.tick()
-    expect(second).toMatchObject({ claimed: 1, sent: 1, finishedCampaigns: 1 })
+    expect(second).toMatchObject({ claimed: 1, sent: 1, drainedCampaigns: 1 })
     expect(sent.map((m) => m.token)).toEqual(['token-flaky', 'token-gone', 'token-flaky'])
 
     const stats = await pushDb.getStats(campaign.id)
@@ -347,7 +349,7 @@ describe('push attribution links', () => {
     const third = await dispatcher.tick()
 
     expect(sent).toHaveLength(3)
-    expect(third).toMatchObject({ failed: 1, retrying: 0, finishedCampaigns: 1 })
+    expect(third).toMatchObject({ failed: 1, retrying: 0, drainedCampaigns: 1 })
     expect(await pushDb.claimDeliveries(10)).toHaveLength(0)
     expect((await pushDb.getStats(campaign.id)).errors).toEqual({ UNAVAILABLE: 1 })
   })

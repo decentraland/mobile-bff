@@ -96,9 +96,10 @@ describe('validateCampaignContent', () => {
     const result = validateCampaignContent(valid)
 
     // 24h rather than FCM's four-week default: without it a Saturday event can land on
-    // Tuesday, and the reader has no way to know it was stale.
+    // Tuesday, and the reader has no way to know it was stale. One-shot unless asked: a
+    // campaign created by hand is not one the warehouse feed keeps refilling.
     expect(result).toEqual({
-      content: { ...valid, imageUrl: null, ttlSeconds: 86400, scheduledAt: null }
+      content: { ...valid, imageUrl: null, ttlSeconds: 86400, scheduledAt: null, isRecurring: false }
     })
   })
 
