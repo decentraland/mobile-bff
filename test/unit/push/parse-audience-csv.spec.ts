@@ -99,7 +99,15 @@ describe('validateCampaignContent', () => {
     // Tuesday, and the reader has no way to know it was stale. One-shot unless asked: a
     // campaign created by hand is not one the warehouse feed keeps refilling.
     expect(result).toEqual({
-      content: { ...valid, imageUrl: null, ttlSeconds: 86400, scheduledAt: null, isRecurring: false }
+      content: {
+        ...valid,
+        imageUrl: null,
+        ttlSeconds: 86400,
+        scheduledAt: null,
+        isRecurring: false,
+        triggerKey: null,
+        destinationKind: null
+      }
     })
   })
 

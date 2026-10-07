@@ -31,6 +31,41 @@ export function platformForToken(token: string): PushPlatform {
   return APNS_TOKEN_REGEX.test(token) ? 'ios' : 'android'
 }
 
+export const FEED_DESTINATION_KINDS = ['scene', 'plaza', 'discover'] as const
+export type FeedDestinationKind = (typeof FEED_DESTINATION_KINDS)[number]
+
+// A World is reached by realm and a Genesis City scene by position. The warehouse publishes
+// which one it is and the identifier; the link is built here, because this is where the
+// allow-list of routes the client accepts lives and where the result has to be safe to put in
+// a URL. Both patterns admit only characters that are already URL-safe, so a name or a
+// position that could add a parameter is rejected rather than escaped.
+const WORLD_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*(\.[a-z0-9-]+)+$/
+const BASE_POSITION_PATTERN = /^-?\d{1,4},-?\d{1,4}$/
+const TRIGGER_KEY_PATTERN = /^[a-z0-9]+$/
+
+export type FeedDestination = {
+  isWorld: boolean | null
+  worldName: string | null
+  basePosition: string | null
+}
+
+/**
+ * The deep link for a resolved scene destination, or null when the warehouse gave no usable
+ * identity. Null is not an error: `plaza` and `discover` rows carry none on purpose and fall
+ * back to their campaign's own link.
+ */
+export function destinationDeepLink(destination: FeedDestination): string | null {
+  if (destination.isWorld === true) {
+    const name = (destination.worldName ?? '').trim().toLowerCase()
+    return WORLD_NAME_PATTERN.test(name) ? `decentraland://open?realm=${name}` : null
+  }
+  if (destination.isWorld === false) {
+    const position = (destination.basePosition ?? '').trim()
+    return BASE_POSITION_PATTERN.test(position) ? `decentraland://open?position=${position}` : null
+  }
+  return null
+}
+
 export type CampaignContent = {
   title: string
   body: string
@@ -39,6 +74,8 @@ export type CampaignContent = {
   ttlSeconds: number
   scheduledAt: string | null
   isRecurring: boolean
+  triggerKey: string | null
+  destinationKind: FeedDestinationKind | null
 }
 
 export function validateCampaignKey(key: unknown): string | null {
@@ -164,6 +201,25 @@ export function validateCampaignContent(body: any): { error: string } | { conten
     return { error: "'isRecurring' must be a boolean when present" }
   }
 
+  // Which slice of the audience feed this campaign takes. The warehouse publishes a trigger
+  // and a kind of destination and names no campaign, so this is what points the two at each
+  // other, and a campaign without it is one whose audience is uploaded by hand.
+  const triggerKey = body?.triggerKey ?? null
+  const destinationKind = body?.destinationKind ?? null
+  if (triggerKey !== null || destinationKind !== null) {
+    if (typeof triggerKey !== 'string' || !TRIGGER_KEY_PATTERN.test(triggerKey)) {
+      return { error: "'triggerKey' must be a lifecycle trigger such as 'd3' when a slice is claimed" }
+    }
+    if (!FEED_DESTINATION_KINDS.includes(destinationKind)) {
+      return {
+        error: `'destinationKind' must be one of: ${FEED_DESTINATION_KINDS.join(', ')} when a slice is claimed`
+      }
+    }
+    if (!isRecurring) {
+      return { error: "a campaign that claims a slice of the audience feed must set 'isRecurring'" }
+    }
+  }
+
   return {
     content: {
       title: body.title.trim(),
@@ -172,7 +228,9 @@ export function validateCampaignContent(body: any): { error: string } | { conten
       imageUrl,
       ttlSeconds,
       scheduledAt,
-      isRecurring
+      isRecurring,
+      triggerKey,
+      destinationKind
     }
   }
 }

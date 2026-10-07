@@ -17,6 +17,7 @@ import { IPlacesDbComponent } from './adapters/places-db'
 import { IPlaceGroupsDbComponent } from './adapters/place-groups-db'
 import { ICacheComponent } from './adapters/cache'
 import { IDestinationsApiComponent } from './adapters/destinations-api'
+import { IPlaceThumbnailsComponent } from './adapters/place-thumbnails'
 import { IAppVersionsDbComponent } from './adapters/app-versions-db'
 import { IFeatureFlagsDbComponent } from './adapters/feature-flags-db'
 import { ICampaignsDbComponent } from './adapters/campaigns-db'
@@ -55,6 +56,7 @@ export type BaseComponents = {
   placeGroupsDb: IPlaceGroupsDbComponent
   cache: ICacheComponent
   destinationsApi: IDestinationsApiComponent
+  placeThumbnails: IPlaceThumbnailsComponent
   appVersionsDb: IAppVersionsDbComponent
   featureFlagsDb: IFeatureFlagsDbComponent
   campaignsDb: ICampaignsDbComponent

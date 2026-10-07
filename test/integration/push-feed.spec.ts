@@ -37,7 +37,7 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
     await pg.query('DELETE FROM push_dead_tokens')
   })
 
-  async function approvedRecurringCampaign(key: string) {
+  async function approvedRecurringCampaign(key: string, triggerKey = 'd3', destinationKind = 'scene') {
     const campaign = await pushDb.createCampaign({
       campaignKey: key,
       title: 'Your spot is still there',
@@ -47,6 +47,8 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
       ttlSeconds: 86400,
       scheduledAt: null,
       isRecurring: true,
+      triggerKey,
+      destinationKind: destinationKind as any,
       createdBy: CREATOR
     })
     await pushDb.setStatus(campaign.id, ['draft'], 'pending_approval')
@@ -56,12 +58,13 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
 
   function feedRow(userId: string, overrides: Partial<FeedAudienceEntry> = {}): FeedAudienceEntry {
     return {
-      campaignKey: 'd3-comeback',
       userId,
+      triggerKey: 'd3',
+      destinationKind: 'scene',
       token: `token-${userId}`,
       platform: 'android',
       deepLink: 'decentraland://open?position=-7,-2',
-      imageUrl: 'https://example.com/plaza.png',
+      placeId: 'c2f9b1a4-7e55-4f0d-9a3c-1b8e6d204f71',
       sendAt: null,
       ...overrides
     }
@@ -126,17 +129,51 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
   it('sends the row to its own destination rather than the campaign default', async () => {
     const campaign = await approvedRecurringCampaign('d3-comeback')
     await pushDb.mergeAudience(campaign.id, [
-      feedRow('played', { deepLink: 'decentraland://open?realm=monkichi.dcl.eth', imageUrl: null }),
-      // A row with nothing of its own falls back to the campaign's, which is how a
-      // hand-uploaded audience keeps working unchanged.
-      { ...feedRow('no-destination'), deepLink: 'decentraland://places', imageUrl: null }
+      feedRow('played', { deepLink: 'decentraland://open?realm=monkichi.dcl.eth' }),
+      // A row with no destination of its own falls back to the campaign's, which is what every
+      // plaza and Discover row does and how a hand-uploaded audience keeps working unchanged.
+      feedRow('no-destination', { deepLink: null, placeId: null })
     ])
 
     const claimed = await pushDb.claimDeliveries(10)
     const byUser = new Map(claimed.map((d) => [d.userId, d]))
     expect(byUser.get('played')!.deepLink).toBe('decentraland://open?realm=monkichi.dcl.eth')
-    expect(byUser.get('played')!.imageUrl).toBeNull()
+    expect(byUser.get('played')!.placeId).toBe('c2f9b1a4-7e55-4f0d-9a3c-1b8e6d204f71')
+    // The campaign's own link, and no place to resolve a thumbnail from.
     expect(byUser.get('no-destination')!.deepLink).toBe('decentraland://places')
+    expect(byUser.get('no-destination')!.placeId).toBeNull()
+  })
+
+  // The reason the feed stopped naming campaigns. A destination can change while a trigger is
+  // still in the window, which moves the install to the campaign serving the other slice. Keyed
+  // on the campaign that read as a new member and sent the same trigger a second time.
+  it('refuses a second send of the same trigger when the destination moves between campaigns', async () => {
+    const scene = await approvedRecurringCampaign('d3-comeback', 'd3', 'scene')
+    const plaza = await approvedRecurringCampaign('d3-comeback-plaza', 'd3', 'plaza')
+
+    expect(await pushDb.mergeAudience(plaza.id, [feedRow('alice', { deepLink: null, placeId: null })])).toEqual({
+      queued: 1,
+      alreadyQueued: 0,
+      suppressed: 0
+    })
+
+    // Next build resolves a scene for alice, so she arrives under the other campaign.
+    expect(await pushDb.mergeAudience(scene.id, [feedRow('alice')])).toEqual({
+      queued: 0,
+      alreadyQueued: 1,
+      suppressed: 0
+    })
+
+    const rows = await pg.query<{ campaign_id: string }>(
+      `SELECT campaign_id FROM push_deliveries WHERE user_id = 'alice'`
+    )
+    expect(rows.rows).toEqual([{ campaign_id: plaza.id }])
+
+    // A different trigger for the same install is a different send and still goes through.
+    const d7 = await approvedRecurringCampaign('d7-comeback', 'd7', 'scene')
+    expect(await pushDb.mergeAudience(d7.id, [feedRow('alice', { triggerKey: 'd7' })])).toMatchObject({
+      queued: 1
+    })
   })
 
   // The bug this whole shape exists to avoid: a drained queue closing a campaign that is
@@ -168,6 +205,8 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
       ttlSeconds: 86400,
       scheduledAt: null,
       isRecurring: false,
+      triggerKey: null,
+      destinationKind: null,
       createdBy: CREATOR
     })
     await pushDb.replaceAudience(campaign.id, [{ userId: 'alice', token: 'token-alice', platform: 'android' }])
@@ -198,20 +237,23 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
       return createPushFeedComponent({ config: withoutTimer, logs, pushDb, snowflake } as any)
     }
 
-    function snowflakeRow(campaignKey: string, userId: string): SnowflakeRow {
+    function snowflakeRow(triggerKey: string, userId: string): SnowflakeRow {
       return {
-        campaign_key: campaignKey,
         visitor_id: userId,
+        trigger_key: triggerKey,
+        destination_kind: 'scene',
         push_token: `token-${userId}`,
         push_platform: 'ios',
-        deep_link: 'decentraland://open?position=1,1',
-        image_url: null,
+        is_world: 'false',
+        world_name: null,
+        base_position: '1,1',
+        place_id: 'c2f9b1a4-7e55-4f0d-9a3c-1b8e6d204f71',
         send_at: '2026-10-04T22:00:00Z'
       }
     }
 
-    it('fills the campaigns it can and names the ones it cannot', async () => {
-      const campaign = await approvedRecurringCampaign('d3-comeback')
+    it('fills the slices it can and names the ones it cannot', async () => {
+      const campaign = await approvedRecurringCampaign('d3-comeback', 'd3', 'scene')
       // Approved but one-shot: a feed must not quietly take over a campaign somebody is
       // running by hand.
       const oneShot = await pushDb.createCampaign({
@@ -223,6 +265,8 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
         ttlSeconds: 86400,
         scheduledAt: null,
         isRecurring: false,
+        triggerKey: 'd7',
+        destinationKind: 'scene',
         createdBy: CREATOR
       })
       await pushDb.setStatus(oneShot.id, ['draft'], 'pending_approval')
@@ -230,10 +274,10 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
 
       const feed = await feedComponent(
         fakeSnowflake([
-          snowflakeRow('d3-comeback', 'alice'),
-          snowflakeRow('d7-comeback', 'bob'),
-          snowflakeRow('d30-comeback', 'carol'),
-          { ...snowflakeRow('d3-comeback', 'dave'), push_platform: 'web' }
+          snowflakeRow('d3', 'alice'),
+          snowflakeRow('d7', 'bob'),
+          snowflakeRow('d30', 'carol'),
+          { ...snowflakeRow('d3', 'dave'), push_platform: 'web' }
         ])
       )
 
@@ -242,8 +286,8 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
       expect(report.rowsRead).toBe(4)
       expect(report.queued).toBe(1)
       expect(report.rejected).toEqual({ push_platform: 1 })
-      expect(report.unknownCampaigns).toEqual(['d30-comeback'])
-      expect(report.notAcceptingCampaigns).toEqual(['d7-comeback'])
+      expect(report.unservedSlices).toEqual(['d30/scene'])
+      expect(report.notAcceptingSlices).toEqual(['d7/scene'])
       expect((await pushDb.getCampaign(campaign.id))!.audienceCount).toBe(1)
       expect((await pushDb.getCampaign(oneShot.id))!.audienceCount).toBe(0)
     })

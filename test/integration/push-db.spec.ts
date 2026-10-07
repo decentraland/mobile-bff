@@ -53,7 +53,9 @@ describe('push attribution links', () => {
     const config = await createDotEnvConfigComponent({ path: ['.env.default', '.env'] })
     const metrics = await createMetricsComponent(metricDeclarations, { config })
     const logs = await createLogComponent({ metrics })
-    return createPushDispatcherComponent({ config, logs, pushDb, fcm, apns })
+    // No place to resolve: every delivery here carries the campaign's own image.
+    const placeThumbnails = { get: async () => null } as any
+    return createPushDispatcherComponent({ config, logs, pushDb, fcm, apns, placeThumbnails })
   }
 
   beforeAll(async () => {
@@ -94,6 +96,8 @@ describe('push attribution links', () => {
       ttlSeconds: 86400,
       scheduledAt: null,
       isRecurring,
+      triggerKey: null,
+      destinationKind: null,
       createdBy: CREATOR
     }
   }
@@ -264,6 +268,8 @@ describe('push attribution links', () => {
       ttlSeconds: 86400,
       scheduledAt: null,
       isRecurring: false,
+      triggerKey: null,
+      destinationKind: null,
       createdBy: CREATOR
     })
     await pushDb.replaceAudience(campaign.id, audience)
