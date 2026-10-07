@@ -7,13 +7,23 @@
 //
 // Two properties of the feed shape this code. It is a rolling window rather than a day's
 // list: a trigger that came due stays in it for a few days, so the same row is read on
-// several consecutive runs and ingestion has to converge on a set rather than replace one.
-// And it names campaigns by key, not by uuid, so a campaign still has to be created and
-// approved by a person here — the feed fills a queue, it never invents the copy that goes out.
+// several consecutive runs and ingestion has to converge on a set rather than replace one —
+// and on the feed's own grain, one send per install per trigger, because a destination can
+// change while the trigger is still in the window.
+//
+// And it does not name campaigns. It publishes a trigger and a kind of destination, and a
+// campaign here declares which pair it serves, so a campaign is still created and approved by
+// a person — the feed fills a queue, it never invents the copy that goes out.
 
 import { IBaseComponent } from '@well-known-components/interfaces'
 import { AppComponents } from '../types'
-import { CAMPAIGN_KEY_REGEX, deepLinkRouteError, PushPlatform } from '../logic/push'
+import {
+  deepLinkRouteError,
+  destinationDeepLink,
+  FEED_DESTINATION_KINDS,
+  FeedDestinationKind,
+  PushPlatform
+} from '../logic/push'
 import { FeedAudienceEntry } from './push-db'
 import { SnowflakeRow } from './snowflake'
 
@@ -23,12 +33,15 @@ const FEED_RELATION = 'EXPORT_PUSH_COMEBACK_AUDIENCE'
 // in the query. The trailing Z is what makes it parse as the UTC instant it already is.
 const FEED_QUERY = `
   SELECT
-    campaign_key,
     visitor_id,
+    trigger_key,
+    destination_kind,
     push_token,
     push_platform,
-    deep_link,
-    image_url,
+    is_world,
+    world_name,
+    base_position,
+    place_id,
     TO_CHAR(send_at_utc, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS send_at
   FROM ${FEED_RELATION}
 `
@@ -37,10 +50,10 @@ export type SyncReport = {
   rowsRead: number
   /** Rows the feed produced that this service refuses to queue, with the reason counted. */
   rejected: Record<string, number>
-  /** Campaign keys the feed named that no campaign here carries. */
-  unknownCampaigns: string[]
-  /** Campaign keys whose campaign exists but is not open to a feed. */
-  notAcceptingCampaigns: string[]
+  /** Slices the feed produced rows for that no campaign here declares, as `trigger/kind`. */
+  unservedSlices: string[]
+  /** Slices whose campaign exists but is not open to a feed. */
+  notAcceptingSlices: string[]
   queued: number
   alreadyQueued: number
   suppressed: number
@@ -56,10 +69,29 @@ const INGESTIBLE_STATUSES = ['scheduled', 'sending']
 
 type ParsedRow = { entry: FeedAudienceEntry } | { reason: string }
 
+function readBoolean(value: string | null | undefined): boolean | null {
+  if (value === undefined || value === null) {
+    return null
+  }
+  const text = String(value).trim().toLowerCase()
+  if (text === 'true') {
+    return true
+  }
+  if (text === 'false') {
+    return false
+  }
+  return null
+}
+
 export function parseFeedRow(row: SnowflakeRow): ParsedRow {
-  const campaignKey = (row.campaign_key ?? '').trim()
-  if (!CAMPAIGN_KEY_REGEX.test(campaignKey)) {
-    return { reason: 'campaign_key' }
+  const triggerKey = (row.trigger_key ?? '').trim()
+  if (triggerKey.length === 0) {
+    return { reason: 'trigger_key' }
+  }
+
+  const destinationKind = (row.destination_kind ?? '').trim() as FeedDestinationKind
+  if (!FEED_DESTINATION_KINDS.includes(destinationKind)) {
+    return { reason: 'destination_kind' }
   }
 
   const userId = (row.visitor_id ?? '').trim()
@@ -77,13 +109,20 @@ export function parseFeedRow(row: SnowflakeRow): ParsedRow {
     return { reason: 'push_platform' }
   }
 
-  const deepLink = (row.deep_link ?? '').trim()
-  if (!deepLink.startsWith('decentraland://')) {
-    return { reason: 'deep_link_scheme' }
+  // A scene row has to produce a link; plaza and discover carry no destination of their own
+  // and fall back to their campaign's. A scene whose identity the warehouse could not express
+  // is rejected rather than quietly sent to the campaign's generic link.
+  const deepLink = destinationDeepLink({
+    isWorld: readBoolean(row.is_world),
+    worldName: row.world_name ?? null,
+    basePosition: row.base_position ?? null
+  })
+  if (destinationKind === 'scene' && deepLink === null) {
+    return { reason: 'destination_identity' }
   }
-  // The same allow-list a campaign's own link is held to. The feed is another system's
-  // output, so what it may route to is checked here rather than assumed.
-  if (deepLinkRouteError(deepLink) !== null) {
+  // The same allow-list a campaign's own link is held to. Built here rather than taken from
+  // the feed, but still checked, so the two can never drift apart.
+  if (deepLink !== null && deepLinkRouteError(deepLink) !== null) {
     return { reason: 'deep_link_route' }
   }
 
@@ -97,16 +136,17 @@ export function parseFeedRow(row: SnowflakeRow): ParsedRow {
     sendAt = parsed.toISOString()
   }
 
-  const imageUrl = (row.image_url ?? '').trim()
+  const placeId = (row.place_id ?? '').trim()
 
   return {
     entry: {
-      campaignKey,
       userId,
+      triggerKey,
+      destinationKind,
       token,
       platform: platform as PushPlatform,
       deepLink,
-      imageUrl: imageUrl.length > 0 ? imageUrl : null,
+      placeId: placeId.length > 0 ? placeId : null,
       sendAt
     }
   }
@@ -128,8 +168,8 @@ export async function createPushFeedComponent({
     const report: SyncReport = {
       rowsRead: 0,
       rejected: {},
-      unknownCampaigns: [],
-      notAcceptingCampaigns: [],
+      unservedSlices: [],
+      notAcceptingSlices: [],
       queued: 0,
       alreadyQueued: 0,
       suppressed: 0
@@ -143,29 +183,31 @@ export async function createPushFeedComponent({
     const rows = await snowflake.query(FEED_QUERY)
     report.rowsRead = rows.length
 
-    const byCampaign = new Map<string, FeedAudienceEntry[]>()
+    const bySlice = new Map<string, FeedAudienceEntry[]>()
     for (const row of rows) {
       const parsed = parseFeedRow(row)
       if ('reason' in parsed) {
         report.rejected[parsed.reason] = (report.rejected[parsed.reason] ?? 0) + 1
         continue
       }
-      const bucket = byCampaign.get(parsed.entry.campaignKey)
+      const slice = `${parsed.entry.triggerKey}/${parsed.entry.destinationKind}`
+      const bucket = bySlice.get(slice)
       if (bucket) {
         bucket.push(parsed.entry)
       } else {
-        byCampaign.set(parsed.entry.campaignKey, [parsed.entry])
+        bySlice.set(slice, [parsed.entry])
       }
     }
 
-    for (const [campaignKey, entries] of byCampaign) {
-      const campaign = await pushDb.getCampaignByKey(campaignKey)
+    for (const [slice, entries] of bySlice) {
+      const { triggerKey, destinationKind } = entries[0]
+      const campaign = await pushDb.getCampaignForSlice(triggerKey, destinationKind)
       if (!campaign) {
-        report.unknownCampaigns.push(campaignKey)
+        report.unservedSlices.push(slice)
         continue
       }
       if (!campaign.isRecurring || !INGESTIBLE_STATUSES.includes(campaign.status)) {
-        report.notAcceptingCampaigns.push(campaignKey)
+        report.notAcceptingSlices.push(slice)
         continue
       }
 
@@ -182,8 +224,8 @@ export async function createPushFeedComponent({
         alreadyQueued: report.alreadyQueued,
         suppressed: report.suppressed,
         rejected: JSON.stringify(report.rejected),
-        unknownCampaigns: report.unknownCampaigns.join(',') || 'none',
-        notAcceptingCampaigns: report.notAcceptingCampaigns.join(',') || 'none'
+        unservedSlices: report.unservedSlices.join(',') || 'none',
+        notAcceptingSlices: report.notAcceptingSlices.join(',') || 'none'
       })
     }
 

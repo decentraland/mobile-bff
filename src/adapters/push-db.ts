@@ -1,6 +1,6 @@
 import SQL from 'sql-template-strings'
 import { AppComponents } from '../types'
-import { PushPlatform } from '../logic/push'
+import { FeedDestinationKind, PushPlatform } from '../logic/push'
 
 export type PushCampaignStatus =
   | 'draft'
@@ -26,6 +26,9 @@ export type PushCampaign = {
   scheduledAt: string | null
   /** A campaign the warehouse feed keeps refilling, which therefore never finishes. */
   isRecurring: boolean
+  /** Which slice of the audience feed this campaign takes; null for a hand-uploaded one. */
+  triggerKey: string | null
+  destinationKind: FeedDestinationKind | null
   audienceCount: number
   createdBy: string
   approvedBy: string | null
@@ -44,6 +47,9 @@ export type CreatePushCampaignInput = {
   ttlSeconds: number
   scheduledAt: string | null
   isRecurring: boolean
+  /** The slice of the audience feed this campaign serves; both null for a hand-uploaded one. */
+  triggerKey: string | null
+  destinationKind: FeedDestinationKind | null
   createdBy: string
 }
 
@@ -55,6 +61,8 @@ export type UpdatePushCampaignInput = {
   ttlSeconds: number
   scheduledAt: string | null
   isRecurring: boolean
+  triggerKey: string | null
+  destinationKind: FeedDestinationKind | null
 }
 
 /** One row of the uploaded audience. */
@@ -65,12 +73,14 @@ export type AudienceEntry = { userId: string; token: string; platform: PushPlatf
  * moment, because the trigger that produced it is per install rather than per campaign.
  */
 export type FeedAudienceEntry = {
-  campaignKey: string
   userId: string
+  triggerKey: string
+  destinationKind: FeedDestinationKind
   token: string
   platform: PushPlatform
-  deepLink: string
-  imageUrl: string | null
+  /** Null for `plaza` and `discover`, which fall back to the campaign's own link. */
+  deepLink: string | null
+  placeId: string | null
   sendAt: string | null
 }
 
@@ -105,6 +115,8 @@ export type ClaimedDelivery = {
   /** The delivery's own destination when it has one, else the campaign's. */
   deepLink: string
   imageUrl: string | null
+  /** Set on a feed row with a resolved scene; the thumbnail is looked up from it at send. */
+  placeId: string | null
   category: string
   ttlSeconds: number
   /** Attempts already spent, so the sender can stop retrying a delivery that never lands. */
@@ -136,6 +148,8 @@ export type IPushDbComponent = {
   getCampaign(id: string): Promise<PushCampaign | null>
   /** Resolves the key the warehouse feed names to the campaign a person created here. */
   getCampaignByKey(campaignKey: string): Promise<PushCampaign | null>
+  /** The campaign that declared it serves this slice of the audience feed. */
+  getCampaignForSlice(triggerKey: string, destinationKind: FeedDestinationKind): Promise<PushCampaign | null>
   createCampaign(input: CreatePushCampaignInput): Promise<PushCampaign>
   updateCampaign(id: string, changes: UpdatePushCampaignInput): Promise<PushCampaign | null>
   /** Moves a campaign between states, refusing transitions that are not allowed. */
@@ -168,6 +182,8 @@ type CampaignRow = {
   ttl_seconds: number
   scheduled_at: Date | null
   is_recurring: boolean
+  trigger_key: string | null
+  destination_kind: FeedDestinationKind | null
   audience_count: number
   created_by: string
   approved_by: string | null
@@ -179,8 +195,8 @@ type CampaignRow = {
 
 const CAMPAIGN_COLUMNS = `
   id, campaign_key, title, body, deep_link, image_url, category, status, ttl_seconds,
-  scheduled_at, is_recurring, audience_count, created_by, approved_by, approved_at,
-  created_at, started_at, finished_at
+  scheduled_at, is_recurring, trigger_key, destination_kind, audience_count, created_by,
+  approved_by, approved_at, created_at, started_at, finished_at
 `
 
 const iso = (value: Date | null) => (value ? value.toISOString() : null)
@@ -198,6 +214,8 @@ function toCampaign(row: CampaignRow): PushCampaign {
     ttlSeconds: row.ttl_seconds,
     scheduledAt: iso(row.scheduled_at),
     isRecurring: row.is_recurring,
+    triggerKey: row.trigger_key,
+    destinationKind: row.destination_kind,
     audienceCount: row.audience_count,
     createdBy: row.created_by,
     approvedBy: row.approved_by,
@@ -229,12 +247,25 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
     return result.rows.length > 0 ? toCampaign(result.rows[0]) : null
   }
 
+  async function getCampaignForSlice(
+    triggerKey: string,
+    destinationKind: FeedDestinationKind
+  ): Promise<PushCampaign | null> {
+    const query = SQL`SELECT `.append(CAMPAIGN_COLUMNS).append(
+      SQL` FROM push_campaigns WHERE trigger_key = ${triggerKey} AND destination_kind = ${destinationKind}`
+    )
+    const result = await pg.query<CampaignRow>(query)
+    return result.rows.length > 0 ? toCampaign(result.rows[0]) : null
+  }
+
   async function createCampaign(input: CreatePushCampaignInput): Promise<PushCampaign> {
     const query = SQL`
       INSERT INTO push_campaigns (campaign_key, title, body, deep_link, image_url, ttl_seconds,
-                                  scheduled_at, is_recurring, created_by)
+                                  scheduled_at, is_recurring, trigger_key, destination_kind,
+                                  created_by)
       VALUES (${input.campaignKey}, ${input.title}, ${input.body}, ${input.deepLink}, ${input.imageUrl},
-              ${input.ttlSeconds}, ${input.scheduledAt}, ${input.isRecurring}, ${input.createdBy})
+              ${input.ttlSeconds}, ${input.scheduledAt}, ${input.isRecurring}, ${input.triggerKey},
+              ${input.destinationKind}, ${input.createdBy})
       RETURNING `.append(CAMPAIGN_COLUMNS)
     const result = await pg.query<CampaignRow>(query)
     return toCampaign(result.rows[0])
@@ -252,7 +283,9 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
         image_url = ${changes.imageUrl},
         ttl_seconds = ${changes.ttlSeconds},
         scheduled_at = ${changes.scheduledAt},
-        is_recurring = ${changes.isRecurring}
+        is_recurring = ${changes.isRecurring},
+        trigger_key = ${changes.triggerKey},
+        destination_kind = ${changes.destinationKind}
       WHERE id = ${id} AND status = 'draft'
       RETURNING `.append(CAMPAIGN_COLUMNS)
     const result = await pg.query<CampaignRow>(query)
@@ -373,9 +406,9 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
       return { queued: 0, alreadyQueued: 0, suppressed: 0 }
     }
 
-    // The feed's grain is one row per install per trigger, and a campaign is one trigger, so a
-    // repeated user_id would mean the warehouse broke its own grain. Collapsing here keeps that
-    // from turning into an ON CONFLICT against our own statement.
+    // The feed's grain is one row per install per trigger, and a campaign serves one trigger,
+    // so a repeated user_id would mean the warehouse broke its own grain. Collapsing here keeps
+    // that from turning into an ON CONFLICT against our own statement.
     const byUser = new Map<string, FeedAudienceEntry>()
     for (const entry of entries) {
       byUser.set(entry.userId, entry)
@@ -394,20 +427,27 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
       )
       const suppressed = Number(dead.rows[0]?.count ?? 0)
 
+      // Untargeted ON CONFLICT: the row has to clear two unique constraints, its own primary
+      // key and one send per install per trigger across every campaign. The second is what
+      // makes a destination that changed mid-window unable to queue a second push, so naming
+      // only the first would turn that case into an error instead of a no-op.
       const inserted = await client.query(
-        `INSERT INTO push_deliveries (campaign_id, user_id, token, platform, deep_link, image_url, send_at)
-         SELECT $1, u.user_id, u.token, u.platform, u.deep_link, NULLIF(u.image_url, ''), u.send_at::timestamptz
-         FROM UNNEST($2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[])
-              AS u(user_id, token, platform, deep_link, image_url, send_at)
+        `INSERT INTO push_deliveries (campaign_id, user_id, trigger_key, token, platform,
+                                      deep_link, place_id, send_at)
+         SELECT $1, u.user_id, NULLIF(u.trigger_key, ''), u.token, u.platform,
+                NULLIF(u.deep_link, ''), NULLIF(u.place_id, ''), u.send_at::timestamptz
+         FROM UNNEST($2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[])
+              AS u(user_id, trigger_key, token, platform, deep_link, place_id, send_at)
          WHERE NOT EXISTS (SELECT 1 FROM push_dead_tokens d WHERE d.token = u.token)
-         ON CONFLICT (campaign_id, user_id) DO NOTHING`,
+         ON CONFLICT DO NOTHING`,
         [
           campaignId,
           unique.map((entry) => entry.userId),
+          unique.map((entry) => entry.triggerKey),
           unique.map((entry) => entry.token),
           unique.map((entry) => entry.platform),
-          unique.map((entry) => entry.deepLink),
-          unique.map((entry) => entry.imageUrl ?? ''),
+          unique.map((entry) => entry.deepLink ?? ''),
+          unique.map((entry) => entry.placeId ?? ''),
           unique.map((entry) => entry.sendAt)
         ]
       )
@@ -443,6 +483,7 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
       body: string
       deep_link: string
       image_url: string | null
+      place_id: string | null
       category: string
       ttl_seconds: number
       attempts: number
@@ -472,14 +513,15 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
         SET state = 'sending', claimed_at = now()
         FROM claimed
         WHERE d.campaign_id = claimed.campaign_id AND d.user_id = claimed.user_id
-        RETURNING d.campaign_id, d.user_id, d.token, d.platform, d.attempts, d.deep_link, d.image_url
+        RETURNING d.campaign_id, d.user_id, d.token, d.platform, d.attempts, d.deep_link,
+                  d.image_url, d.place_id
       ), started AS (
         UPDATE push_campaigns c
         SET status = 'sending', started_at = COALESCE(c.started_at, now())
         WHERE c.id IN (SELECT campaign_id FROM taken) AND c.status = 'scheduled'
         RETURNING c.id
       )
-      SELECT t.campaign_id, t.user_id, t.token, t.platform, t.attempts,
+      SELECT t.campaign_id, t.user_id, t.token, t.platform, t.attempts, t.place_id,
              c.campaign_key, c.title, c.body, c.category, c.ttl_seconds,
              COALESCE(t.deep_link, c.deep_link) AS deep_link,
              COALESCE(t.image_url, c.image_url) AS image_url
@@ -497,6 +539,7 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
       body: row.body,
       deepLink: row.deep_link,
       imageUrl: row.image_url,
+      placeId: row.place_id,
       category: row.category,
       ttlSeconds: row.ttl_seconds,
       attempts: row.attempts
@@ -625,6 +668,7 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
     listCampaigns,
     getCampaign,
     getCampaignByKey,
+    getCampaignForSlice,
     createCampaign,
     updateCampaign,
     setStatus,

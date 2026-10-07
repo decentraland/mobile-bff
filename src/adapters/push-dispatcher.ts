@@ -82,8 +82,12 @@ export async function createPushDispatcherComponent({
   logs,
   pushDb,
   fcm,
-  apns
-}: Pick<AppComponents, 'config' | 'logs' | 'pushDb' | 'fcm' | 'apns'>): Promise<IPushDispatcherComponent> {
+  apns,
+  placeThumbnails
+}: Pick<
+  AppComponents,
+  'config' | 'logs' | 'pushDb' | 'fcm' | 'apns' | 'placeThumbnails'
+>): Promise<IPushDispatcherComponent> {
   const logger = logs.getLogger('push-dispatcher')
   const intervalMs = (await config.getNumber('PUSH_DISPATCH_INTERVAL_MS')) ?? 5000
   const batchSize = (await config.getNumber('PUSH_DISPATCH_BATCH_SIZE')) ?? 200
@@ -158,6 +162,11 @@ export async function createPushDispatcherComponent({
     // defeat that and show the user the notification twice.
     const pushId = `push_${delivery.campaignId}_${delivery.userId}`
     const sender = delivery.platform === 'ios' ? apns : fcm
+    // A feed row names the place rather than its thumbnail, so the image is resolved now and
+    // not when the warehouse chose the destination. Nothing resolved means the campaign's own
+    // image, which is what plaza and Discover rows use anyway.
+    const imageUrl =
+      delivery.imageUrl ?? (delivery.placeId ? await placeThumbnails.get(delivery.placeId) : null)
     const result = await sender.send({
       token: delivery.token,
       pushId,
@@ -165,7 +174,7 @@ export async function createPushDispatcherComponent({
       title: delivery.title,
       body: delivery.body,
       deepLink: withAttribution(delivery.deepLink, delivery.campaignKey, pushId),
-      imageUrl: delivery.imageUrl,
+      imageUrl,
       category: delivery.category,
       ttlSeconds: delivery.ttlSeconds
     })
