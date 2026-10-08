@@ -26,6 +26,14 @@ type PlaceResponse = {
 
 const cacheKey = (placeId: string) => `place:thumb:${placeId}`
 
+// A var that is present but empty reads back as '', which `??` does not catch — and
+// parseInt('') is NaN, which setTimeout treats as ~1ms, so every lookup would abort instead of
+// being given its budget.
+function numberOr(value: string | undefined, fallback: number): number {
+  const parsed = parseInt((value ?? '').trim(), 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
 // Same reason as thirdweb-proxy: the node-fetch types underneath IFetchComponent declare their
 // own AbortSignal, so the timeout is driven through this rather than the standard `signal`.
 type FetchInit = Parameters<IFetchComponent['fetch']>[1] & { abortController?: AbortController }
@@ -34,9 +42,10 @@ export async function createPlaceThumbnailsComponent(components: Components): Pr
   const { fetch, config, cache, logs } = components
   const logger = logs.getLogger('place-thumbnails')
 
-  const apiUrl = (await config.getString('PLACES_API_URL')) ?? 'https://places.decentraland.org/api/places'
-  const ttlMs = parseInt((await config.getString('PLACE_THUMBNAIL_CACHE_TTL_MS')) ?? '21600000')
-  const timeoutMs = parseInt((await config.getString('PLACE_THUMBNAIL_TIMEOUT_MS')) ?? '3000')
+  const configuredUrl = ((await config.getString('PLACES_API_URL')) ?? '').trim()
+  const apiUrl = configuredUrl.length > 0 ? configuredUrl : 'https://places.decentraland.org/api/places'
+  const ttlMs = numberOr(await config.getString('PLACE_THUMBNAIL_CACHE_TTL_MS'), 21_600_000)
+  const timeoutMs = numberOr(await config.getString('PLACE_THUMBNAIL_TIMEOUT_MS'), 3_000)
 
   async function get(placeId: string): Promise<string | null> {
     // A miss and a known-empty are both cached: a place with no thumbnail would otherwise be

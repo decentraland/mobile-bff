@@ -46,10 +46,10 @@ export type CreatePushCampaignInput = {
   imageUrl: string | null
   ttlSeconds: number
   scheduledAt: string | null
-  isRecurring: boolean
-  /** The slice of the audience feed this campaign serves; both null for a hand-uploaded one. */
-  triggerKey: string | null
-  destinationKind: FeedDestinationKind | null
+  isRecurring?: boolean
+  /** The slice of the audience feed this campaign serves; both absent for a hand-uploaded one. */
+  triggerKey?: string | null
+  destinationKind?: FeedDestinationKind | null
   createdBy: string
 }
 
@@ -60,9 +60,10 @@ export type UpdatePushCampaignInput = {
   imageUrl: string | null
   ttlSeconds: number
   scheduledAt: string | null
-  isRecurring: boolean
-  triggerKey: string | null
-  destinationKind: FeedDestinationKind | null
+  /** Left out by a caller that is only editing copy, and then left as it is. */
+  isRecurring?: boolean
+  triggerKey?: string | null
+  destinationKind?: FeedDestinationKind | null
 }
 
 /** One row of the uploaded audience. */
@@ -147,7 +148,6 @@ export type IPushDbComponent = {
   listCampaigns(): Promise<PushCampaign[]>
   getCampaign(id: string): Promise<PushCampaign | null>
   /** Resolves the key the warehouse feed names to the campaign a person created here. */
-  getCampaignByKey(campaignKey: string): Promise<PushCampaign | null>
   /** The campaign that declared it serves this slice of the audience feed. */
   getCampaignForSlice(triggerKey: string, destinationKind: FeedDestinationKind): Promise<PushCampaign | null>
   createCampaign(input: CreatePushCampaignInput): Promise<PushCampaign>
@@ -239,14 +239,6 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
     return result.rows.length > 0 ? toCampaign(result.rows[0]) : null
   }
 
-  async function getCampaignByKey(campaignKey: string): Promise<PushCampaign | null> {
-    const query = SQL`SELECT `
-      .append(CAMPAIGN_COLUMNS)
-      .append(SQL` FROM push_campaigns WHERE campaign_key = ${campaignKey}`)
-    const result = await pg.query<CampaignRow>(query)
-    return result.rows.length > 0 ? toCampaign(result.rows[0]) : null
-  }
-
   async function getCampaignForSlice(
     triggerKey: string,
     destinationKind: FeedDestinationKind
@@ -264,8 +256,8 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
                                   scheduled_at, is_recurring, trigger_key, destination_kind,
                                   created_by)
       VALUES (${input.campaignKey}, ${input.title}, ${input.body}, ${input.deepLink}, ${input.imageUrl},
-              ${input.ttlSeconds}, ${input.scheduledAt}, ${input.isRecurring}, ${input.triggerKey},
-              ${input.destinationKind}, ${input.createdBy})
+              ${input.ttlSeconds}, ${input.scheduledAt}, ${input.isRecurring ?? false},
+              ${input.triggerKey ?? null}, ${input.destinationKind ?? null}, ${input.createdBy})
       RETURNING `.append(CAMPAIGN_COLUMNS)
     const result = await pg.query<CampaignRow>(query)
     return toCampaign(result.rows[0])
@@ -274,6 +266,10 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
   // Content is only editable while a campaign is still a draft. Once it is submitted the
   // approver is vouching for specific words, so letting the creator rewrite them afterwards
   // would make the two-man rule decorative.
+  // What a campaign is fed by is not part of its copy, and the backoffice sends only the copy
+  // when somebody fixes a typo. Writing a default for an absent key would turn a recurring
+  // campaign into a one-shot with no slice, with no error to show for it, so these three are
+  // only written when the request actually carried them.
   async function updateCampaign(id: string, changes: UpdatePushCampaignInput): Promise<PushCampaign | null> {
     const query = SQL`
       UPDATE push_campaigns SET
@@ -282,12 +278,17 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
         deep_link = ${changes.deepLink},
         image_url = ${changes.imageUrl},
         ttl_seconds = ${changes.ttlSeconds},
-        scheduled_at = ${changes.scheduledAt},
-        is_recurring = ${changes.isRecurring},
-        trigger_key = ${changes.triggerKey},
-        destination_kind = ${changes.destinationKind}
-      WHERE id = ${id} AND status = 'draft'
-      RETURNING `.append(CAMPAIGN_COLUMNS)
+        scheduled_at = ${changes.scheduledAt}`
+    if (changes.isRecurring !== undefined) {
+      query.append(SQL`, is_recurring = ${changes.isRecurring}`)
+    }
+    if (changes.triggerKey !== undefined) {
+      query.append(SQL`, trigger_key = ${changes.triggerKey}`)
+    }
+    if (changes.destinationKind !== undefined) {
+      query.append(SQL`, destination_kind = ${changes.destinationKind}`)
+    }
+    query.append(SQL` WHERE id = ${id} AND status = 'draft' RETURNING `).append(CAMPAIGN_COLUMNS)
     const result = await pg.query<CampaignRow>(query)
     return result.rows.length > 0 ? toCampaign(result.rows[0]) : null
   }
@@ -667,7 +668,6 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
   return {
     listCampaigns,
     getCampaign,
-    getCampaignByKey,
     getCampaignForSlice,
     createCampaign,
     updateCampaign,

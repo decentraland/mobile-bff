@@ -159,12 +159,42 @@ export async function createPushFeedComponent({
   snowflake
 }: Pick<AppComponents, 'config' | 'logs' | 'pushDb' | 'snowflake'>): Promise<IPushFeedComponent> {
   const logger = logs.getLogger('push-feed')
-  const intervalMs = (await config.getNumber('PUSH_FEED_SYNC_INTERVAL_MS')) ?? 900_000
+  // Hourly. The warehouse builds the feed once a day, and a row is held by the claim until its
+  // own `send_at`, so reading more often buys nothing and costs warehouse credits.
+  const intervalMs = (await config.getNumber('PUSH_FEED_SYNC_INTERVAL_MS')) ?? 3_600_000
 
   let timer: NodeJS.Timeout | undefined
   let running = false
 
+  // The guard is here rather than only in the timer so the backoffice's manual sync cannot
+  // overlap one already in flight. Two at once would be survivable — ON CONFLICT DO NOTHING
+  // absorbs the repeat — but it would double the read for nothing.
   async function sync(): Promise<SyncReport> {
+    if (running) {
+      logger.info('Skipping feed sync: one is already in flight')
+      return emptyReport()
+    }
+    running = true
+    try {
+      return await runSync()
+    } finally {
+      running = false
+    }
+  }
+
+  function emptyReport(): SyncReport {
+    return {
+      rowsRead: 0,
+      rejected: {},
+      unservedSlices: [],
+      notAcceptingSlices: [],
+      queued: 0,
+      alreadyQueued: 0,
+      suppressed: 0
+    }
+  }
+
+  async function runSync(): Promise<SyncReport> {
     const report: SyncReport = {
       rowsRead: 0,
       rejected: {},
@@ -245,18 +275,12 @@ export async function createPushFeedComponent({
     }
     logger.info('Starting push feed sync', { intervalMs })
     timer = setInterval(async () => {
-      if (running) {
-        return
-      }
-      running = true
       try {
         await sync()
       } catch (error) {
         // The feed is a rolling window, so a failed sync loses nothing: whatever was missed is
         // still there on the next pass, for as many days as the trigger tolerates.
         logger.error('Feed sync failed', { error: (error as Error).message })
-      } finally {
-        running = false
       }
     }, intervalMs)
     timer.unref()

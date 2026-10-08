@@ -163,10 +163,11 @@ export async function createPushDispatcherComponent({
     const pushId = `push_${delivery.campaignId}_${delivery.userId}`
     const sender = delivery.platform === 'ios' ? apns : fcm
     // A feed row names the place rather than its thumbnail, so the image is resolved now and
-    // not when the warehouse chose the destination. Nothing resolved means the campaign's own
-    // image, which is what plaza and Discover rows use anyway.
-    const imageUrl =
-      delivery.imageUrl ?? (delivery.placeId ? await placeThumbnails.get(delivery.placeId) : null)
+    // not when the warehouse chose the destination. The place wins when it has one: the claim
+    // already folded the campaign's image into `imageUrl`, so reading that first would mean a
+    // campaign with any fallback art silently never resolves a destination thumbnail.
+    const fromPlace = delivery.placeId ? await placeThumbnails.get(delivery.placeId) : null
+    const imageUrl = fromPlace ?? delivery.imageUrl
     const result = await sender.send({
       token: delivery.token,
       pushId,
