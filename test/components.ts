@@ -21,8 +21,6 @@ export const test = createRunner<TestComponents>({
   initComponents,
 })
 
-let suitesStarted = 0
-
 async function initComponents(): Promise<TestComponents> {
   // Use test database
   process.env.PG_COMPONENT_PSQL_DATABASE = 'mobile_test'
@@ -34,9 +32,16 @@ async function initComponents(): Promise<TestComponents> {
   // server; a worker runs its suites one after another, and the socket the previous one held
   // is not always released by the time the next one binds, so the loser dies with EADDRINUSE
   // on a port nothing is listening on any more. The worker id spaces the workers apart and
-  // the counter spaces the suites inside one worker. Starting at 9200 keeps the range clear
+  // the sequence spaces the suites inside one worker. Starting at 9200 keeps the range clear
   // of 9101, which is also where a metrics server would land by convention.
-  process.env.HTTP_SERVER_PORT = String(9200 + Number(process.env.JEST_WORKER_ID ?? 1) * 100 + suitesStarted++)
+  //
+  // The sequence lives in process.env because that is the only thing here that outlives a
+  // suite: Jest builds a fresh module registry and a fresh global object for every test file,
+  // so a counter in module or global scope restarts at 0 on each one and hands every suite in
+  // the worker the same port.
+  const suiteIndex = Number(process.env.SUITE_PORT_SEQUENCE ?? '0') + 1
+  process.env.SUITE_PORT_SEQUENCE = String(suiteIndex)
+  process.env.HTTP_SERVER_PORT = String(9200 + Number(process.env.JEST_WORKER_ID ?? 1) * 100 + suiteIndex)
   // Attestation session secret: production deploys must set their own, but
   // the integration test runner needs *some* value that passes the 32-char
   // length check at startup. This deterministic test value is fine because
