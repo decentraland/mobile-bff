@@ -73,9 +73,12 @@ export type CampaignContent = {
   imageUrl: string | null
   ttlSeconds: number
   scheduledAt: string | null
-  isRecurring: boolean
-  triggerKey: string | null
-  destinationKind: FeedDestinationKind | null
+  // Absent when the request did not carry the key, which an update must leave alone rather
+  // than reset: the backoffice sends only the copy when somebody fixes a typo, and writing a
+  // default over these would turn a recurring campaign into a one-shot with no slice.
+  isRecurring?: boolean
+  triggerKey?: string | null
+  destinationKind?: FeedDestinationKind | null
 }
 
 export function validateCampaignKey(key: unknown): string | null {
@@ -194,19 +197,21 @@ export function validateCampaignContent(body: any): { error: string } | { conten
   }
 
   // A recurring campaign is fed by the warehouse instead of by an uploaded audience, and never
-  // closes itself when its queue empties. Defaults to false: a campaign somebody is creating by
-  // hand in the backoffice is the one-shot kind unless they say otherwise.
-  const isRecurring = body?.isRecurring ?? false
-  if (typeof isRecurring !== 'boolean') {
+  // closes itself when its queue empties. Left undefined when the request says nothing: a
+  // campaign created without it is the one-shot kind, and an update without it keeps what it
+  // already was.
+  const isRecurring = body?.isRecurring
+  if (isRecurring !== undefined && typeof isRecurring !== 'boolean') {
     return { error: "'isRecurring' must be a boolean when present" }
   }
 
   // Which slice of the audience feed this campaign takes. The warehouse publishes a trigger
   // and a kind of destination and names no campaign, so this is what points the two at each
   // other, and a campaign without it is one whose audience is uploaded by hand.
-  const triggerKey = body?.triggerKey ?? null
-  const destinationKind = body?.destinationKind ?? null
-  if (triggerKey !== null || destinationKind !== null) {
+  const triggerKey = body?.triggerKey
+  const destinationKind = body?.destinationKind
+  const claimsSlice = (triggerKey ?? null) !== null || (destinationKind ?? null) !== null
+  if (claimsSlice) {
     if (typeof triggerKey !== 'string' || !TRIGGER_KEY_PATTERN.test(triggerKey)) {
       return { error: "'triggerKey' must be a lifecycle trigger such as 'd3' when a slice is claimed" }
     }
@@ -215,8 +220,10 @@ export function validateCampaignContent(body: any): { error: string } | { conten
         error: `'destinationKind' must be one of: ${FEED_DESTINATION_KINDS.join(', ')} when a slice is claimed`
       }
     }
-    if (!isRecurring) {
-      return { error: "a campaign that claims a slice of the audience feed must set 'isRecurring'" }
+    // Asked for explicitly rather than read from the stored campaign, so the invariant is
+    // checkable from the request alone: a campaign serving the feed is one the feed refills.
+    if (isRecurring !== true) {
+      return { error: "a campaign that claims a slice of the audience feed must set 'isRecurring' to true" }
     }
   }
 
@@ -228,9 +235,9 @@ export function validateCampaignContent(body: any): { error: string } | { conten
       imageUrl,
       ttlSeconds,
       scheduledAt,
-      isRecurring,
-      triggerKey,
-      destinationKind
+      ...(isRecurring === undefined ? {} : { isRecurring }),
+      ...(triggerKey === undefined ? {} : { triggerKey }),
+      ...(destinationKind === undefined ? {} : { destinationKind })
     }
   }
 }

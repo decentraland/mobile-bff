@@ -34,6 +34,9 @@ describe('push attribution links', () => {
   let sent: PushMessage[]
   let sentIos: PushMessage[]
   let respond: (message: PushMessage) => SendResult
+  // What the places catalogue answers for a delivery that names one. Null is the usual case
+  // here: these campaigns are hand-uploaded and carry no place.
+  let placeImage: string | null = null
 
   // Stand in for FCM and APNs so the dispatcher's decisions are observable without a network.
   const fcm: IPushSender = {
@@ -53,8 +56,7 @@ describe('push attribution links', () => {
     const config = await createDotEnvConfigComponent({ path: ['.env.default', '.env'] })
     const metrics = await createMetricsComponent(metricDeclarations, { config })
     const logs = await createLogComponent({ metrics })
-    // No place to resolve: every delivery here carries the campaign's own image.
-    const placeThumbnails = { get: async () => null } as any
+    const placeThumbnails = { get: async () => placeImage } as any
     return createPushDispatcherComponent({ config, logs, pushDb, fcm, apns, placeThumbnails })
   }
 
@@ -82,6 +84,7 @@ describe('push attribution links', () => {
     await pg.query('DELETE FROM push_dead_tokens')
     sent = []
     sentIos = []
+    placeImage = null
     respond = () => ({ status: 'sent', providerMsgId: 'projects/test/messages/1' })
   })
 
@@ -256,6 +259,49 @@ describe('push attribution links', () => {
     const stats = await pushDb.getStats(campaign.id)
     expect(stats).toMatchObject({ sent: 1, cancelled: 1, pending: 0, inFlight: 0 })
     expect(await pushDb.claimDeliveries(10)).toHaveLength(0)
+  })
+
+  // The campaign's image reaches the dispatcher through the claim's COALESCE, so reading it
+  // before the place would mean any campaign with fallback art never resolves a thumbnail.
+  it('prefers the destination thumbnail over the campaign image, and falls back when there is none', async () => {
+    placeImage = 'https://peer-ec1.decentraland.org/content/contents/bafyplace'
+    const campaign = await pushDb.createCampaign({
+      campaignKey: 'd3-comeback',
+      title: 'Title',
+      body: 'Body',
+      deepLink: 'decentraland://places',
+      imageUrl: 'https://example.com/campaign-art.png',
+      ttlSeconds: 86400,
+      scheduledAt: null,
+      isRecurring: true,
+      triggerKey: 'd3',
+      destinationKind: 'scene',
+      createdBy: CREATOR
+    })
+    await pushDb.setStatus(campaign.id, ['draft'], 'pending_approval')
+    await pushDb.approveCampaign(campaign.id, APPROVER)
+    await pushDb.mergeAudience(campaign.id, [
+      {
+        userId: 'played',
+        triggerKey: 'd3',
+        destinationKind: 'scene',
+        token: 'token-played',
+        platform: 'android',
+        deepLink: 'decentraland://open?position=1,1',
+        placeId: 'c2f9b1a4-7e55-4f0d-9a3c-1b8e6d204f71',
+        sendAt: null
+      }
+    ])
+
+    await (await makeDispatcher()).tick()
+    expect(sent[0].imageUrl).toBe('https://peer-ec1.decentraland.org/content/contents/bafyplace')
+
+    // A place the catalogue has no image for leaves the campaign's art in place.
+    placeImage = null
+    await pg.query(`UPDATE push_deliveries SET state = 'pending', claimed_at = NULL`)
+    sent = []
+    await (await makeDispatcher()).tick()
+    expect(sent[0].imageUrl).toBe('https://example.com/campaign-art.png')
   })
 
   async function approvedCampaign(key: string, audience: AudienceEntry[]) {

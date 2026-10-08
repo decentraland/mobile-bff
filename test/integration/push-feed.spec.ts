@@ -176,6 +176,42 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
     })
   })
 
+  // Cancelling is the only lever on a live recurring campaign, because update only matches
+  // drafts. So it has to leave the slice and the trigger re-usable, or "fix the copy and
+  // re-author" would need a hand-written DELETE and would burn the trigger for everyone who
+  // happened to be queued.
+  it('frees the slice and the trigger when a campaign is cancelled', async () => {
+    const first = await approvedRecurringCampaign('d3-comeback', 'd3', 'scene')
+    await pushDb.mergeAudience(first.id, [feedRow('alice')])
+    await pushDb.cancelCampaign(first.id)
+
+    // The slice is claimable again, which a unique index without a status predicate refuses.
+    const replacement = await approvedRecurringCampaign('d3-comeback-v2', 'd3', 'scene')
+
+    // And alice can be reached for d3 again, which the delivery guard would otherwise forbid
+    // for good.
+    expect(await pushDb.mergeAudience(replacement.id, [feedRow('alice')])).toMatchObject({ queued: 1 })
+    expect((await pushDb.claimDeliveries(10)).map((d) => d.userId)).toEqual(['alice'])
+  })
+
+  // The backoffice sends only the copy when somebody fixes a typo, so an absent key must leave
+  // what a campaign is fed by alone.
+  it('keeps the slice when an edit carries only the copy', async () => {
+    const campaign = await approvedRecurringCampaign('d3-comeback', 'd3', 'scene')
+    await pushDb.setStatus(campaign.id, ['scheduled'], 'draft')
+
+    const edited = await pushDb.updateCampaign(campaign.id, {
+      title: 'A better line',
+      body: 'Jump back in',
+      deepLink: 'decentraland://places',
+      imageUrl: null,
+      ttlSeconds: 86400,
+      scheduledAt: null
+    })
+
+    expect(edited).toMatchObject({ title: 'A better line', triggerKey: 'd3', destinationKind: 'scene', isRecurring: true })
+  })
+
   // The bug this whole shape exists to avoid: a drained queue closing a campaign that is
   // supposed to be refilled tomorrow.
   it('returns a drained recurring campaign to scheduled so the next ingest starts it again', async () => {

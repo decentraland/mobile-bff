@@ -24,12 +24,15 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
     `
   })
 
-  // One campaign per slice. Two taking the same pair would each queue the same install, and
-  // the guard on push_deliveries would then silently drop whichever ingested second.
+  // One *live* campaign per slice. Two taking the same pair would each queue the same install,
+  // and the guard on push_deliveries would then silently drop whichever ingested second. A
+  // cancelled or failed campaign is excluded, because update only touches drafts: cancelling is
+  // the only lever on a live campaign, and a cancelled one holding its slice for good would
+  // make "fix the copy and re-author" need a hand-written DELETE to free it.
   pgm.createIndex('push_campaigns', ['trigger_key', 'destination_kind'], {
     name: 'push_campaigns_slice_unique',
     unique: true,
-    where: 'trigger_key IS NOT NULL'
+    where: "trigger_key IS NOT NULL AND status NOT IN ('cancelled', 'failed')"
   })
 
   pgm.addColumns('push_deliveries', {
@@ -44,10 +47,15 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
 
   // One send per install per lifecycle trigger, whichever campaign serves it. This is what
   // makes a destination that changes mid-window unable to produce a second push.
+  //
+  // A cancelled delivery is excluded, and the predicate is what makes that work: a row leaves
+  // the index when it is cancelled, which frees the trigger again. Otherwise pulling the kill
+  // switch on a campaign would burn that trigger for every install that was queued at the
+  // time, from any campaign, for good.
   pgm.createIndex('push_deliveries', ['user_id', 'trigger_key'], {
     name: 'push_deliveries_user_trigger_unique',
     unique: true,
-    where: 'trigger_key IS NOT NULL'
+    where: "trigger_key IS NOT NULL AND state <> 'cancelled'"
   })
 }
 
