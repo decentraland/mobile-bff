@@ -18,6 +18,7 @@ import { createTagsDbComponent } from './adapters/tags-db'
 import { createPlacesDbComponent } from './adapters/places-db'
 import { createPlaceGroupsDbComponent } from './adapters/place-groups-db'
 import { createCacheComponent } from './adapters/cache'
+import { createPlaceThumbnailsComponent } from './adapters/place-thumbnails'
 import { createDestinationsApiComponent } from './adapters/destinations-api'
 import { createAppVersionsDbComponent } from './adapters/app-versions-db'
 import { createFeatureFlagsDbComponent } from './adapters/feature-flags-db'
@@ -26,6 +27,8 @@ import { createPushDbComponent } from './adapters/push-db'
 import { createFcmComponent } from './adapters/fcm'
 import { createApnsComponent } from './adapters/apns'
 import { createPushDispatcherComponent } from './adapters/push-dispatcher'
+import { createSnowflakeComponent } from './adapters/snowflake'
+import { createPushFeedComponent } from './adapters/push-feed'
 import { createAppAttestComponent } from './adapters/app-attest'
 import { createPlayIntegrityComponent } from './adapters/play-integrity'
 import { createAttestationVerifierComponent } from './adapters/attestation-verifier'
@@ -68,13 +71,23 @@ export async function initComponents(): Promise<AppComponents> {
   const placeGroupsDb = await createPlaceGroupsDbComponent({ pg })
   const cache = await createCacheComponent({ config })
   const destinationsApi = await createDestinationsApiComponent({ fetch, config, cache, logs })
+  const placeThumbnails = await createPlaceThumbnailsComponent({ fetch, config, cache, logs })
   const appVersionsDb = await createAppVersionsDbComponent({ pg })
   const featureFlagsDb = await createFeatureFlagsDbComponent({ pg })
   const campaignsDb = await createCampaignsDbComponent({ pg })
   const pushDb = await createPushDbComponent({ pg })
   const fcm = await createFcmComponent({ config, logs })
   const apns = await createApnsComponent({ config, logs })
-  const pushDispatcher = await createPushDispatcherComponent({ config, logs, pushDb, fcm, apns })
+  const pushDispatcher = await createPushDispatcherComponent({
+    config,
+    logs,
+    pushDb,
+    fcm,
+    apns,
+    placeThumbnails
+  })
+  const snowflake = await createSnowflakeComponent({ config, fetch, logs })
+  const pushFeed = await createPushFeedComponent({ config, logs, pushDb, snowflake })
   const appAttest = await createAppAttestComponent({ config })
   const playIntegrity = await createPlayIntegrityComponent({ config })
   const attestationVerifier = await createAttestationVerifierComponent({
@@ -107,6 +120,7 @@ export async function initComponents(): Promise<AppComponents> {
     placeGroupsDb,
     cache,
     destinationsApi,
+    placeThumbnails,
     appVersionsDb,
     featureFlagsDb,
     campaignsDb,
@@ -114,6 +128,8 @@ export async function initComponents(): Promise<AppComponents> {
     fcm,
     apns,
     pushDispatcher,
+    snowflake,
+    pushFeed,
     appAttest,
     playIntegrity,
     attestationVerifier,

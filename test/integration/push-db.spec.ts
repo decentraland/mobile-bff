@@ -34,6 +34,9 @@ describe('push attribution links', () => {
   let sent: PushMessage[]
   let sentIos: PushMessage[]
   let respond: (message: PushMessage) => SendResult
+  // What the places catalogue answers for a delivery that names one. Null is the usual case
+  // here: these campaigns are hand-uploaded and carry no place.
+  let placeImage: string | null = null
 
   // Stand in for FCM and APNs so the dispatcher's decisions are observable without a network.
   const fcm: IPushSender = {
@@ -53,7 +56,8 @@ describe('push attribution links', () => {
     const config = await createDotEnvConfigComponent({ path: ['.env.default', '.env'] })
     const metrics = await createMetricsComponent(metricDeclarations, { config })
     const logs = await createLogComponent({ metrics })
-    return createPushDispatcherComponent({ config, logs, pushDb, fcm, apns })
+    const placeThumbnails = { get: async () => placeImage } as any
+    return createPushDispatcherComponent({ config, logs, pushDb, fcm, apns, placeThumbnails })
   }
 
   beforeAll(async () => {
@@ -80,11 +84,12 @@ describe('push attribution links', () => {
     await pg.query('DELETE FROM push_dead_tokens')
     sent = []
     sentIos = []
+    placeImage = null
     respond = () => ({ status: 'sent', providerMsgId: 'projects/test/messages/1' })
   })
 
 
-  function newCampaign(key: string) {
+  function newCampaign(key: string, isRecurring = false) {
     return {
       campaignKey: key,
       title: 'Come back',
@@ -93,6 +98,9 @@ describe('push attribution links', () => {
       imageUrl: null,
       ttlSeconds: 86400,
       scheduledAt: null,
+      isRecurring,
+      triggerKey: null,
+      destinationKind: null,
       createdBy: CREATOR
     }
   }
@@ -253,6 +261,49 @@ describe('push attribution links', () => {
     expect(await pushDb.claimDeliveries(10)).toHaveLength(0)
   })
 
+  // The campaign's image reaches the dispatcher through the claim's COALESCE, so reading it
+  // before the place would mean any campaign with fallback art never resolves a thumbnail.
+  it('prefers the destination thumbnail over the campaign image, and falls back when there is none', async () => {
+    placeImage = 'https://peer-ec1.decentraland.org/content/contents/bafyplace'
+    const campaign = await pushDb.createCampaign({
+      campaignKey: 'd3-comeback',
+      title: 'Title',
+      body: 'Body',
+      deepLink: 'decentraland://places',
+      imageUrl: 'https://example.com/campaign-art.png',
+      ttlSeconds: 86400,
+      scheduledAt: null,
+      isRecurring: true,
+      triggerKey: 'd3',
+      destinationKind: 'scene',
+      createdBy: CREATOR
+    })
+    await pushDb.setStatus(campaign.id, ['draft'], 'pending_approval')
+    await pushDb.approveCampaign(campaign.id, APPROVER)
+    await pushDb.mergeAudience(campaign.id, [
+      {
+        userId: 'played',
+        triggerKey: 'd3',
+        destinationKind: 'scene',
+        token: 'token-played',
+        platform: 'android',
+        deepLink: 'decentraland://open?position=1,1',
+        placeId: 'c2f9b1a4-7e55-4f0d-9a3c-1b8e6d204f71',
+        sendAt: null
+      }
+    ])
+
+    await (await makeDispatcher()).tick()
+    expect(sent[0].imageUrl).toBe('https://peer-ec1.decentraland.org/content/contents/bafyplace')
+
+    // A place the catalogue has no image for leaves the campaign's art in place.
+    placeImage = null
+    await pg.query(`UPDATE push_deliveries SET state = 'pending', claimed_at = NULL`)
+    sent = []
+    await (await makeDispatcher()).tick()
+    expect(sent[0].imageUrl).toBe('https://example.com/campaign-art.png')
+  })
+
   async function approvedCampaign(key: string, audience: AudienceEntry[]) {
     const campaign = await pushDb.createCampaign({
       campaignKey: key,
@@ -262,6 +313,9 @@ describe('push attribution links', () => {
       imageUrl: null,
       ttlSeconds: 86400,
       scheduledAt: null,
+      isRecurring: false,
+      triggerKey: null,
+      destinationKind: null,
       createdBy: CREATOR
     })
     await pushDb.replaceAudience(campaign.id, audience)
@@ -279,7 +333,7 @@ describe('push attribution links', () => {
 
     const result = await dispatcher.tick()
 
-    expect(result).toMatchObject({ claimed: 2, sent: 2, failed: 0, retrying: 0, finishedCampaigns: 1 })
+    expect(result).toMatchObject({ claimed: 2, sent: 2, failed: 0, retrying: 0, drainedCampaigns: 1 })
     expect((await pushDb.getCampaign(campaign.id))?.status).toBe('sent')
 
     // Each delivery carries its own push_id, and the deep link is attributed.
@@ -298,7 +352,7 @@ describe('push attribution links', () => {
 
     const result = await dispatcher.tick()
 
-    expect(result).toMatchObject({ claimed: 2, sent: 2, failed: 0, finishedCampaigns: 1 })
+    expect(result).toMatchObject({ claimed: 2, sent: 2, failed: 0, drainedCampaigns: 1 })
     expect(sent.map((m) => m.token)).toEqual(['token-android'])
     expect(sentIos.map((m) => m.token)).toEqual(['a'.repeat(64)])
     expect((await pushDb.getCampaign(campaign.id))?.status).toBe('sent')
@@ -319,7 +373,7 @@ describe('push attribution links', () => {
     const first = await dispatcher.tick()
     expect(first).toMatchObject({ claimed: 2, sent: 0, failed: 1, retrying: 1 })
     // The campaign is not finished while something is still queued for another attempt.
-    expect(first.finishedCampaigns).toBe(0)
+    expect(first.drainedCampaigns).toBe(0)
     expect((await pushDb.getCampaign(campaign.id))?.status).toBe('sending')
 
     // The uninstalled device is struck off so the next audience never pays for it again.
@@ -329,7 +383,7 @@ describe('push attribution links', () => {
     // Second pass: the retryable one is claimable again, and now it works.
     respond = () => ({ status: 'sent', providerMsgId: 'projects/test/messages/2' })
     const second = await dispatcher.tick()
-    expect(second).toMatchObject({ claimed: 1, sent: 1, finishedCampaigns: 1 })
+    expect(second).toMatchObject({ claimed: 1, sent: 1, drainedCampaigns: 1 })
     expect(sent.map((m) => m.token)).toEqual(['token-flaky', 'token-gone', 'token-flaky'])
 
     const stats = await pushDb.getStats(campaign.id)
@@ -347,7 +401,7 @@ describe('push attribution links', () => {
     const third = await dispatcher.tick()
 
     expect(sent).toHaveLength(3)
-    expect(third).toMatchObject({ failed: 1, retrying: 0, finishedCampaigns: 1 })
+    expect(third).toMatchObject({ failed: 1, retrying: 0, drainedCampaigns: 1 })
     expect(await pushDb.claimDeliveries(10)).toHaveLength(0)
     expect((await pushDb.getStats(campaign.id)).errors).toEqual({ UNAVAILABLE: 1 })
   })

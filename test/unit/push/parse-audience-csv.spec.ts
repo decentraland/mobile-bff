@@ -92,14 +92,35 @@ describe('validateCampaignContent', () => {
     deepLink: 'decentraland://open?position=0,0'
   }
 
+  // 24h rather than FCM's four-week default: without it a Saturday event can land on Tuesday,
+  // and the reader has no way to know it was stale.
   it('fills in the defaults a campaign relies on', () => {
-    const result = validateCampaignContent(valid)
-
-    // 24h rather than FCM's four-week default: without it a Saturday event can land on
-    // Tuesday, and the reader has no way to know it was stale.
-    expect(result).toEqual({
+    expect(validateCampaignContent(valid)).toEqual({
       content: { ...valid, imageUrl: null, ttlSeconds: 86400, scheduledAt: null }
     })
+  })
+
+  // What a campaign is fed by is not defaulted here: an absent key is left out so an update
+  // that carries only the copy does not reset it. `createCampaign` is what makes a new
+  // campaign one-shot with no slice.
+  it('leaves out what the request said nothing about, and keeps what it did', () => {
+    expect(validateCampaignContent(valid)).not.toMatchObject({
+      content: expect.objectContaining({ isRecurring: expect.anything() })
+    })
+
+    expect(
+      validateCampaignContent({ ...valid, isRecurring: true, triggerKey: 'd3', destinationKind: 'scene' })
+    ).toMatchObject({ content: { isRecurring: true, triggerKey: 'd3', destinationKind: 'scene' } })
+  })
+
+  it.each([
+    ['a slice without isRecurring', { triggerKey: 'd3', destinationKind: 'scene' }],
+    ['a slice on a one-shot campaign', { triggerKey: 'd3', destinationKind: 'scene', isRecurring: false }],
+    ['a trigger with no destination kind', { triggerKey: 'd3', isRecurring: true }],
+    ['a destination kind with no trigger', { destinationKind: 'scene', isRecurring: true }],
+    ['a destination kind that is not one', { triggerKey: 'd3', destinationKind: 'somewhere', isRecurring: true }]
+  ])('refuses %s', (_name, override) => {
+    expect(validateCampaignContent({ ...valid, ...override })).toHaveProperty('error')
   })
 
   it('refuses a link that would fight the sender for its own params', () => {

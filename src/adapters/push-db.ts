@@ -1,6 +1,6 @@
 import SQL from 'sql-template-strings'
 import { AppComponents } from '../types'
-import { PushPlatform } from '../logic/push'
+import { FeedDestinationKind, PushPlatform } from '../logic/push'
 
 export type PushCampaignStatus =
   | 'draft'
@@ -24,6 +24,11 @@ export type PushCampaign = {
   status: PushCampaignStatus
   ttlSeconds: number
   scheduledAt: string | null
+  /** A campaign the warehouse feed keeps refilling, which therefore never finishes. */
+  isRecurring: boolean
+  /** Which slice of the audience feed this campaign takes; null for a hand-uploaded one. */
+  triggerKey: string | null
+  destinationKind: FeedDestinationKind | null
   audienceCount: number
   createdBy: string
   approvedBy: string | null
@@ -41,6 +46,10 @@ export type CreatePushCampaignInput = {
   imageUrl: string | null
   ttlSeconds: number
   scheduledAt: string | null
+  isRecurring?: boolean
+  /** The slice of the audience feed this campaign serves; both absent for a hand-uploaded one. */
+  triggerKey?: string | null
+  destinationKind?: FeedDestinationKind | null
   createdBy: string
 }
 
@@ -51,10 +60,39 @@ export type UpdatePushCampaignInput = {
   imageUrl: string | null
   ttlSeconds: number
   scheduledAt: string | null
+  /** Left out by a caller that is only editing copy, and then left as it is. */
+  isRecurring?: boolean
+  triggerKey?: string | null
+  destinationKind?: FeedDestinationKind | null
 }
 
 /** One row of the uploaded audience. */
 export type AudienceEntry = { userId: string; token: string; platform: PushPlatform }
+
+/**
+ * One row of the warehouse feed. Unlike a CSV row it carries its own destination and its own
+ * moment, because the trigger that produced it is per install rather than per campaign.
+ */
+export type FeedAudienceEntry = {
+  userId: string
+  triggerKey: string
+  destinationKind: FeedDestinationKind
+  token: string
+  platform: PushPlatform
+  /** Null for `plaza` and `discover`, which fall back to the campaign's own link. */
+  deepLink: string | null
+  placeId: string | null
+  sendAt: string | null
+}
+
+export type FeedAudienceReport = {
+  /** Rows written as new `pending` deliveries. */
+  queued: number
+  /** Rows the campaign already holds, which is the normal case on a rolling feed. */
+  alreadyQueued: number
+  /** Tokens the provider already told us are gone. */
+  suppressed: number
+}
 
 export type AudienceReport = {
   received: number
@@ -75,8 +113,11 @@ export type ClaimedDelivery = {
   campaignKey: string
   title: string
   body: string
+  /** The delivery's own destination when it has one, else the campaign's. */
   deepLink: string
   imageUrl: string | null
+  /** Set on a feed row with a resolved scene; the thumbnail is looked up from it at send. */
+  placeId: string | null
   category: string
   ttlSeconds: number
   /** Attempts already spent, so the sender can stop retrying a delivery that never lands. */
@@ -106,6 +147,9 @@ export type CampaignStats = {
 export type IPushDbComponent = {
   listCampaigns(): Promise<PushCampaign[]>
   getCampaign(id: string): Promise<PushCampaign | null>
+  /** Resolves the key the warehouse feed names to the campaign a person created here. */
+  /** The campaign that declared it serves this slice of the audience feed. */
+  getCampaignForSlice(triggerKey: string, destinationKind: FeedDestinationKind): Promise<PushCampaign | null>
   createCampaign(input: CreatePushCampaignInput): Promise<PushCampaign>
   updateCampaign(id: string, changes: UpdatePushCampaignInput): Promise<PushCampaign | null>
   /** Moves a campaign between states, refusing transitions that are not allowed. */
@@ -113,6 +157,8 @@ export type IPushDbComponent = {
   approveCampaign(id: string, approvedBy: string): Promise<PushCampaign | null>
   cancelCampaign(id: string): Promise<{ campaign: PushCampaign; cancelledDeliveries: number } | null>
   replaceAudience(campaignId: string, entries: AudienceEntry[]): Promise<AudienceReport>
+  /** Adds what is new and leaves what is already queued untouched. */
+  mergeAudience(campaignId: string, entries: FeedAudienceEntry[]): Promise<FeedAudienceReport>
   /** Claims up to `limit` pending deliveries for sending. Safe across replicas. */
   claimDeliveries(limit: number): Promise<ClaimedDelivery[]>
   /** Returns deliveries abandoned mid-send (crashed replica) to the queue. */
@@ -135,6 +181,9 @@ type CampaignRow = {
   status: PushCampaignStatus
   ttl_seconds: number
   scheduled_at: Date | null
+  is_recurring: boolean
+  trigger_key: string | null
+  destination_kind: FeedDestinationKind | null
   audience_count: number
   created_by: string
   approved_by: string | null
@@ -146,8 +195,8 @@ type CampaignRow = {
 
 const CAMPAIGN_COLUMNS = `
   id, campaign_key, title, body, deep_link, image_url, category, status, ttl_seconds,
-  scheduled_at, audience_count, created_by, approved_by, approved_at, created_at,
-  started_at, finished_at
+  scheduled_at, is_recurring, trigger_key, destination_kind, audience_count, created_by,
+  approved_by, approved_at, created_at, started_at, finished_at
 `
 
 const iso = (value: Date | null) => (value ? value.toISOString() : null)
@@ -164,6 +213,9 @@ function toCampaign(row: CampaignRow): PushCampaign {
     status: row.status,
     ttlSeconds: row.ttl_seconds,
     scheduledAt: iso(row.scheduled_at),
+    isRecurring: row.is_recurring,
+    triggerKey: row.trigger_key,
+    destinationKind: row.destination_kind,
     audienceCount: row.audience_count,
     createdBy: row.created_by,
     approvedBy: row.approved_by,
@@ -187,11 +239,25 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
     return result.rows.length > 0 ? toCampaign(result.rows[0]) : null
   }
 
+  async function getCampaignForSlice(
+    triggerKey: string,
+    destinationKind: FeedDestinationKind
+  ): Promise<PushCampaign | null> {
+    const query = SQL`SELECT `.append(CAMPAIGN_COLUMNS).append(
+      SQL` FROM push_campaigns WHERE trigger_key = ${triggerKey} AND destination_kind = ${destinationKind}`
+    )
+    const result = await pg.query<CampaignRow>(query)
+    return result.rows.length > 0 ? toCampaign(result.rows[0]) : null
+  }
+
   async function createCampaign(input: CreatePushCampaignInput): Promise<PushCampaign> {
     const query = SQL`
-      INSERT INTO push_campaigns (campaign_key, title, body, deep_link, image_url, ttl_seconds, scheduled_at, created_by)
+      INSERT INTO push_campaigns (campaign_key, title, body, deep_link, image_url, ttl_seconds,
+                                  scheduled_at, is_recurring, trigger_key, destination_kind,
+                                  created_by)
       VALUES (${input.campaignKey}, ${input.title}, ${input.body}, ${input.deepLink}, ${input.imageUrl},
-              ${input.ttlSeconds}, ${input.scheduledAt}, ${input.createdBy})
+              ${input.ttlSeconds}, ${input.scheduledAt}, ${input.isRecurring ?? false},
+              ${input.triggerKey ?? null}, ${input.destinationKind ?? null}, ${input.createdBy})
       RETURNING `.append(CAMPAIGN_COLUMNS)
     const result = await pg.query<CampaignRow>(query)
     return toCampaign(result.rows[0])
@@ -200,6 +266,10 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
   // Content is only editable while a campaign is still a draft. Once it is submitted the
   // approver is vouching for specific words, so letting the creator rewrite them afterwards
   // would make the two-man rule decorative.
+  // What a campaign is fed by is not part of its copy, and the backoffice sends only the copy
+  // when somebody fixes a typo. Writing a default for an absent key would turn a recurring
+  // campaign into a one-shot with no slice, with no error to show for it, so these three are
+  // only written when the request actually carried them.
   async function updateCampaign(id: string, changes: UpdatePushCampaignInput): Promise<PushCampaign | null> {
     const query = SQL`
       UPDATE push_campaigns SET
@@ -208,9 +278,17 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
         deep_link = ${changes.deepLink},
         image_url = ${changes.imageUrl},
         ttl_seconds = ${changes.ttlSeconds},
-        scheduled_at = ${changes.scheduledAt}
-      WHERE id = ${id} AND status = 'draft'
-      RETURNING `.append(CAMPAIGN_COLUMNS)
+        scheduled_at = ${changes.scheduledAt}`
+    if (changes.isRecurring !== undefined) {
+      query.append(SQL`, is_recurring = ${changes.isRecurring}`)
+    }
+    if (changes.triggerKey !== undefined) {
+      query.append(SQL`, trigger_key = ${changes.triggerKey}`)
+    }
+    if (changes.destinationKind !== undefined) {
+      query.append(SQL`, destination_kind = ${changes.destinationKind}`)
+    }
+    query.append(SQL` WHERE id = ${id} AND status = 'draft' RETURNING `).append(CAMPAIGN_COLUMNS)
     const result = await pg.query<CampaignRow>(query)
     return result.rows.length > 0 ? toCampaign(result.rows[0]) : null
   }
@@ -238,11 +316,15 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
     // reaching `sending` requires claiming a row, and finishDrainedCampaigns only closes
     // campaigns already `sending`. Submit checks this too, but the audience can be replaced
     // with an all-suppressed one while the campaign sits in `pending_approval`.
+    //
+    // A recurring campaign is approved empty on purpose: approval is what opens it to the
+    // warehouse feed, so requiring an audience first would be a deadlock — the feed only
+    // fills campaigns a second person has already approved.
     const query = SQL`
       UPDATE push_campaigns
       SET status = 'scheduled', approved_by = ${approvedBy}, approved_at = now()
       WHERE id = ${id} AND status = 'pending_approval' AND created_by <> ${approvedBy}
-        AND audience_count > 0
+        AND (is_recurring OR audience_count > 0)
       RETURNING `.append(CAMPAIGN_COLUMNS)
     const result = await pg.query<CampaignRow>(query)
     return result.rows.length > 0 ? toCampaign(result.rows[0]) : null
@@ -316,6 +398,81 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
   // the rows in `pending` would let the next tick hand the same token to another sender and
   // deliver the notification twice, which is the one failure a push system cannot walk back.
   // `claimed_at` is the lease: see reclaimStaleDeliveries for the crash case.
+  // A rolling feed is read again long before a trigger leaves it, so on every pass after the
+  // first most rows are ones this campaign already holds. ON CONFLICT DO NOTHING is what makes
+  // that a no-op: replaceAudience deletes the campaign's deliveries first, which on a feed
+  // would return rows that already went out to `pending` and send them a second time.
+  async function mergeAudience(campaignId: string, entries: FeedAudienceEntry[]): Promise<FeedAudienceReport> {
+    if (entries.length === 0) {
+      return { queued: 0, alreadyQueued: 0, suppressed: 0 }
+    }
+
+    // The feed's grain is one row per install per trigger, and a campaign serves one trigger,
+    // so a repeated user_id would mean the warehouse broke its own grain. Collapsing here keeps
+    // that from turning into an ON CONFLICT against our own statement.
+    const byUser = new Map<string, FeedAudienceEntry>()
+    for (const entry of entries) {
+      byUser.set(entry.userId, entry)
+    }
+    const unique = [...byUser.values()]
+
+    const client = await pg.getPool().connect()
+    try {
+      await client.query('BEGIN')
+
+      const dead = await client.query<{ count: string }>(
+        `SELECT COUNT(*) AS count
+         FROM UNNEST($1::text[]) AS u(token)
+         JOIN push_dead_tokens d ON d.token = u.token`,
+        [unique.map((entry) => entry.token)]
+      )
+      const suppressed = Number(dead.rows[0]?.count ?? 0)
+
+      // Untargeted ON CONFLICT: the row has to clear two unique constraints, its own primary
+      // key and one send per install per trigger across every campaign. The second is what
+      // makes a destination that changed mid-window unable to queue a second push, so naming
+      // only the first would turn that case into an error instead of a no-op.
+      const inserted = await client.query(
+        `INSERT INTO push_deliveries (campaign_id, user_id, trigger_key, token, platform,
+                                      deep_link, place_id, send_at)
+         SELECT $1, u.user_id, NULLIF(u.trigger_key, ''), u.token, u.platform,
+                NULLIF(u.deep_link, ''), NULLIF(u.place_id, ''), u.send_at::timestamptz
+         FROM UNNEST($2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[])
+              AS u(user_id, trigger_key, token, platform, deep_link, place_id, send_at)
+         WHERE NOT EXISTS (SELECT 1 FROM push_dead_tokens d WHERE d.token = u.token)
+         ON CONFLICT DO NOTHING`,
+        [
+          campaignId,
+          unique.map((entry) => entry.userId),
+          unique.map((entry) => entry.triggerKey),
+          unique.map((entry) => entry.token),
+          unique.map((entry) => entry.platform),
+          unique.map((entry) => entry.deepLink ?? ''),
+          unique.map((entry) => entry.placeId ?? ''),
+          unique.map((entry) => entry.sendAt)
+        ]
+      )
+      const queued = inserted.rowCount ?? 0
+
+      // Counted from the table rather than from the batch: a recurring campaign's audience is
+      // everyone it has ever queued, not everyone this ingest happened to bring.
+      await client.query(
+        `UPDATE push_campaigns
+         SET audience_count = (SELECT COUNT(*) FROM push_deliveries WHERE campaign_id = $1)
+         WHERE id = $1`,
+        [campaignId]
+      )
+      await client.query('COMMIT')
+
+      return { queued, alreadyQueued: unique.length - suppressed - queued, suppressed }
+    } catch (error) {
+      await client.query('ROLLBACK')
+      throw error
+    } finally {
+      client.release()
+    }
+  }
+
   async function claimDeliveries(limit: number): Promise<ClaimedDelivery[]> {
     const result = await pg.query<{
       campaign_id: string
@@ -327,6 +484,7 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
       body: string
       deep_link: string
       image_url: string | null
+      place_id: string | null
       category: string
       ttl_seconds: number
       attempts: number
@@ -338,6 +496,10 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
         WHERE c.status IN ('scheduled', 'sending')
           AND (c.scheduled_at IS NULL OR c.scheduled_at <= now())
           AND d.state = 'pending'
+          -- A feed row carries the instant it is due, in the install's own evening. A row whose
+          -- moment already passed is claimed at once, which is what sends a trigger that came
+          -- due while nobody was reading the feed instead of dropping it.
+          AND (d.send_at IS NULL OR d.send_at <= now())
         -- Ordered by campaign_id, which is UUID order: arbitrary between campaigns but exactly
         -- what push_deliveries_campaign_id_state_index provides, so the batch comes out of the
         -- index with no sort. Ordering by due time instead was measured at 24ms against 0.17ms
@@ -352,15 +514,18 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
         SET state = 'sending', claimed_at = now()
         FROM claimed
         WHERE d.campaign_id = claimed.campaign_id AND d.user_id = claimed.user_id
-        RETURNING d.campaign_id, d.user_id, d.token, d.platform, d.attempts
+        RETURNING d.campaign_id, d.user_id, d.token, d.platform, d.attempts, d.deep_link,
+                  d.image_url, d.place_id
       ), started AS (
         UPDATE push_campaigns c
         SET status = 'sending', started_at = COALESCE(c.started_at, now())
         WHERE c.id IN (SELECT campaign_id FROM taken) AND c.status = 'scheduled'
         RETURNING c.id
       )
-      SELECT t.campaign_id, t.user_id, t.token, t.platform, t.attempts,
-             c.campaign_key, c.title, c.body, c.deep_link, c.image_url, c.category, c.ttl_seconds
+      SELECT t.campaign_id, t.user_id, t.token, t.platform, t.attempts, t.place_id,
+             c.campaign_key, c.title, c.body, c.category, c.ttl_seconds,
+             COALESCE(t.deep_link, c.deep_link) AS deep_link,
+             COALESCE(t.image_url, c.image_url) AS image_url
       FROM taken t
       JOIN push_campaigns c ON c.id = t.campaign_id
     `)
@@ -375,6 +540,7 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
       body: row.body,
       deepLink: row.deep_link,
       imageUrl: row.image_url,
+      placeId: row.place_id,
       category: row.category,
       ttlSeconds: row.ttl_seconds,
       attempts: row.attempts
@@ -448,9 +614,14 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
     )
   }
 
+  // A recurring campaign's empty queue means idle, not done. Closing it as `sent` would take
+  // it out of the claim's status filter, and the next day's rows would sit in `pending` for
+  // good — so it goes back to `scheduled` and the next ingest starts it again.
   async function finishDrainedCampaigns(): Promise<string[]> {
     const result = await pg.query<{ id: string }>(SQL`
-      UPDATE push_campaigns SET status = 'sent', finished_at = now()
+      UPDATE push_campaigns SET
+        status = CASE WHEN is_recurring THEN 'scheduled' ELSE 'sent' END,
+        finished_at = CASE WHEN is_recurring THEN NULL ELSE now() END
       WHERE status = 'sending'
         AND NOT EXISTS (
           SELECT 1 FROM push_deliveries d
@@ -497,12 +668,14 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
   return {
     listCampaigns,
     getCampaign,
+    getCampaignForSlice,
     createCampaign,
     updateCampaign,
     setStatus,
     approveCampaign,
     cancelCampaign,
     replaceAudience,
+    mergeAudience,
     claimDeliveries,
     reclaimStaleDeliveries,
     recordOutcomes,

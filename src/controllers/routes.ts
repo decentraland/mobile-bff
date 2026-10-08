@@ -77,6 +77,7 @@ import { submitPushCampaignHandler } from "./handlers/backoffice/push/submit-pus
 import { approvePushCampaignHandler } from "./handlers/backoffice/push/approve-push-campaign-handler"
 import { cancelPushCampaignHandler } from "./handlers/backoffice/push/cancel-push-campaign-handler"
 import { getPushStatsHandler } from "./handlers/backoffice/push/get-push-stats-handler"
+import { syncPushFeedHandler } from "./handlers/backoffice/push/sync-feed-handler"
 
 // Wallets (Thirdweb thin proxy)
 // TODO: re-enable sign-message endpoint once the TTL and handshake flow are better defined.
@@ -251,6 +252,7 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
   // Kill switch: stops whatever is still queued. What already went out cannot be recalled.
   router.post("/backoffice/push/campaigns/:id/cancel", signedFetch, cancelPushCampaignHandler)
   router.get("/backoffice/push/campaigns/:id/stats", signedFetch, getPushStatsHandler)
+  router.post("/backoffice/push/feed/sync", signedFetch, syncPushFeedHandler)
 
   return router
 }

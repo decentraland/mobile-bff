@@ -1209,6 +1209,36 @@ paths:
         '404':
           description: Campaign not found
 
+  /backoffice/push/feed/sync:
+    post:
+      tags:
+        - Push
+      summary: Read the warehouse audience feed now (backoffice)
+      description: |
+        Pulls the lifecycle audience feed out of Snowflake and queues what is new onto the
+        recurring campaigns that match it by key. A background loop already does this; this
+        endpoint is for seeing what a sync would do, and for driving one where the loop is off.
+
+        Safe to repeat: the feed is a rolling window, so most rows on any given run are ones a
+        campaign already holds, and those are left alone rather than queued again. A row is
+        only ever added as `pending` to a campaign that is already approved — an ingest cannot
+        create a campaign, change its copy, or send anything.
+
+        The report says what happened: `queued` and `alreadyQueued`, `suppressed` for tokens
+        the provider has already rejected, `rejected` counting refused rows by reason,
+        `unknownCampaigns` for keys no campaign here answers to, and `notAcceptingCampaigns`
+        for keys whose campaign exists but is not recurring or not yet approved.
+      operationId: syncPushFeed
+      security:
+        - signedFetch: []
+      responses:
+        '200':
+          description: What the sync read and queued
+        '401':
+          description: Caller is not a backoffice user
+        '502':
+          description: The warehouse could not be read
+
 components:
   securitySchemes:
     signedFetch:
