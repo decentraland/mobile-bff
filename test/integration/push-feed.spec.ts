@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { createDotEnvConfigComponent } from '@well-known-components/env-config-provider'
 import { createLogComponent } from '@well-known-components/logger'
 import { createMetricsComponent } from '@well-known-components/metrics'
@@ -5,7 +6,7 @@ import { IPgComponent } from '@well-known-components/pg-component'
 import { metricDeclarations } from '../../src/metrics'
 import { startPgWithMigrations } from '../utils/pg'
 import { createPushDbComponent, FeedAudienceEntry, IPushDbComponent } from '../../src/adapters/push-db'
-import { createPushFeedComponent } from '../../src/adapters/push-feed'
+import { createPushFeedComponent, FeedRefusedError } from '../../src/adapters/push-feed'
 import { ISnowflakeComponent, SnowflakeRow } from '../../src/adapters/snowflake'
 
 const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'true'
@@ -295,22 +296,25 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
       return { isConfigured: () => true, query: async () => rows }
     }
 
-    async function feedComponent(snowflake: ISnowflakeComponent) {
+    async function feedComponent(snowflake: ISnowflakeComponent, numbers: Record<string, number> = {}) {
       const config = await createDotEnvConfigComponent({ path: ['.env.default', '.env'] })
       const metrics = await createMetricsComponent(metricDeclarations, { config })
       const logs = await createLogComponent({ metrics })
       // The suite drives sync() itself, so the interval is forced to 0: a live timer would
       // reach for the warehouse and rewrite rows these assertions are reading.
-      const withoutTimer = { ...config, getNumber: async () => 0 }
-      return createPushFeedComponent({ config: withoutTimer, logs, pushDb, snowflake } as any)
+      const overridden = { ...config, getNumber: async (key: string) => numbers[key] ?? 0 }
+      return createPushFeedComponent({ config: overridden, logs, pushDb, snowflake } as any)
     }
+
+    /** A 64-hex APNs token that is stable per install, which is the shape the feed is held to. */
+    const deviceToken = (userId: string) => createHash('sha256').update(userId).digest('hex')
 
     function snowflakeRow(triggerKey: string, userId: string): SnowflakeRow {
       return {
         visitor_id: userId,
         trigger_key: triggerKey,
         destination_kind: 'scene',
-        push_token: `token-${userId}`,
+        push_token: deviceToken(userId),
         push_platform: 'ios',
         is_world: 'false',
         world_name: null,
@@ -381,6 +385,39 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
       })
 
       expect(await feed.sync()).toMatchObject({ rowsRead: 0, queued: 0 })
+    })
+
+    // Every row becomes a push, so a feed far larger than any build should produce is a bug
+    // somewhere upstream, and it is refused whole rather than half of it sent.
+    it('refuses the whole feed when it holds more rows than the cap', async () => {
+      const campaign = await approvedRecurringCampaign('d3-comeback', 'd3', 'scene')
+      const feed = await feedComponent(
+        {
+          isConfigured: () => true,
+          query: async (statement) => {
+            // Asked for one past the cap, so a feed exactly at it is told apart from one over.
+            expect(statement.trim()).toMatch(/LIMIT 3$/)
+            return [snowflakeRow('d3', 'alice'), snowflakeRow('d3', 'bob'), snowflakeRow('d3', 'carol')]
+          }
+        },
+        { PUSH_FEED_MAX_ROWS: 2 }
+      )
+
+      await expect(feed.sync()).rejects.toBeInstanceOf(FeedRefusedError)
+      expect((await pushDb.getCampaign(campaign.id))!.audienceCount).toBe(0)
+    })
+
+    // A device can be more than one install, and the delivery guard is keyed on the install.
+    it('sends one push per device per trigger when two installs share a token', async () => {
+      await approvedRecurringCampaign('d3-comeback', 'd3', 'scene')
+      const feed = await feedComponent(
+        fakeSnowflake([
+          snowflakeRow('d3', 'alice'),
+          { ...snowflakeRow('d3', 'alice-reinstalled'), push_token: deviceToken('alice') }
+        ])
+      )
+
+      expect(await feed.sync()).toMatchObject({ queued: 1, rejected: { duplicate_token: 1 } })
     })
   })
 })

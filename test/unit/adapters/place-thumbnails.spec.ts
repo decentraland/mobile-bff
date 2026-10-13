@@ -79,4 +79,14 @@ describe('placeThumbnails', () => {
 
     expect(await thumbnails.get(PLACE)).toBeNull()
   })
+
+  // The id comes from the warehouse feed and goes into a URL, so it is held to a catalogue
+  // id's shape before anything is fetched.
+  it('does not look up an id that is not a catalogue id', async () => {
+    const fetchImpl = jest.fn()
+    const thumbnails = await createPlaceThumbnailsComponent(components(fetchImpl))
+
+    expect(await thumbnails.get('../places?all=true')).toBeNull()
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
 })

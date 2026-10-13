@@ -38,7 +38,10 @@ describe('parseAudienceCsv', () => {
       // The two-column export the warehouse produced before iOS existed.
       `inferred-ios,${APNS_TOKEN}`,
       `inferred-android,${FCM_TOKEN}`,
-      `unknown,${FCM_TOKEN},windows`
+      `unknown,${FCM_TOKEN},windows`,
+      // Declared iOS with a token that is not a device token: the APNs sender would put it in
+      // the path of its request to Apple.
+      `mislabelled,${FCM_TOKEN},ios`
     ].join('\n')
 
     const { entries, invalid } = parseAudienceCsv(csv)
@@ -52,7 +55,10 @@ describe('parseAudienceCsv', () => {
     ])
     // Guessing here would send a whole segment through the wrong provider and mark every
     // token dead on the way.
-    expect(invalid).toEqual([{ line: 7, reason: "unknown platform 'windows' (android or ios)" }])
+    expect(invalid).toEqual([
+      { line: 7, reason: "unknown platform 'windows' (android or ios)" },
+      { line: 8, reason: 'not an APNs device token (64 hex characters)' }
+    ])
   })
 
   it('reports bad rows with their line number instead of dropping them', () => {

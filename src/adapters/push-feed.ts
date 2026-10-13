@@ -22,12 +22,20 @@ import {
   destinationDeepLink,
   FEED_DESTINATION_KINDS,
   FeedDestinationKind,
+  isWellFormedToken,
   PushPlatform
 } from '../logic/push'
 import { FeedAudienceEntry } from './push-db'
 import { SnowflakeRow } from './snowflake'
 
 const FEED_RELATION = 'EXPORT_PUSH_COMEBACK_AUDIENCE'
+
+// The feed is trusted for who to reach, but not without bound: every row it produces becomes a
+// push, so a warehouse bug or a bad actor with write access to the export could have this
+// service send any number of them. Rows past this many are a build gone wrong, and the whole
+// read is refused rather than half of it queued. It is also what keeps a run's memory bounded,
+// since the result and the insert that follows are both held whole.
+const DEFAULT_MAX_ROWS = 100_000
 
 // Timestamps arrive from the SQL API as an epoch offset, so the feed renders this one to text
 // in the query. The trailing Z is what makes it parse as the UTC instant it already is.
@@ -62,6 +70,17 @@ export type SyncReport = {
 export type IPushFeedComponent = IBaseComponent & {
   /** Runs one ingest. Exposed so the backoffice and the tests can drive it directly. */
   sync(): Promise<SyncReport>
+}
+
+/**
+ * A sync this service declined to carry out. Unlike a warehouse error, the message is this
+ * service's own and names what an operator has to act on, so it is safe to send back to them.
+ */
+export class FeedRefusedError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'FeedRefusedError'
+  }
 }
 
 /** A campaign only takes feed rows once a second person has approved what it says. */
@@ -107,6 +126,12 @@ export function parseFeedRow(row: SnowflakeRow): ParsedRow {
   const platform = (row.push_platform ?? '').trim()
   if (platform !== 'android' && platform !== 'ios') {
     return { reason: 'push_platform' }
+  }
+  // The platform is declared rather than read off the token, so the two are checked against
+  // each other: an iOS token ends up in the path of the request to Apple, and anything that is
+  // not the 64 hex characters of a device token would rewrite that path.
+  if (!isWellFormedToken(token, platform)) {
+    return { reason: 'push_token' }
   }
 
   // A scene row has to produce a link; plaza and discover carry no destination of their own
@@ -162,6 +187,7 @@ export async function createPushFeedComponent({
   // Hourly. The warehouse builds the feed once a day, and a row is held by the claim until its
   // own `send_at`, so reading more often buys nothing and costs warehouse credits.
   const intervalMs = (await config.getNumber('PUSH_FEED_SYNC_INTERVAL_MS')) ?? 3_600_000
+  const maxRows = positiveOr(await config.getNumber('PUSH_FEED_MAX_ROWS'), DEFAULT_MAX_ROWS)
 
   let timer: NodeJS.Timeout | undefined
   let running = false
@@ -210,16 +236,33 @@ export async function createPushFeedComponent({
       return report
     }
 
-    const rows = await snowflake.query(FEED_QUERY)
+    // One past the cap, so a feed that is exactly at it is told apart from one that is over.
+    const rows = await snowflake.query(`${FEED_QUERY} LIMIT ${maxRows + 1}`)
+    if (rows.length > maxRows) {
+      throw new FeedRefusedError(
+        `the warehouse feed holds more than ${maxRows} rows (PUSH_FEED_MAX_ROWS); nothing was queued`
+      )
+    }
     report.rowsRead = rows.length
 
     const bySlice = new Map<string, FeedAudienceEntry[]>()
+    // One send per device per trigger. The feed's grain is the install, and a device can show
+    // up as more than one — a reinstall keeps its old row until that token dies — so the same
+    // token under two visitor ids would be the same push twice, and the delivery guard, keyed
+    // on the install, could not see it.
+    const seenDevices = new Set<string>()
     for (const row of rows) {
       const parsed = parseFeedRow(row)
       if ('reason' in parsed) {
         report.rejected[parsed.reason] = (report.rejected[parsed.reason] ?? 0) + 1
         continue
       }
+      const device = `${parsed.entry.triggerKey}\u0000${parsed.entry.token}`
+      if (seenDevices.has(device)) {
+        report.rejected.duplicate_token = (report.rejected.duplicate_token ?? 0) + 1
+        continue
+      }
+      seenDevices.add(device)
       const slice = `${parsed.entry.triggerKey}/${parsed.entry.destinationKind}`
       const bucket = bySlice.get(slice)
       if (bucket) {
@@ -294,4 +337,9 @@ export async function createPushFeedComponent({
   }
 
   return { start, stop, sync }
+}
+
+/** A config number that is absent, empty or non-positive falls back rather than disabling. */
+function positiveOr(value: number | undefined, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : fallback
 }

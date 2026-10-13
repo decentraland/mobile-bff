@@ -26,6 +26,10 @@ type PlaceResponse = {
 
 const cacheKey = (placeId: string) => `place:thumb:${placeId}`
 
+// A catalogue id is a UUID. It arrives from the warehouse feed and ends up in a URL, so it is
+// held to that shape first rather than encoded and hoped for.
+const PLACE_ID_PATTERN = /^[0-9a-f-]{1,64}$/i
+
 // A var that is present but empty reads back as '', which `??` does not catch — and
 // parseInt('') is NaN, which setTimeout treats as ~1ms, so every lookup would abort instead of
 // being given its budget.
@@ -48,6 +52,10 @@ export async function createPlaceThumbnailsComponent(components: Components): Pr
   const timeoutMs = numberOr(await config.getString('PLACE_THUMBNAIL_TIMEOUT_MS'), 3_000)
 
   async function get(placeId: string): Promise<string | null> {
+    if (!PLACE_ID_PATTERN.test(placeId)) {
+      logger.debug('Place id is not a catalogue id; sending no image', { placeId })
+      return null
+    }
     // A miss and a known-empty are both cached: a place with no thumbnail would otherwise be
     // looked up again for every delivery of the same campaign.
     const cached = await cache.get<string>(cacheKey(placeId))

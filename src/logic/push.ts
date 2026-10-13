@@ -27,8 +27,25 @@ export type PushPlatform = 'android' | 'ios'
 // longer and always carries a ':' (`<instance id>:APA91b…`), so the two shapes never overlap.
 const APNS_TOKEN_REGEX = /^[0-9a-f]{64}$/i
 
+// An FCM registration token is opaque, but it is always long and never contains a comma or
+// whitespace. The point is to catch a column swap or a half-pasted file, not to validate FCM.
+const MIN_TOKEN_LENGTH = 20
+
 export function platformForToken(token: string): PushPlatform {
   return APNS_TOKEN_REGEX.test(token) ? 'ios' : 'android'
+}
+
+/**
+ * Whether a token has the shape its declared platform's transport expects. The iOS case is the
+ * one that matters: the APNs sender puts the token in the path of its request to Apple, so a
+ * value that is not the 64 hex characters of a device token would rewrite that path. An FCM
+ * token travels in a JSON body, so only an obviously broken one is refused.
+ */
+export function isWellFormedToken(token: string, platform: PushPlatform): boolean {
+  if (platform === 'ios') {
+    return APNS_TOKEN_REGEX.test(token)
+  }
+  return token.length >= MIN_TOKEN_LENGTH && !/\s/.test(token)
 }
 
 export const FEED_DESTINATION_KINDS = ['scene', 'plaza', 'discover'] as const
@@ -266,10 +283,6 @@ export type ParsedAudience = {
   invalid: { line: number; reason: string }[]
 }
 
-// An FCM registration token is opaque, but it is always long and never contains a comma or
-// whitespace. The point is to catch a column swap or a half-pasted file, not to validate FCM.
-const MIN_TOKEN_LENGTH = 20
-
 /**
  * Parse a `user_id,token[,platform]` CSV export.
  *
@@ -328,6 +341,13 @@ export function parseAudienceCsv(text: string): ParsedAudience {
       platform = declared
     } else {
       invalid.push({ line: lineNumber, reason: `unknown platform '${platformField}' (android or ios)` })
+      continue
+    }
+    if (!isWellFormedToken(token, platform)) {
+      invalid.push({
+        line: lineNumber,
+        reason: platform === 'ios' ? 'not an APNs device token (64 hex characters)' : 'token contains whitespace'
+      })
       continue
     }
 
