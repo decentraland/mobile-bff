@@ -21,6 +21,16 @@ export const BODY_MAX_LENGTH = 1000
 export const TTL_MAX_SECONDS = 2419200
 export const TTL_DEFAULT_SECONDS = 86400
 
+export type PushPlatform = 'android' | 'ios'
+
+// An APNs device token is exactly 32 bytes rendered as hex. An FCM registration token is
+// longer and always carries a ':' (`<instance id>:APA91b…`), so the two shapes never overlap.
+const APNS_TOKEN_REGEX = /^[0-9a-f]{64}$/i
+
+export function platformForToken(token: string): PushPlatform {
+  return APNS_TOKEN_REGEX.test(token) ? 'ios' : 'android'
+}
+
 export type CampaignContent = {
   title: string
   body: string
@@ -170,7 +180,7 @@ export function contentWarnings(content: CampaignContent): string[] {
 }
 
 export type ParsedAudience = {
-  entries: { userId: string; token: string }[]
+  entries: { userId: string; token: string; platform: PushPlatform }[]
   /** Line numbers (1-based, as the operator sees them) that could not be read, with why. */
   invalid: { line: number; reason: string }[]
 }
@@ -180,15 +190,18 @@ export type ParsedAudience = {
 const MIN_TOKEN_LENGTH = 20
 
 /**
- * Parse a `user_id,fcm_token` CSV export.
+ * Parse a `user_id,token[,platform]` CSV export.
  *
  * The audience comes out of the warehouse by hand, so the failure modes are human: a header
  * row, a trailing newline, quoted fields from a spreadsheet, columns the other way round.
  * Every row that cannot be read is reported with its line number rather than dropped, because
  * silently sending to fewer people than intended is indistinguishable from success.
+ *
+ * `platform` is optional: when the column is missing it is read off the token's shape, which
+ * is what keeps the original `user_id,fcm_token` exports working unchanged.
  */
 export function parseAudienceCsv(text: string): ParsedAudience {
-  const entries: { userId: string; token: string }[] = []
+  const entries: { userId: string; token: string; platform: PushPlatform }[] = []
   const invalid: { line: number; reason: string }[] = []
 
   const lines = text.split(/\r?\n/)
@@ -210,7 +223,7 @@ export function parseAudienceCsv(text: string): ParsedAudience {
       invalid.push({ line: lineNumber, reason: 'expected two comma-separated columns' })
       continue
     }
-    const [userId, token] = fields
+    const [userId, token, platformField] = fields
     if (!userId) {
       invalid.push({ line: lineNumber, reason: 'empty user_id' })
       continue
@@ -226,7 +239,18 @@ export function parseAudienceCsv(text: string): ParsedAudience {
       continue
     }
 
-    entries.push({ userId, token })
+    let platform: PushPlatform
+    const declared = (platformField ?? '').toLowerCase()
+    if (declared === '') {
+      platform = platformForToken(token)
+    } else if (declared === 'android' || declared === 'ios') {
+      platform = declared
+    } else {
+      invalid.push({ line: lineNumber, reason: `unknown platform '${platformField}' (android or ios)` })
+      continue
+    }
+
+    entries.push({ userId, token, platform })
   }
 
   return { entries, invalid }

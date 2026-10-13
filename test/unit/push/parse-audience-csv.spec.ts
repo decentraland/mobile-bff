@@ -21,10 +21,38 @@ describe('parseAudienceCsv', () => {
 
     expect(invalid).toEqual([])
     expect(entries).toEqual([
-      { userId: 'user-a', token: TOKEN_A },
-      { userId: 'user-b', token: TOKEN_B },
-      { userId: 'user-c', token: TOKEN_A }
+      { userId: 'user-a', token: TOKEN_A, platform: 'android' },
+      { userId: 'user-b', token: TOKEN_B, platform: 'android' },
+      { userId: 'user-c', token: TOKEN_A, platform: 'android' }
     ])
+  })
+
+  it('routes each row to its transport, by column or by the token itself', () => {
+    const APNS_TOKEN = '0123456789abcdef'.repeat(4)
+    const FCM_TOKEN = 'dQw4w9WgXcQ:APA91b' + 'x'.repeat(120)
+    const csv = [
+      'user_id,token,platform',
+      `explicit-ios,${APNS_TOKEN},ios`,
+      `explicit-android,${FCM_TOKEN},android`,
+      `shouted,${APNS_TOKEN},IOS`,
+      // The two-column export the warehouse produced before iOS existed.
+      `inferred-ios,${APNS_TOKEN}`,
+      `inferred-android,${FCM_TOKEN}`,
+      `unknown,${FCM_TOKEN},windows`
+    ].join('\n')
+
+    const { entries, invalid } = parseAudienceCsv(csv)
+
+    expect(entries.map((e) => [e.userId, e.platform])).toEqual([
+      ['explicit-ios', 'ios'],
+      ['explicit-android', 'android'],
+      ['shouted', 'ios'],
+      ['inferred-ios', 'ios'],
+      ['inferred-android', 'android']
+    ])
+    // Guessing here would send a whole segment through the wrong provider and mark every
+    // token dead on the way.
+    expect(invalid).toEqual([{ line: 7, reason: "unknown platform 'windows' (android or ios)" }])
   })
 
   it('reports bad rows with their line number instead of dropping them', () => {
@@ -32,7 +60,7 @@ describe('parseAudienceCsv', () => {
 
     const { entries, invalid } = parseAudienceCsv(csv)
 
-    expect(entries).toEqual([{ userId: 'good', token: TOKEN_A }])
+    expect(entries).toEqual([{ userId: 'good', token: TOKEN_A, platform: 'android' }])
     // Line numbers are what the operator sees in their editor, header included.
     expect(invalid).toEqual([
       { line: 3, reason: 'expected two comma-separated columns' },
@@ -53,7 +81,7 @@ describe('parseAudienceCsv', () => {
   it('treats a file with no header as data', () => {
     const { entries } = parseAudienceCsv(`user-a,${TOKEN_A}`)
 
-    expect(entries).toEqual([{ userId: 'user-a', token: TOKEN_A }])
+    expect(entries).toEqual([{ userId: 'user-a', token: TOKEN_A, platform: 'android' }])
   })
 })
 

@@ -4,8 +4,8 @@ import { createMetricsComponent } from '@well-known-components/metrics'
 import { IPgComponent } from '@well-known-components/pg-component'
 import { metricDeclarations } from '../../src/metrics'
 import { startPgWithMigrations } from '../utils/pg'
-import { createPushDbComponent, IPushDbComponent } from '../../src/adapters/push-db'
-import { IFcmComponent, PushMessage, SendResult } from '../../src/adapters/fcm'
+import { AudienceEntry, createPushDbComponent, IPushDbComponent } from '../../src/adapters/push-db'
+import { IPushSender, PushMessage, SendResult } from '../../src/adapters/push-sender'
 import { createPushDispatcherComponent, withAttribution } from '../../src/adapters/push-dispatcher'
 
 // These tests require a real PostgreSQL database and are designed to run in CI
@@ -32,12 +32,19 @@ describe('push attribution links', () => {
   let pg: IPgComponent
   let pushDb: IPushDbComponent
   let sent: PushMessage[]
+  let sentIos: PushMessage[]
   let respond: (message: PushMessage) => SendResult
 
-  // Stands in for FCM so the dispatcher's decisions are observable without a network.
-  const fcm: IFcmComponent = {
+  // Stand in for FCM and APNs so the dispatcher's decisions are observable without a network.
+  const fcm: IPushSender = {
     async send(message: PushMessage): Promise<SendResult> {
       sent.push(message)
+      return respond(message)
+    }
+  }
+  const apns: IPushSender = {
+    async send(message: PushMessage): Promise<SendResult> {
+      sentIos.push(message)
       return respond(message)
     }
   }
@@ -46,7 +53,7 @@ describe('push attribution links', () => {
     const config = await createDotEnvConfigComponent({ path: ['.env.default', '.env'] })
     const metrics = await createMetricsComponent(metricDeclarations, { config })
     const logs = await createLogComponent({ metrics })
-    return createPushDispatcherComponent({ config, logs, pushDb, fcm })
+    return createPushDispatcherComponent({ config, logs, pushDb, fcm, apns })
   }
 
   beforeAll(async () => {
@@ -72,6 +79,7 @@ describe('push attribution links', () => {
     await pg.query('DELETE FROM push_campaigns')
     await pg.query('DELETE FROM push_dead_tokens')
     sent = []
+    sentIos = []
     respond = () => ({ status: 'sent', providerMsgId: 'projects/test/messages/1' })
   })
 
@@ -101,11 +109,11 @@ describe('push attribution links', () => {
     await pushDb.markTokensDead([{ token: 'dead-token', errorCode: 'UNREGISTERED' }])
 
     const report = await pushDb.replaceAudience(campaign.id, [
-      { userId: 'user-a', token: 'token-a' },
-      { userId: 'user-b', token: 'token-b' },
+      { userId: 'user-a', token: 'token-a', platform: 'android' },
+      { userId: 'user-b', token: 'token-b', platform: 'android' },
       // Same user twice: the second wins, and it counts as a duplicate rather than two sends.
-      { userId: 'user-b', token: 'token-b-newer' },
-      { userId: 'user-c', token: 'dead-token' }
+      { userId: 'user-b', token: 'token-b-newer', platform: 'android' },
+      { userId: 'user-c', token: 'dead-token', platform: 'android' }
     ])
     expect(report).toEqual({ received: 4, valid: 2, duplicates: 1, suppressed: 1 })
     expect((await pushDb.getCampaign(campaign.id))?.audienceCount).toBe(2)
@@ -161,7 +169,7 @@ describe('push attribution links', () => {
     const campaign = await pushDb.createCampaign(newCampaign('concurrency'))
     await pushDb.replaceAudience(
       campaign.id,
-      Array.from({ length: 20 }, (_, i) => ({ userId: `user-${i}`, token: `token-${i}` }))
+      Array.from({ length: 20 }, (_, i): AudienceEntry => ({ userId: `user-${i}`, token: `token-${i}`, platform: 'android' }))
     )
     await pushDb.setStatus(campaign.id, ['draft'], 'pending_approval')
     await pushDb.approveCampaign(campaign.id, APPROVER)
@@ -178,7 +186,7 @@ describe('push attribution links', () => {
   // deliveries in `sending` forever, and the campaign would never finish.
   it('returns abandoned deliveries to the queue once the lease expires', async () => {
     const campaign = await pushDb.createCampaign(newCampaign('crashed-replica'))
-    await pushDb.replaceAudience(campaign.id, [{ userId: 'user-a', token: 'token-a' }])
+    await pushDb.replaceAudience(campaign.id, [{ userId: 'user-a', token: 'token-a', platform: 'android' }])
     await pushDb.setStatus(campaign.id, ['draft'], 'pending_approval')
     await pushDb.approveCampaign(campaign.id, APPROVER)
 
@@ -212,13 +220,13 @@ describe('push attribution links', () => {
     // finishDrainedCampaigns only closes campaigns already `sending`. Approved with nothing
     // queued, a campaign sits in `scheduled` for good — never sent, only cancellable by hand.
     const campaign = await pushDb.createCampaign(newCampaign('all-tokens-dead'))
-    await pushDb.replaceAudience(campaign.id, [{ userId: 'user-a', token: 'token-a' }])
+    await pushDb.replaceAudience(campaign.id, [{ userId: 'user-a', token: 'token-a', platform: 'android' }])
     await pushDb.setStatus(campaign.id, ['draft'], 'pending_approval')
 
     // The window submit's own check cannot cover: the audience may be replaced while the
     // campaign waits for an approver, and suppression is applied at upload time.
     await pushDb.markTokensDead([{ token: 'token-a', errorCode: 'UNREGISTERED' }])
-    const report = await pushDb.replaceAudience(campaign.id, [{ userId: 'user-a', token: 'token-a' }])
+    const report = await pushDb.replaceAudience(campaign.id, [{ userId: 'user-a', token: 'token-a', platform: 'android' }])
     expect(report).toMatchObject({ valid: 0, suppressed: 1 })
 
     expect(await pushDb.approveCampaign(campaign.id, APPROVER)).toBeNull()
@@ -228,8 +236,8 @@ describe('push attribution links', () => {
   it('cancels what is still queued and leaves what already went out alone', async () => {
     const campaign = await pushDb.createCampaign(newCampaign('cancel-me'))
     await pushDb.replaceAudience(campaign.id, [
-      { userId: 'sent-already', token: 'token-1' },
-      { userId: 'still-queued', token: 'token-2' }
+      { userId: 'sent-already', token: 'token-1', platform: 'android' },
+      { userId: 'still-queued', token: 'token-2', platform: 'android' }
     ])
     await pushDb.setStatus(campaign.id, ['draft'], 'pending_approval')
     await pushDb.approveCampaign(campaign.id, APPROVER)
@@ -245,7 +253,7 @@ describe('push attribution links', () => {
     expect(await pushDb.claimDeliveries(10)).toHaveLength(0)
   })
 
-  async function approvedCampaign(key: string, audience: { userId: string; token: string }[]) {
+  async function approvedCampaign(key: string, audience: AudienceEntry[]) {
     const campaign = await pushDb.createCampaign({
       campaignKey: key,
       title: 'Title',
@@ -264,8 +272,8 @@ describe('push attribution links', () => {
 
   it('sends an approved campaign and closes it out', async () => {
     const campaign = await approvedCampaign('happy-path', [
-      { userId: 'user-a', token: 'token-a' },
-      { userId: 'user-b', token: 'token-b' }
+      { userId: 'user-a', token: 'token-a', platform: 'android' },
+      { userId: 'user-b', token: 'token-b', platform: 'android' }
     ])
     const dispatcher = await makeDispatcher()
 
@@ -281,10 +289,25 @@ describe('push attribution links', () => {
     expect(sent[0].ttlSeconds).toBe(86400)
   })
 
+  it('routes each delivery to the transport its platform needs', async () => {
+    const campaign = await approvedCampaign('two-platforms', [
+      { userId: 'android-user', token: 'token-android', platform: 'android' },
+      { userId: 'ios-user', token: 'a'.repeat(64), platform: 'ios' }
+    ])
+    const dispatcher = await makeDispatcher()
+
+    const result = await dispatcher.tick()
+
+    expect(result).toMatchObject({ claimed: 2, sent: 2, failed: 0, finishedCampaigns: 1 })
+    expect(sent.map((m) => m.token)).toEqual(['token-android'])
+    expect(sentIos.map((m) => m.token)).toEqual(['a'.repeat(64)])
+    expect((await pushDb.getCampaign(campaign.id))?.status).toBe('sent')
+  })
+
   it('retries a transient failure and gives up on a permanent one', async () => {
     const campaign = await approvedCampaign('mixed-fates', [
-      { userId: 'flaky', token: 'token-flaky' },
-      { userId: 'gone', token: 'token-gone' }
+      { userId: 'flaky', token: 'token-flaky', platform: 'android' },
+      { userId: 'gone', token: 'token-gone', platform: 'android' }
     ])
     const dispatcher = await makeDispatcher()
 
@@ -314,7 +337,7 @@ describe('push attribution links', () => {
   })
 
   it('stops retrying a delivery that never lands', async () => {
-    const campaign = await approvedCampaign('doomed', [{ userId: 'user-a', token: 'token-a' }])
+    const campaign = await approvedCampaign('doomed', [{ userId: 'user-a', token: 'token-a', platform: 'android' }])
     const dispatcher = await makeDispatcher()
     respond = () => ({ status: 'error', errorCode: 'UNAVAILABLE', retryable: true, tokenIsDead: false })
 
@@ -330,7 +353,7 @@ describe('push attribution links', () => {
   })
 
   it('sends nothing for a cancelled campaign', async () => {
-    const campaign = await approvedCampaign('cancelled', [{ userId: 'user-a', token: 'token-a' }])
+    const campaign = await approvedCampaign('cancelled', [{ userId: 'user-a', token: 'token-a', platform: 'android' }])
     await pushDb.cancelCampaign(campaign.id)
     const dispatcher = await makeDispatcher()
 

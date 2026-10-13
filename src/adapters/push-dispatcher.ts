@@ -80,8 +80,9 @@ export async function createPushDispatcherComponent({
   config,
   logs,
   pushDb,
-  fcm
-}: Pick<AppComponents, 'config' | 'logs' | 'pushDb' | 'fcm'>): Promise<IPushDispatcherComponent> {
+  fcm,
+  apns
+}: Pick<AppComponents, 'config' | 'logs' | 'pushDb' | 'fcm' | 'apns'>): Promise<IPushDispatcherComponent> {
   const logger = logs.getLogger('push-dispatcher')
   const intervalMs = (await config.getNumber('PUSH_DISPATCH_INTERVAL_MS')) ?? 5000
   const batchSize = (await config.getNumber('PUSH_DISPATCH_BATCH_SIZE')) ?? 200
@@ -155,7 +156,8 @@ export async function createPushDispatcherComponent({
     // once, and the client de-duplicates on this value. A fresh uuid per attempt would
     // defeat that and show the user the notification twice.
     const pushId = `push_${delivery.campaignId}_${delivery.userId}`
-    const result = await fcm.send({
+    const sender = delivery.platform === 'ios' ? apns : fcm
+    const result = await sender.send({
       token: delivery.token,
       pushId,
       campaignKey: delivery.campaignKey,

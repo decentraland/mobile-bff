@@ -25,6 +25,7 @@ import { createDeviceSupportDbComponent } from './adapters/device-support-db'
 import { createCampaignsDbComponent } from './adapters/campaigns-db'
 import { createPushDbComponent } from './adapters/push-db'
 import { createFcmComponent } from './adapters/fcm'
+import { createApnsComponent } from './adapters/apns'
 import { createPushDispatcherComponent } from './adapters/push-dispatcher'
 import { createAppAttestComponent } from './adapters/app-attest'
 import { createPlayIntegrityComponent } from './adapters/play-integrity'
@@ -74,7 +75,8 @@ export async function initComponents(): Promise<AppComponents> {
   const campaignsDb = await createCampaignsDbComponent({ pg })
   const pushDb = await createPushDbComponent({ pg })
   const fcm = await createFcmComponent({ config, logs })
-  const pushDispatcher = await createPushDispatcherComponent({ config, logs, pushDb, fcm })
+  const apns = await createApnsComponent({ config, logs })
+  const pushDispatcher = await createPushDispatcherComponent({ config, logs, pushDb, fcm, apns })
   const appAttest = await createAppAttestComponent({ config })
   const playIntegrity = await createPlayIntegrityComponent({ config })
   const attestationVerifier = await createAttestationVerifierComponent({
@@ -113,6 +115,7 @@ export async function initComponents(): Promise<AppComponents> {
     campaignsDb,
     pushDb,
     fcm,
+    apns,
     pushDispatcher,
     appAttest,
     playIntegrity,

@@ -1,5 +1,6 @@
 import SQL from 'sql-template-strings'
 import { AppComponents } from '../types'
+import { PushPlatform } from '../logic/push'
 
 export type PushCampaignStatus =
   | 'draft'
@@ -53,7 +54,7 @@ export type UpdatePushCampaignInput = {
 }
 
 /** One row of the uploaded audience. */
-export type AudienceEntry = { userId: string; token: string }
+export type AudienceEntry = { userId: string; token: string; platform: PushPlatform }
 
 export type AudienceReport = {
   received: number
@@ -61,7 +62,7 @@ export type AudienceReport = {
   valid: number
   /** Same user_id appearing more than once in the upload. */
   duplicates: number
-  /** Tokens FCM already told us are gone. */
+  /** Tokens the provider already told us are gone. */
   suppressed: number
 }
 
@@ -70,6 +71,7 @@ export type ClaimedDelivery = {
   campaignId: string
   userId: string
   token: string
+  platform: PushPlatform
   campaignKey: string
   title: string
   body: string
@@ -266,9 +268,9 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
   async function replaceAudience(campaignId: string, entries: AudienceEntry[]): Promise<AudienceReport> {
     const received = entries.length
 
-    const byUser = new Map<string, string>()
+    const byUser = new Map<string, { token: string; platform: PushPlatform }>()
     for (const entry of entries) {
-      byUser.set(entry.userId, entry.token)
+      byUser.set(entry.userId, { token: entry.token, platform: entry.platform })
     }
     const duplicates = received - byUser.size
 
@@ -280,15 +282,16 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
       let valid = 0
       if (byUser.size > 0) {
         const userIds = [...byUser.keys()]
-        const tokens = userIds.map((userId) => byUser.get(userId) as string)
+        const tokens = userIds.map((userId) => byUser.get(userId)!.token)
+        const platforms = userIds.map((userId) => byUser.get(userId)!.platform)
         // Suppression happens in the same statement as the insert so the count returned is
         // the number of rows that actually exist, not an estimate made before the write.
         const inserted = await client.query(
-          `INSERT INTO push_deliveries (campaign_id, user_id, token)
-           SELECT $1, u.user_id, u.token
-           FROM UNNEST($2::text[], $3::text[]) AS u(user_id, token)
+          `INSERT INTO push_deliveries (campaign_id, user_id, token, platform)
+           SELECT $1, u.user_id, u.token, u.platform
+           FROM UNNEST($2::text[], $3::text[], $4::text[]) AS u(user_id, token, platform)
            WHERE NOT EXISTS (SELECT 1 FROM push_dead_tokens d WHERE d.token = u.token)`,
-          [campaignId, userIds, tokens]
+          [campaignId, userIds, tokens, platforms]
         )
         valid = inserted.rowCount ?? 0
       }
@@ -318,6 +321,7 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
       campaign_id: string
       user_id: string
       token: string
+      platform: PushPlatform
       campaign_key: string
       title: string
       body: string
@@ -348,14 +352,14 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
         SET state = 'sending', claimed_at = now()
         FROM claimed
         WHERE d.campaign_id = claimed.campaign_id AND d.user_id = claimed.user_id
-        RETURNING d.campaign_id, d.user_id, d.token, d.attempts
+        RETURNING d.campaign_id, d.user_id, d.token, d.platform, d.attempts
       ), started AS (
         UPDATE push_campaigns c
         SET status = 'sending', started_at = COALESCE(c.started_at, now())
         WHERE c.id IN (SELECT campaign_id FROM taken) AND c.status = 'scheduled'
         RETURNING c.id
       )
-      SELECT t.campaign_id, t.user_id, t.token, t.attempts,
+      SELECT t.campaign_id, t.user_id, t.token, t.platform, t.attempts,
              c.campaign_key, c.title, c.body, c.deep_link, c.image_url, c.category, c.ttl_seconds
       FROM taken t
       JOIN push_campaigns c ON c.id = t.campaign_id
@@ -365,6 +369,7 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
       campaignId: row.campaign_id,
       userId: row.user_id,
       token: row.token,
+      platform: row.platform,
       campaignKey: row.campaign_key,
       title: row.title,
       body: row.body,
