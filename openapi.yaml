@@ -1451,6 +1451,61 @@ paths:
         '404':
           description: Campaign not found
 
+  /backoffice/push/stats/daily:
+    get:
+      tags:
+        - Push
+      summary: Pushes sent per campaign per day (backoffice)
+      description: |
+        How many deliveries went out, per campaign per UTC day, over the last `days` days with
+        today included. Sends only: a failure carries no timestamp, so failures stay in the
+        per-campaign stats. The per-campaign stats answer "how did this campaign do"; this
+        answers "what did we send this week", which for a recurring campaign is the only view
+        that means anything.
+      operationId: getPushDailySends
+      security:
+        - signedFetch: []
+      parameters:
+        - name: days
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 90
+            default: 30
+      responses:
+        '200':
+          description: One row per campaign per day that had a send
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      days:
+                        type: integer
+                      rows:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            day:
+                              type: string
+                              example: '2026-10-13'
+                            campaignKey:
+                              type: string
+                            sent:
+                              type: integer
+        '400':
+          description: days out of range
+        '401':
+          description: Caller is not a backoffice user
+
   /backoffice/push/feed/sync:
     post:
       tags:

@@ -414,4 +414,33 @@ describe('push attribution links', () => {
     expect(await dispatcher.tick()).toMatchObject({ claimed: 0, sent: 0 })
     expect(sent).toHaveLength(0)
   })
+
+  // The per-campaign stats only ever grow for a recurring campaign, so "what went out this
+  // week" needs the send log cut by day.
+  it('counts sends per campaign per UTC day, and only inside the window asked for', async () => {
+    const campaign = await approvedCampaign('daily-a', [
+      { userId: 'user-a', token: 'token-a', platform: 'android' },
+      { userId: 'user-b', token: 'token-b', platform: 'android' },
+      { userId: 'user-c', token: 'token-c', platform: 'android' }
+    ])
+    const claimed = await pushDb.claimDeliveries(10)
+    await pushDb.recordOutcomes(
+      claimed.map((d) =>
+        d.userId === 'user-c'
+          ? { ...d, state: 'failed' as const, errorCode: 'UNREGISTERED' }
+          : { ...d, state: 'sent' as const }
+      )
+    )
+    // One send from before the window: it is not this week's news.
+    await pg.query(
+      `UPDATE push_deliveries SET sent_at = sent_at - interval '10 days' WHERE campaign_id = '${campaign.id}' AND user_id = 'user-b'`
+    )
+
+    const day = (ago: number) => new Date(Date.now() - ago * 86_400_000).toISOString().slice(0, 10)
+    expect(await pushDb.dailySends(7)).toEqual([{ day: day(0), campaignKey: 'daily-a', sent: 1 }])
+    expect(await pushDb.dailySends(30)).toEqual([
+      { day: day(0), campaignKey: 'daily-a', sent: 1 },
+      { day: day(10), campaignKey: 'daily-a', sent: 1 }
+    ])
+  })
 })

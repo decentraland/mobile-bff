@@ -144,6 +144,14 @@ export type CampaignStats = {
   errors: Record<string, number>
 }
 
+/** One campaign's sends on one UTC day. */
+export type DailySendRow = {
+  /** `YYYY-MM-DD`, UTC. */
+  day: string
+  campaignKey: string
+  sent: number
+}
+
 export type IPushDbComponent = {
   listCampaigns(): Promise<PushCampaign[]>
   getCampaign(id: string): Promise<PushCampaign | null>
@@ -167,6 +175,8 @@ export type IPushDbComponent = {
   /** Closes out campaigns whose queue has drained. */
   finishDrainedCampaigns(): Promise<string[]>
   getStats(campaignId: string): Promise<CampaignStats>
+  /** Sends per campaign per UTC day over the last `days` days, today included. */
+  dailySends(days: number): Promise<DailySendRow[]>
 }
 
 type CampaignRow = {
@@ -669,6 +679,24 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
     return stats
   }
 
+  // Sends only: a real send is the one outcome that stamps a timestamp (sent_at), and a
+  // delivery written off has none — recordOutcomes clears claimed_at — so failures have no day
+  // to be counted on. They stay in the per-campaign stats.
+  async function dailySends(days: number): Promise<DailySendRow[]> {
+    const result = await pg.query<{ day: string; campaign_key: string; sent: string }>(SQL`
+      SELECT to_char(d.sent_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day,
+             c.campaign_key,
+             COUNT(*)::text AS sent
+      FROM push_deliveries d
+      JOIN push_campaigns c ON c.id = d.campaign_id
+      WHERE d.state = 'sent'
+        AND d.sent_at >= date_trunc('day', now() AT TIME ZONE 'UTC') - make_interval(days => ${days}::int - 1)
+      GROUP BY day, c.campaign_key
+      ORDER BY day DESC, c.campaign_key
+    `)
+    return result.rows.map((row) => ({ day: row.day, campaignKey: row.campaign_key, sent: Number(row.sent) }))
+  }
+
   return {
     listCampaigns,
     getCampaign,
@@ -685,6 +713,7 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
     recordOutcomes,
     markTokensDead,
     finishDrainedCampaigns,
-    getStats
+    getStats,
+    dailySends
   }
 }
