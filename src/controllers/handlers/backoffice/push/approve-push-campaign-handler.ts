@@ -47,7 +47,9 @@ export async function approvePushCampaignHandler(
     // Ahead of the generic status message, which would otherwise report a campaign that IS
     // pending approval as not being pending approval. Approving this would strand it in
     // `scheduled` with an empty queue: it can never reach `sending`, so it can never finish.
-    if (campaign.audienceCount === 0) {
+    // A recurring campaign is approved empty on purpose — the feed fills it afterwards — so
+    // for one of those the refusal has to be about its status, not its audience.
+    if (campaign.audienceCount === 0 && !campaign.isRecurring) {
       return {
         status: 409,
         body: { ok: false, error: 'Upload an audience before approving; this campaign reaches nobody' }

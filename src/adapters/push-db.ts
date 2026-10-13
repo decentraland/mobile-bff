@@ -147,8 +147,7 @@ export type CampaignStats = {
 export type IPushDbComponent = {
   listCampaigns(): Promise<PushCampaign[]>
   getCampaign(id: string): Promise<PushCampaign | null>
-  /** Resolves the key the warehouse feed names to the campaign a person created here. */
-  /** The campaign that declared it serves this slice of the audience feed. */
+  /** The live campaign that declared it serves this slice of the audience feed. */
   getCampaignForSlice(triggerKey: string, destinationKind: FeedDestinationKind): Promise<PushCampaign | null>
   createCampaign(input: CreatePushCampaignInput): Promise<PushCampaign>
   updateCampaign(id: string, changes: UpdatePushCampaignInput): Promise<PushCampaign | null>
@@ -243,9 +242,14 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
     triggerKey: string,
     destinationKind: FeedDestinationKind
   ): Promise<PushCampaign | null> {
-    const query = SQL`SELECT `.append(CAMPAIGN_COLUMNS).append(
-      SQL` FROM push_campaigns WHERE trigger_key = ${triggerKey} AND destination_kind = ${destinationKind}`
-    )
+    // The same predicate as push_campaigns_slice_unique. A cancelled campaign keeps its slice
+    // columns so that a replacement can be authored for the pair, which means two rows can
+    // match: without the status filter this could hand back the dead one, and the slice would
+    // read as not accepting while the campaign actually serving it never received a row.
+    const query = SQL`SELECT `.append(CAMPAIGN_COLUMNS).append(SQL`
+      FROM push_campaigns
+      WHERE trigger_key = ${triggerKey} AND destination_kind = ${destinationKind}
+        AND status NOT IN ('cancelled', 'failed')`)
     const result = await pg.query<CampaignRow>(query)
     return result.rows.length > 0 ? toCampaign(result.rows[0]) : null
   }

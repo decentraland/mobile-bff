@@ -210,6 +210,12 @@ export function validateCampaignContent(body: any): { error: string } | { conten
   // other, and a campaign without it is one whose audience is uploaded by hand.
   const triggerKey = body?.triggerKey
   const destinationKind = body?.destinationKind
+  // The pair is cleared together or not at all. Nulling one and leaving the other to the
+  // stored campaign would trip the CHECK that binds them and surface as a 500.
+  const clearsOne = (triggerKey === null) !== (destinationKind === null)
+  if (clearsOne && (triggerKey === undefined || destinationKind === undefined)) {
+    return { error: "'triggerKey' and 'destinationKind' are cleared together; send both as null" }
+  }
   const claimsSlice = (triggerKey ?? null) !== null || (destinationKind ?? null) !== null
   if (claimsSlice) {
     if (typeof triggerKey !== 'string' || !TRIGGER_KEY_PATTERN.test(triggerKey)) {

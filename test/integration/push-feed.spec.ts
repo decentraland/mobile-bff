@@ -28,6 +28,9 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
 
   afterAll(async () => {
     if (pg) {
+      // Leave the shared mobile_test database clean for other suites: a campaign left holding
+      // a slice would refuse the next suite's campaign for the same pair.
+      await pg.query('DELETE FROM push_campaigns')
       await pg.stop()
     }
   })
@@ -194,6 +197,35 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
     expect((await pushDb.claimDeliveries(10)).map((d) => d.userId)).toEqual(['alice'])
   })
 
+  // The lookup the sync uses has to make the same distinction, or the slice would read as not
+  // accepting while the replacement never received a row.
+  it('resolves a slice to its live campaign, not to the cancelled one it replaced', async () => {
+    const first = await approvedRecurringCampaign('d3-comeback', 'd3', 'scene')
+    await pushDb.cancelCampaign(first.id)
+    const replacement = await approvedRecurringCampaign('d3-comeback-v2', 'd3', 'scene')
+
+    expect((await pushDb.getCampaignForSlice('d3', 'scene'))!.id).toBe(replacement.id)
+  })
+
+  // Validation sees `isRecurring: false` and no slice; the stored row has one. Only the
+  // constraint sees both, so this is what keeps a one-shot campaign from holding a slice.
+  it('refuses an edit that makes a campaign holding a slice one-shot', async () => {
+    const campaign = await approvedRecurringCampaign('d3-comeback', 'd3', 'scene')
+    await pushDb.setStatus(campaign.id, ['scheduled'], 'draft')
+
+    await expect(
+      pushDb.updateCampaign(campaign.id, {
+        title: 'Title',
+        body: 'Body',
+        deepLink: 'decentraland://places',
+        imageUrl: null,
+        ttlSeconds: 86400,
+        scheduledAt: null,
+        isRecurring: false
+      })
+    ).rejects.toMatchObject({ constraint: 'push_campaigns_slice_check' })
+  })
+
   // The backoffice sends only the copy when somebody fixes a typo, so an absent key must leave
   // what a campaign is fed by alone.
   it('keeps the slice when an edit carries only the copy', async () => {
@@ -290,9 +322,9 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
 
     it('fills the slices it can and names the ones it cannot', async () => {
       const campaign = await approvedRecurringCampaign('d3-comeback', 'd3', 'scene')
-      // Approved but one-shot: a feed must not quietly take over a campaign somebody is
-      // running by hand.
-      const oneShot = await pushDb.createCampaign({
+      // Declared but still waiting for its second person: a feed must not fill a campaign
+      // nobody has vouched for yet.
+      const unapproved = await pushDb.createCampaign({
         campaignKey: 'd7-comeback',
         title: 'Title',
         body: 'Body',
@@ -300,13 +332,12 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
         imageUrl: null,
         ttlSeconds: 86400,
         scheduledAt: null,
-        isRecurring: false,
+        isRecurring: true,
         triggerKey: 'd7',
         destinationKind: 'scene',
         createdBy: CREATOR
       })
-      await pushDb.setStatus(oneShot.id, ['draft'], 'pending_approval')
-      await pushDb.approveCampaign(oneShot.id, APPROVER)
+      await pushDb.setStatus(unapproved.id, ['draft'], 'pending_approval')
 
       const feed = await feedComponent(
         fakeSnowflake([
@@ -325,8 +356,20 @@ const runDbTests = process.env.CI === 'true' || process.env.RUN_DB_TESTS === 'tr
       expect(report.unservedSlices).toEqual(['d30/scene'])
       expect(report.notAcceptingSlices).toEqual(['d7/scene'])
       expect((await pushDb.getCampaign(campaign.id))!.audienceCount).toBe(1)
-      expect((await pushDb.getCampaign(oneShot.id))!.audienceCount).toBe(0)
+      expect((await pushDb.getCampaign(unapproved.id))!.audienceCount).toBe(0)
     })
+
+    it('fills the replacement after the campaign that held the slice was cancelled', async () => {
+      const first = await approvedRecurringCampaign('d3-comeback', 'd3', 'scene')
+      await pushDb.cancelCampaign(first.id)
+      const replacement = await approvedRecurringCampaign('d3-comeback-v2', 'd3', 'scene')
+
+      const report = await (await feedComponent(fakeSnowflake([snowflakeRow('d3', 'alice')]))).sync()
+
+      expect(report).toMatchObject({ queued: 1, notAcceptingSlices: [] })
+      expect((await pushDb.getCampaign(replacement.id))!.audienceCount).toBe(1)
+    })
+
 
     it('does nothing at all when the warehouse is not configured', async () => {
       await approvedRecurringCampaign('d3-comeback')
