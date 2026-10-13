@@ -1462,6 +1462,11 @@ paths:
         per-campaign stats. The per-campaign stats answer "how did this campaign do"; this
         answers "what did we send this week", which for a recurring campaign is the only view
         that means anything.
+
+        Read from the send log, which belongs to its campaign: deleting a campaign deletes its
+        deliveries with it, and its sends leave every day they were counted in. There is no
+        delete endpoint, so that takes a hand-written statement, but the numbers are not an
+        audit trail.
       operationId: getPushDailySends
       security:
         - signedFetch: []
@@ -1504,6 +1509,8 @@ paths:
         '400':
           description: days out of range
         '401':
+          description: Missing or invalid signature
+        '403':
           description: Caller is not a backoffice user
 
   /backoffice/push/feed/sync:

@@ -682,6 +682,12 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
   // Sends only: a real send is the one outcome that stamps a timestamp (sent_at), and a
   // delivery written off has none — recordOutcomes clears claimed_at — so failures have no day
   // to be counted on. They stay in the per-campaign stats.
+  //
+  // The window start is built as a UTC wall clock and then converted back into an instant with
+  // the trailing AT TIME ZONE. Without it the comparison would be timestamptz against a naive
+  // timestamp, which Postgres resolves in the session's TimeZone — nothing here pins that, and
+  // west of UTC the oldest day of every window came up short by the offset while its label,
+  // computed separately, stayed right.
   async function dailySends(days: number): Promise<DailySendRow[]> {
     const result = await pg.query<{ day: string; campaign_key: string; sent: string }>(SQL`
       SELECT to_char(d.sent_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day,
@@ -690,7 +696,7 @@ export async function createPushDbComponent({ pg }: Pick<AppComponents, 'pg'>): 
       FROM push_deliveries d
       JOIN push_campaigns c ON c.id = d.campaign_id
       WHERE d.state = 'sent'
-        AND d.sent_at >= date_trunc('day', now() AT TIME ZONE 'UTC') - make_interval(days => ${days}::int - 1)
+        AND d.sent_at >= (date_trunc('day', now() AT TIME ZONE 'UTC') - make_interval(days => ${days}::int - 1)) AT TIME ZONE 'UTC'
       GROUP BY day, c.campaign_key
       ORDER BY day DESC, c.campaign_key
     `)
