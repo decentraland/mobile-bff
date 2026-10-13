@@ -27,8 +27,60 @@ export type PushPlatform = 'android' | 'ios'
 // longer and always carries a ':' (`<instance id>:APA91b…`), so the two shapes never overlap.
 const APNS_TOKEN_REGEX = /^[0-9a-f]{64}$/i
 
+// An FCM registration token is opaque, but it is always long and never contains a comma or
+// whitespace. The point is to catch a column swap or a half-pasted file, not to validate FCM.
+const MIN_TOKEN_LENGTH = 20
+
 export function platformForToken(token: string): PushPlatform {
   return APNS_TOKEN_REGEX.test(token) ? 'ios' : 'android'
+}
+
+/**
+ * Whether a token has the shape its declared platform's transport expects. The iOS case is the
+ * one that matters: the APNs sender puts the token in the path of its request to Apple, so a
+ * value that is not the 64 hex characters of a device token would rewrite that path. An FCM
+ * token travels in a JSON body, so only an obviously broken one is refused.
+ */
+export function isWellFormedToken(token: string, platform: PushPlatform): boolean {
+  if (platform === 'ios') {
+    return APNS_TOKEN_REGEX.test(token)
+  }
+  return token.length >= MIN_TOKEN_LENGTH && !/\s/.test(token)
+}
+
+export const FEED_DESTINATION_KINDS = ['scene', 'plaza', 'discover'] as const
+export type FeedDestinationKind = (typeof FEED_DESTINATION_KINDS)[number]
+
+// A World is reached by realm and a Genesis City scene by position. The warehouse publishes
+// which one it is and the identifier; the link is built here, because this is where the
+// allow-list of routes the client accepts lives and where the result has to be safe to put in
+// a URL. Both patterns admit only characters that are already URL-safe, so a name or a
+// position that could add a parameter is rejected rather than escaped.
+const WORLD_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*(\.[a-z0-9-]+)+$/
+const BASE_POSITION_PATTERN = /^-?\d{1,4},-?\d{1,4}$/
+const TRIGGER_KEY_PATTERN = /^[a-z0-9]+$/
+
+export type FeedDestination = {
+  isWorld: boolean | null
+  worldName: string | null
+  basePosition: string | null
+}
+
+/**
+ * The deep link for a resolved scene destination, or null when the warehouse gave no usable
+ * identity. Null is not an error: `plaza` and `discover` rows carry none on purpose and fall
+ * back to their campaign's own link.
+ */
+export function destinationDeepLink(destination: FeedDestination): string | null {
+  if (destination.isWorld === true) {
+    const name = (destination.worldName ?? '').trim().toLowerCase()
+    return WORLD_NAME_PATTERN.test(name) ? `decentraland://open?realm=${name}` : null
+  }
+  if (destination.isWorld === false) {
+    const position = (destination.basePosition ?? '').trim()
+    return BASE_POSITION_PATTERN.test(position) ? `decentraland://open?position=${position}` : null
+  }
+  return null
 }
 
 export type CampaignContent = {
@@ -38,6 +90,12 @@ export type CampaignContent = {
   imageUrl: string | null
   ttlSeconds: number
   scheduledAt: string | null
+  // Absent when the request did not carry the key, which an update must leave alone rather
+  // than reset: the backoffice sends only the copy when somebody fixes a typo, and writing a
+  // default over these would turn a recurring campaign into a one-shot with no slice.
+  isRecurring?: boolean
+  triggerKey?: string | null
+  destinationKind?: FeedDestinationKind | null
 }
 
 export function validateCampaignKey(key: unknown): string | null {
@@ -155,6 +213,43 @@ export function validateCampaignContent(body: any): { error: string } | { conten
     }
   }
 
+  // A recurring campaign is fed by the warehouse instead of by an uploaded audience, and never
+  // closes itself when its queue empties. Left undefined when the request says nothing: a
+  // campaign created without it is the one-shot kind, and an update without it keeps what it
+  // already was.
+  const isRecurring = body?.isRecurring
+  if (isRecurring !== undefined && typeof isRecurring !== 'boolean') {
+    return { error: "'isRecurring' must be a boolean when present" }
+  }
+
+  // Which slice of the audience feed this campaign takes. The warehouse publishes a trigger
+  // and a kind of destination and names no campaign, so this is what points the two at each
+  // other, and a campaign without it is one whose audience is uploaded by hand.
+  const triggerKey = body?.triggerKey
+  const destinationKind = body?.destinationKind
+  // The pair is cleared together or not at all. Nulling one and leaving the other to the
+  // stored campaign would trip the CHECK that binds them and surface as a 500.
+  const clearsOne = (triggerKey === null) !== (destinationKind === null)
+  if (clearsOne && (triggerKey === undefined || destinationKind === undefined)) {
+    return { error: "'triggerKey' and 'destinationKind' are cleared together; send both as null" }
+  }
+  const claimsSlice = (triggerKey ?? null) !== null || (destinationKind ?? null) !== null
+  if (claimsSlice) {
+    if (typeof triggerKey !== 'string' || !TRIGGER_KEY_PATTERN.test(triggerKey)) {
+      return { error: "'triggerKey' must be a lifecycle trigger such as 'd3' when a slice is claimed" }
+    }
+    if (!FEED_DESTINATION_KINDS.includes(destinationKind)) {
+      return {
+        error: `'destinationKind' must be one of: ${FEED_DESTINATION_KINDS.join(', ')} when a slice is claimed`
+      }
+    }
+    // Asked for explicitly rather than read from the stored campaign, so the invariant is
+    // checkable from the request alone: a campaign serving the feed is one the feed refills.
+    if (isRecurring !== true) {
+      return { error: "a campaign that claims a slice of the audience feed must set 'isRecurring' to true" }
+    }
+  }
+
   return {
     content: {
       title: body.title.trim(),
@@ -162,7 +257,10 @@ export function validateCampaignContent(body: any): { error: string } | { conten
       deepLink,
       imageUrl,
       ttlSeconds,
-      scheduledAt
+      scheduledAt,
+      ...(isRecurring === undefined ? {} : { isRecurring }),
+      ...(triggerKey === undefined ? {} : { triggerKey }),
+      ...(destinationKind === undefined ? {} : { destinationKind })
     }
   }
 }
@@ -184,10 +282,6 @@ export type ParsedAudience = {
   /** Line numbers (1-based, as the operator sees them) that could not be read, with why. */
   invalid: { line: number; reason: string }[]
 }
-
-// An FCM registration token is opaque, but it is always long and never contains a comma or
-// whitespace. The point is to catch a column swap or a half-pasted file, not to validate FCM.
-const MIN_TOKEN_LENGTH = 20
 
 /**
  * Parse a `user_id,token[,platform]` CSV export.
@@ -247,6 +341,13 @@ export function parseAudienceCsv(text: string): ParsedAudience {
       platform = declared
     } else {
       invalid.push({ line: lineNumber, reason: `unknown platform '${platformField}' (android or ios)` })
+      continue
+    }
+    if (!isWellFormedToken(token, platform)) {
+      invalid.push({
+        line: lineNumber,
+        reason: platform === 'ios' ? 'not an APNs device token (64 hex characters)' : 'token contains whitespace'
+      })
       continue
     }
 

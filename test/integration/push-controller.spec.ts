@@ -11,7 +11,8 @@ test('push backoffice endpoints', function ({ components }) {
     ['GET', '/backoffice/push/campaigns'],
     ['POST', '/backoffice/push/campaigns'],
     ['POST', '/backoffice/push/campaigns/00000000-0000-0000-0000-000000000000/approve'],
-    ['GET', '/backoffice/push/campaigns/00000000-0000-0000-0000-000000000000/stats']
+    ['GET', '/backoffice/push/campaigns/00000000-0000-0000-0000-000000000000/stats'],
+    ['POST', '/backoffice/push/feed/sync']
   ])('%s %s without a signed fetch responds 401', async (method, path) => {
     const { localFetch } = components
 
@@ -162,5 +163,49 @@ test('push backoffice endpoints with signed fetch', function ({ components }) {
     const wordy = await signed(creator, 'POST', '/backoffice/push/campaigns', { ...draft, title: 'x'.repeat(100) })
     expect(wordy.status).toEqual(201)
     expect((await wordy.json()).warnings[0]).toMatch(/truncates/)
+  })
+
+  // Approval is what opens a recurring campaign to the warehouse feed, so it is submitted and
+  // approved empty — and while it holds a slice it cannot be turned back into a one-shot.
+  it('approves a recurring campaign empty and keeps it recurring while it holds a slice', async () => {
+    const created = await signed(creator, 'POST', '/backoffice/push/campaigns', {
+      ...draft,
+      isRecurring: true,
+      triggerKey: 'd15',
+      destinationKind: 'plaza'
+    })
+    expect(created.status).toEqual(201)
+    const { data: campaign } = await created.json()
+    const base = `/backoffice/push/campaigns/${campaign.id}`
+
+    // Not submitted yet: the refusal is about its status, not about an audience it is not
+    // meant to have.
+    const early = await signed(approver, 'POST', `${base}/approve`)
+    expect(early.status).toEqual(409)
+    expect((await early.json()).error).toMatch(/pending approval/i)
+
+    // Clearing half the slice is refused by validation; dropping `isRecurring` while the slice
+    // stays is refused by the constraint. Both read as the request's mistake, not a 500.
+    const halfCleared = await signed(creator, 'PUT', base, { ...draft, triggerKey: null })
+    expect(halfCleared.status).toEqual(400)
+    expect((await halfCleared.json()).error).toMatch(/cleared together/)
+    const oneShot = await signed(creator, 'PUT', base, { ...draft, isRecurring: false })
+    expect(oneShot.status).toEqual(400)
+    expect((await oneShot.json()).error).toMatch(/stay recurring/)
+
+    expect((await signed(creator, 'POST', `${base}/submit`)).status).toEqual(200)
+    const approved = await signed(approver, 'POST', `${base}/approve`)
+    expect(approved.status).toEqual(200)
+    expect((await approved.json()).data).toMatchObject({ status: 'scheduled', audienceCount: 0 })
+  })
+
+  // Without a warehouse the sync is a no-op that says so, which is how every environment but
+  // production runs.
+  it('reads the feed on demand and reports nothing to do when no warehouse is configured', async () => {
+    const synced = await signed(creator, 'POST', '/backoffice/push/feed/sync')
+    expect(synced.status).toEqual(200)
+    expect((await synced.json()).data).toMatchObject({ rowsRead: 0, queued: 0 })
+
+    expect((await signed(outsider, 'POST', '/backoffice/push/feed/sync')).status).toEqual(403)
   })
 })

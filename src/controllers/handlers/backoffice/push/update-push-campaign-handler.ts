@@ -3,6 +3,8 @@ import { HandlerContextWithPath } from '../../../../types'
 import { validateCampaignContent, contentWarnings } from '../../../../logic/push'
 import { requireBackofficeUser, notFound } from './shared'
 
+const SLICE_CHECK_CONSTRAINT = 'push_campaigns_slice_check'
+
 export async function updatePushCampaignHandler(
   context: HandlerContextWithPath<'pushDb' | 'logs' | 'config', '/backoffice/push/campaigns/:id'> &
     DecentralandSignatureContext<any>
@@ -44,6 +46,19 @@ export async function updatePushCampaignHandler(
     logger.info('Push campaign updated', { id: params.id, updatedBy: auth.address })
     return { status: 200, body: { ok: true, data: updated, warnings: contentWarnings(validated.content) } }
   } catch (error) {
+    // The request alone cannot show that it is making a campaign that holds a slice
+    // non-recurring: validation sees `isRecurring: false` and no slice, while the stored row
+    // has one. The constraint is what sees both at once.
+    if ((error as { constraint?: string }).constraint === SLICE_CHECK_CONSTRAINT) {
+      return {
+        status: 400,
+        body: {
+          ok: false,
+          error:
+            "a campaign that claims a slice of the audience feed must stay recurring; clear 'triggerKey' and 'destinationKind' to make it one-shot"
+        }
+      }
+    }
     logger.error('Error updating push campaign', { error: (error as Error).message, id: params.id })
     return { status: 500, body: { ok: false, error: 'Internal server error' } }
   }

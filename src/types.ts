@@ -17,6 +17,7 @@ import { IPlacesDbComponent } from './adapters/places-db'
 import { IPlaceGroupsDbComponent } from './adapters/place-groups-db'
 import { ICacheComponent } from './adapters/cache'
 import { IDestinationsApiComponent } from './adapters/destinations-api'
+import { IPlaceThumbnailsComponent } from './adapters/place-thumbnails'
 import { IAppVersionsDbComponent } from './adapters/app-versions-db'
 import { IFeatureFlagsDbComponent } from './adapters/feature-flags-db'
 import { IDeviceSupportDbComponent } from './adapters/device-support-db'
@@ -24,6 +25,8 @@ import { ICampaignsDbComponent } from './adapters/campaigns-db'
 import { IPushDbComponent } from './adapters/push-db'
 import { IFcmComponent } from './adapters/fcm'
 import { IApnsComponent } from './adapters/apns'
+import { ISnowflakeComponent } from './adapters/snowflake'
+import { IPushFeedComponent } from './adapters/push-feed'
 import { IPushDispatcherComponent } from './adapters/push-dispatcher'
 import { IAppAttestComponent } from './adapters/app-attest'
 import { IPlayIntegrityComponent } from './adapters/play-integrity'
@@ -54,6 +57,7 @@ export type BaseComponents = {
   placeGroupsDb: IPlaceGroupsDbComponent
   cache: ICacheComponent
   destinationsApi: IDestinationsApiComponent
+  placeThumbnails: IPlaceThumbnailsComponent
   appVersionsDb: IAppVersionsDbComponent
   featureFlagsDb: IFeatureFlagsDbComponent
   deviceSupportDb: IDeviceSupportDbComponent
@@ -62,6 +66,8 @@ export type BaseComponents = {
   fcm: IFcmComponent
   apns: IApnsComponent
   pushDispatcher: IPushDispatcherComponent
+  snowflake: ISnowflakeComponent
+  pushFeed: IPushFeedComponent
   appAttest: IAppAttestComponent
   playIntegrity: IPlayIntegrityComponent
   attestationVerifier: IAttestationVerifierComponent

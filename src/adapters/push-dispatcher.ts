@@ -21,7 +21,8 @@ export type TickResult = {
   sent: number
   failed: number
   retrying: number
-  finishedCampaigns: number
+  /** Campaigns whose queue emptied on this pass: closed, or returned to idle if recurring. */
+  drainedCampaigns: number
 }
 
 export type IPushDispatcherComponent = IBaseComponent & {
@@ -81,8 +82,12 @@ export async function createPushDispatcherComponent({
   logs,
   pushDb,
   fcm,
-  apns
-}: Pick<AppComponents, 'config' | 'logs' | 'pushDb' | 'fcm' | 'apns'>): Promise<IPushDispatcherComponent> {
+  apns,
+  placeThumbnails
+}: Pick<
+  AppComponents,
+  'config' | 'logs' | 'pushDb' | 'fcm' | 'apns' | 'placeThumbnails'
+>): Promise<IPushDispatcherComponent> {
   const logger = logs.getLogger('push-dispatcher')
   const intervalMs = (await config.getNumber('PUSH_DISPATCH_INTERVAL_MS')) ?? 5000
   const batchSize = (await config.getNumber('PUSH_DISPATCH_BATCH_SIZE')) ?? 200
@@ -100,7 +105,7 @@ export async function createPushDispatcherComponent({
       sent: 0,
       failed: 0,
       retrying: 0,
-      finishedCampaigns: 0
+      drainedCampaigns: 0
     }
 
     result.reclaimed = await pushDb.reclaimStaleDeliveries(LEASE_SECONDS, MAX_ATTEMPTS)
@@ -133,7 +138,7 @@ export async function createPushDispatcherComponent({
     }
 
     const finished = await pushDb.finishDrainedCampaigns()
-    result.finishedCampaigns = finished.length
+    result.drainedCampaigns = finished.length
 
     if (result.claimed > 0 || result.reclaimed > 0 || finished.length > 0) {
       logger.info('Dispatch tick', {
@@ -142,7 +147,7 @@ export async function createPushDispatcherComponent({
         sent: result.sent,
         failed: result.failed,
         retrying: result.retrying,
-        finishedCampaigns: result.finishedCampaigns
+        drainedCampaigns: result.drainedCampaigns
       })
     }
 
@@ -157,6 +162,12 @@ export async function createPushDispatcherComponent({
     // defeat that and show the user the notification twice.
     const pushId = `push_${delivery.campaignId}_${delivery.userId}`
     const sender = delivery.platform === 'ios' ? apns : fcm
+    // A feed row names the place rather than its thumbnail, so the image is resolved now and
+    // not when the warehouse chose the destination. The place wins when it has one: the claim
+    // already folded the campaign's image into `imageUrl`, so reading that first would mean a
+    // campaign with any fallback art silently never resolves a destination thumbnail.
+    const fromPlace = delivery.placeId ? await placeThumbnails.get(delivery.placeId) : null
+    const imageUrl = fromPlace ?? delivery.imageUrl
     const result = await sender.send({
       token: delivery.token,
       pushId,
@@ -164,7 +175,7 @@ export async function createPushDispatcherComponent({
       title: delivery.title,
       body: delivery.body,
       deepLink: withAttribution(delivery.deepLink, delivery.campaignKey, pushId),
-      imageUrl: delivery.imageUrl,
+      imageUrl,
       category: delivery.category,
       ttlSeconds: delivery.ttlSeconds
     })
