@@ -22,6 +22,13 @@ type FetchInit = Parameters<IFetchComponent['fetch']>[1] & { abortController?: A
 const JWT_TTL_MS = 50 * 60 * 1000
 const STATEMENT_TIMEOUT_SECONDS = 120
 const REQUEST_TIMEOUT_MS = 180_000
+// The API answers 202 for a statement still running after about 45 seconds, which a warehouse
+// resuming from suspension can take. How often the result is asked for after that.
+const POLL_INTERVAL_MS = 2_000
+// The account is the hostname the JWT is posted to, so it is held to the shape of an account
+// identifier (`gra03234.us-east-1`): anything else could steer that request, and the key's
+// signature with it, somewhere other than Snowflake.
+const ACCOUNT_PATTERN = /^[a-z0-9][a-z0-9_.-]*$/i
 
 export type SnowflakeRow = Record<string, string | null>
 
@@ -43,6 +50,8 @@ type StatementResponse = {
   message?: string
   code?: string
 }
+
+type ApiResult = { status: number; ok: boolean; body: StatementResponse }
 
 function base64url(input: Buffer | string): string {
   return Buffer.from(input).toString('base64url')
@@ -100,6 +109,10 @@ export function mapRows(metadata: ResultSetMetaData, data: (string | null)[][]):
   })
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 export async function createSnowflakeComponent({
   config,
   fetch,
@@ -117,15 +130,19 @@ export async function createSnowflakeComponent({
 
   let privateKey: KeyObject | undefined
   if (rawPrivateKey && account && user) {
-    try {
-      // The key is the PKCS#8 PEM exactly as the warehouse's Pulumi stack wrote it to SSM,
-      // newlines included. A single-line value is accepted too: some secret stores collapse
-      // them, and the PEM is unparseable without its line breaks.
-      privateKey = createPrivateKey(restorePemNewlines(rawPrivateKey))
-    } catch (error: any) {
-      logger.error('SNOWFLAKE_PRIVATE_KEY is not a readable private key; Snowflake is disabled', {
-        error: error?.message ?? 'unknown'
-      })
+    if (!ACCOUNT_PATTERN.test(account)) {
+      logger.error('SNOWFLAKE_ACCOUNT is not an account identifier; Snowflake is disabled', { account })
+    } else {
+      try {
+        // The key is the PKCS#8 PEM exactly as the warehouse's Pulumi stack wrote it to SSM,
+        // newlines included. A single-line value is accepted too: some secret stores collapse
+        // them, and the PEM is unparseable without its line breaks.
+        privateKey = createPrivateKey(restorePemNewlines(rawPrivateKey))
+      } catch (error: any) {
+        logger.error('SNOWFLAKE_PRIVATE_KEY is not a readable private key; Snowflake is disabled', {
+          error: error?.message ?? 'unknown'
+        })
+      }
     }
   }
 
@@ -153,71 +170,76 @@ export async function createSnowflakeComponent({
     return { init: { ...init, abortController: controller }, done: () => clearTimeout(handle) }
   }
 
-  async function post(key: KeyObject, statement: string): Promise<StatementResponse> {
+  async function request(key: KeyObject, method: 'GET' | 'POST', path: string, payload?: unknown): Promise<ApiResult> {
     const { init, done } = withDeadline({
-      method: 'POST',
+      method,
       headers: {
         Authorization: `Bearer ${currentJwt(key)}`,
         'X-Snowflake-Authorization-Token-Type': 'KEYPAIR_JWT',
-        'Content-Type': 'application/json',
-        Accept: 'application/json'
+        Accept: 'application/json',
+        ...(payload === undefined ? {} : { 'Content-Type': 'application/json' })
       },
-      body: JSON.stringify({
-        statement,
-        timeout: STATEMENT_TIMEOUT_SECONDS,
-        role: role || undefined,
-        warehouse: warehouse || undefined,
-        database: database || undefined,
-        schema: schema || undefined
-      })
+      ...(payload === undefined ? {} : { body: JSON.stringify(payload) })
     })
 
-    let body: StatementResponse
-    let response: Awaited<ReturnType<IFetchComponent['fetch']>>
     try {
-      response = await fetch.fetch(
-        `https://${account}.snowflakecomputing.com/api/v2/statements?requestId=${randomUUID()}`,
-        init
-      )
-      body = (await response.json().catch(() => ({}))) as StatementResponse
+      const response = await fetch.fetch(`https://${account}.snowflakecomputing.com${path}`, init)
+      const body = (await response.json().catch(() => ({}))) as StatementResponse
+      return { status: response.status, ok: response.ok, body }
     } finally {
       done()
     }
+  }
 
-    if (!response.ok) {
-      // The body names the real cause (an expired key, a role without USAGE on the warehouse,
-      // a relation that does not exist); the status alone is almost always 400.
-      throw new Error(`Snowflake rejected the statement: ${response.status} ${body?.message ?? ''}`.trim())
+  // The body names the real cause (an expired key, a role without USAGE on the warehouse, a
+  // relation that does not exist); the status alone is almost always 400.
+  function failure(what: string, result: ApiResult): Error {
+    return new Error(`Snowflake ${what}: ${result.status} ${result.body?.message ?? ''}`.trim())
+  }
+
+  async function submit(key: KeyObject, statement: string): Promise<StatementResponse> {
+    const result = await request(key, 'POST', `/api/v2/statements?requestId=${randomUUID()}`, {
+      statement,
+      timeout: STATEMENT_TIMEOUT_SECONDS,
+      role: role || undefined,
+      warehouse: warehouse || undefined,
+      database: database || undefined,
+      schema: schema || undefined
+    })
+    if (result.status === 202 && result.body.statementHandle) {
+      return awaitStatement(key, result.body.statementHandle)
     }
-    return body
+    if (!result.ok) {
+      throw failure('rejected the statement', result)
+    }
+    return result.body
+  }
+
+  // 202 means still running, not "no result set". Read as the latter, a slow warehouse was an
+  // empty feed and a day with nothing queued, and nothing said so. The result is asked for
+  // until it is there or the statement's own timeout has passed, whichever comes first.
+  async function awaitStatement(key: KeyObject, handle: string): Promise<StatementResponse> {
+    const deadline = Date.now() + STATEMENT_TIMEOUT_SECONDS * 1000
+    while (Date.now() < deadline) {
+      await sleep(POLL_INTERVAL_MS)
+      const result = await request(key, 'GET', `/api/v2/statements/${handle}`)
+      if (result.status === 202) {
+        continue
+      }
+      if (!result.ok) {
+        throw failure(`refused statement ${handle}`, result)
+      }
+      return result.body
+    }
+    throw new Error(`Snowflake statement ${handle} was still running after ${STATEMENT_TIMEOUT_SECONDS}s`)
   }
 
   async function partition(key: KeyObject, statementHandle: string, index: number): Promise<(string | null)[][]> {
-    const { init, done } = withDeadline({
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${currentJwt(key)}`,
-        'X-Snowflake-Authorization-Token-Type': 'KEYPAIR_JWT',
-        Accept: 'application/json'
-      }
-    })
-
-    let body: StatementResponse
-    let response: Awaited<ReturnType<IFetchComponent['fetch']>>
-    try {
-      response = await fetch.fetch(
-        `https://${account}.snowflakecomputing.com/api/v2/statements/${statementHandle}?partition=${index}`,
-        init
-      )
-      body = (await response.json().catch(() => ({}))) as StatementResponse
-    } finally {
-      done()
+    const result = await request(key, 'GET', `/api/v2/statements/${statementHandle}?partition=${index}`)
+    if (!result.ok) {
+      throw failure(`refused partition ${index}`, result)
     }
-
-    if (!response.ok) {
-      throw new Error(`Snowflake refused partition ${index}: ${response.status} ${body?.message ?? ''}`.trim())
-    }
-    return body.data ?? []
+    return result.body.data ?? []
   }
 
   return {
@@ -230,7 +252,7 @@ export async function createSnowflakeComponent({
         throw new Error('Snowflake is not configured')
       }
 
-      const first = await post(privateKey, statement)
+      const first = await submit(privateKey, statement)
       const metadata = first.resultSetMetaData
       if (!metadata) {
         // A statement that returns no result set at all, which for this service means the
