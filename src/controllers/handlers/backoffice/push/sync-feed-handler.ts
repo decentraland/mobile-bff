@@ -1,13 +1,14 @@
 import { DecentralandSignatureContext } from '@dcl/crypto-middleware'
 import { HandlerContextWithPath } from '../../../../types'
+import { FeedRefusedError } from '../../../../adapters/push-feed'
 import { requireBackofficeUser } from './shared'
 
 /**
  * Read the warehouse audience feed now instead of waiting for the next poll.
  *
  * The background loop is what actually keeps the queues filled; this exists so an operator
- * can see what a sync would do — how many rows the feed holds, which campaign keys it names
- * that nothing here answers to, how many rows were refused and why. It is also the only way
+ * can see what a sync would do — how many rows the feed holds, which slices it produces that
+ * no campaign here serves, how many rows were refused and why. It is also the only way
  * to drive an ingest in an environment where the loop is disabled.
  *
  * No approval gate: an ingest cannot send anything. It only ever adds `pending` rows to a
@@ -37,9 +38,12 @@ export async function syncPushFeedHandler(
     })
     return { status: 200, body: { ok: true, data: report } }
   } catch (error: any) {
-    // The warehouse being unreachable is not this service misbehaving, and the operator who
-    // asked for the sync is the one who can act on the reason.
-    logger.warn('Push feed sync failed', { error: error?.message ?? 'unknown' })
-    return { status: 502, body: { ok: false, error: `feed sync failed: ${error?.message ?? 'unknown'}` } }
+    const message: string = error?.message ?? 'unknown'
+    logger.warn('Push feed sync failed', { requestedBy: auth.address, error: message })
+    // The warehouse being unreachable is not this service misbehaving, but what it says when
+    // it refuses is its own error text — the account, the role, the statement — and that stays
+    // in the logs. A refusal this service made is worded for the operator and is shown.
+    const shown = error instanceof FeedRefusedError ? message : 'see the service logs for the cause'
+    return { status: 502, body: { ok: false, error: `feed sync failed: ${shown}` } }
   }
 }

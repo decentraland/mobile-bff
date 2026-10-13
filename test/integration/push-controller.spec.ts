@@ -11,7 +11,8 @@ test('push backoffice endpoints', function ({ components }) {
     ['GET', '/backoffice/push/campaigns'],
     ['POST', '/backoffice/push/campaigns'],
     ['POST', '/backoffice/push/campaigns/00000000-0000-0000-0000-000000000000/approve'],
-    ['GET', '/backoffice/push/campaigns/00000000-0000-0000-0000-000000000000/stats']
+    ['GET', '/backoffice/push/campaigns/00000000-0000-0000-0000-000000000000/stats'],
+    ['POST', '/backoffice/push/feed/sync']
   ])('%s %s without a signed fetch responds 401', async (method, path) => {
     const { localFetch } = components
 
@@ -196,5 +197,15 @@ test('push backoffice endpoints with signed fetch', function ({ components }) {
     const approved = await signed(approver, 'POST', `${base}/approve`)
     expect(approved.status).toEqual(200)
     expect((await approved.json()).data).toMatchObject({ status: 'scheduled', audienceCount: 0 })
+  })
+
+  // Without a warehouse the sync is a no-op that says so, which is how every environment but
+  // production runs.
+  it('reads the feed on demand and reports nothing to do when no warehouse is configured', async () => {
+    const synced = await signed(creator, 'POST', '/backoffice/push/feed/sync')
+    expect(synced.status).toEqual(200)
+    expect((await synced.json()).data).toMatchObject({ rowsRead: 0, queued: 0 })
+
+    expect((await signed(outsider, 'POST', '/backoffice/push/feed/sync')).status).toEqual(403)
   })
 })

@@ -1468,8 +1468,11 @@ paths:
 
         The report says what happened: `queued` and `alreadyQueued`, `suppressed` for tokens
         the provider has already rejected, `rejected` counting refused rows by reason,
-        `unknownCampaigns` for keys no campaign here answers to, and `notAcceptingCampaigns`
-        for keys whose campaign exists but is not recurring or not yet approved.
+        `unservedSlices` for trigger/destination pairs no campaign here declares, and
+        `notAcceptingSlices` for pairs whose campaign exists but is not yet approved.
+
+        A feed holding more rows than `PUSH_FEED_MAX_ROWS` is refused whole, and the 502 says
+        so. A warehouse error is a 502 whose cause is in the service logs, not in the response.
       operationId: syncPushFeed
       security:
         - signedFetch: []
@@ -1479,7 +1482,7 @@ paths:
         '401':
           description: Caller is not a backoffice user
         '502':
-          description: The warehouse could not be read
+          description: The warehouse could not be read, or the feed was refused
 
 components:
   securitySchemes:
