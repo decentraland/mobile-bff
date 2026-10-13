@@ -414,4 +414,75 @@ describe('push attribution links', () => {
     expect(await dispatcher.tick()).toMatchObject({ claimed: 0, sent: 0 })
     expect(sent).toHaveLength(0)
   })
+
+  // The per-campaign stats only ever grow for a recurring campaign, so "what went out this
+  // week" needs the send log cut by day.
+  describe('sends per day', () => {
+    // The expected labels come from the same clock that stamps the rows. Deriving them in Node
+    // would fail on a run that crosses UTC midnight between the insert and the assertion.
+    async function utcDay(daysAgo: number): Promise<string> {
+      const result = await pg.query<{ day: string }>(
+        `SELECT to_char((now() AT TIME ZONE 'UTC') - make_interval(days => ${daysAgo}), 'YYYY-MM-DD') AS day`
+      )
+      return result.rows[0].day
+    }
+
+    async function sentCampaign(key: string, userIds: string[]) {
+      const campaign = await approvedCampaign(
+        key,
+        userIds.map((userId) => ({ userId, token: `token-${userId}`, platform: 'android' as const }))
+      )
+      const claimed = await pushDb.claimDeliveries(10)
+      await pushDb.recordOutcomes(claimed.map((d) => ({ ...d, state: 'sent' as const })))
+      return campaign
+    }
+
+    it('counts sends per campaign per UTC day, and only inside the window asked for', async () => {
+      const campaign = await sentCampaign('daily-a', ['user-a', 'user-b', 'user-c'])
+      // A write-off has no day of its own and is not a send.
+      await pg.query(
+        `UPDATE push_deliveries SET state = 'failed', sent_at = NULL WHERE campaign_id = '${campaign.id}' AND user_id = 'user-c'`
+      )
+      // One send from before the window: it is not this week's news.
+      await pg.query(
+        `UPDATE push_deliveries SET sent_at = sent_at - interval '10 days' WHERE campaign_id = '${campaign.id}' AND user_id = 'user-b'`
+      )
+
+      expect(await pushDb.dailySends(7)).toEqual([{ day: await utcDay(0), campaignKey: 'daily-a', sent: 1 }])
+      expect(await pushDb.dailySends(30)).toEqual([
+        { day: await utcDay(0), campaignKey: 'daily-a', sent: 1 },
+        { day: await utcDay(10), campaignKey: 'daily-a', sent: 1 }
+      ])
+    })
+
+    // The labels are UTC days, so the window has to start at UTC midnight whatever zone the
+    // session runs in. Compared as a naive timestamp it started at the session's midnight: west
+    // of UTC that dropped the first hours of the oldest day, east of UTC it added hours of the
+    // day before. pg-pool hands back the most recently released connection, so the SET lands on
+    // the one the query runs on; if it ever did not, this would still pass, only proving less.
+    it.each(['America/New_York', 'Asia/Tokyo'])('starts each day at UTC midnight in a %s session', async (zone) => {
+      const campaign = await sentCampaign('daily-tz', ['just-after', 'just-before'])
+      await pg.query(
+        `UPDATE push_deliveries
+         SET sent_at = (date_trunc('day', now() AT TIME ZONE 'UTC') + interval '30 minutes') AT TIME ZONE 'UTC'
+         WHERE campaign_id = '${campaign.id}' AND user_id = 'just-after'`
+      )
+      await pg.query(
+        `UPDATE push_deliveries
+         SET sent_at = (date_trunc('day', now() AT TIME ZONE 'UTC') - interval '30 minutes') AT TIME ZONE 'UTC'
+         WHERE campaign_id = '${campaign.id}' AND user_id = 'just-before'`
+      )
+
+      await pg.query(`SET TIME ZONE '${zone}'`)
+      try {
+        expect(await pushDb.dailySends(1)).toEqual([{ day: await utcDay(0), campaignKey: 'daily-tz', sent: 1 }])
+        expect(await pushDb.dailySends(2)).toEqual([
+          { day: await utcDay(0), campaignKey: 'daily-tz', sent: 1 },
+          { day: await utcDay(1), campaignKey: 'daily-tz', sent: 1 }
+        ])
+      } finally {
+        await pg.query('RESET TIME ZONE')
+      }
+    })
+  })
 })

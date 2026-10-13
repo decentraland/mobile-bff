@@ -12,7 +12,8 @@ test('push backoffice endpoints', function ({ components }) {
     ['POST', '/backoffice/push/campaigns'],
     ['POST', '/backoffice/push/campaigns/00000000-0000-0000-0000-000000000000/approve'],
     ['GET', '/backoffice/push/campaigns/00000000-0000-0000-0000-000000000000/stats'],
-    ['POST', '/backoffice/push/feed/sync']
+    ['POST', '/backoffice/push/feed/sync'],
+    ['GET', '/backoffice/push/stats/daily']
   ])('%s %s without a signed fetch responds 401', async (method, path) => {
     const { localFetch } = components
 
@@ -207,5 +208,22 @@ test('push backoffice endpoints with signed fetch', function ({ components }) {
     expect((await synced.json()).data).toMatchObject({ rowsRead: 0, queued: 0 })
 
     expect((await signed(outsider, 'POST', '/backoffice/push/feed/sync')).status).toEqual(403)
+  })
+
+  // The signature covers the path and not the query, so the window travels unsigned.
+  it('reports sends per day and refuses a window it cannot serve', async () => {
+    const daily = (query: string) =>
+      components.localFetch.fetch(`/backoffice/push/stats/daily${query}`, {
+        headers: authHeaders(creator, 'GET', '/backoffice/push/stats/daily')
+      })
+
+    const week = await daily('?days=7')
+    expect(week.status).toEqual(200)
+    expect((await week.json()).data).toMatchObject({ days: 7, rows: expect.any(Array) })
+    expect((await (await daily('')).json()).data.days).toEqual(30)
+
+    expect((await daily('?days=0')).status).toEqual(400)
+    expect((await daily('?days=91')).status).toEqual(400)
+    expect((await daily('?days=soon')).status).toEqual(400)
   })
 })

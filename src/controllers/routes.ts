@@ -85,6 +85,7 @@ import { approvePushCampaignHandler } from "./handlers/backoffice/push/approve-p
 import { cancelPushCampaignHandler } from "./handlers/backoffice/push/cancel-push-campaign-handler"
 import { getPushStatsHandler } from "./handlers/backoffice/push/get-push-stats-handler"
 import { syncPushFeedHandler } from "./handlers/backoffice/push/sync-feed-handler"
+import { getPushDailySendsHandler } from "./handlers/backoffice/push/get-push-daily-sends-handler"
 
 // Wallets (Thirdweb thin proxy)
 // TODO: re-enable sign-message endpoint once the TTL and handshake flow are better defined.
@@ -270,6 +271,7 @@ export async function setupRouter(globalContext: GlobalContext): Promise<Router<
   router.post("/backoffice/push/campaigns/:id/cancel", signedFetch, cancelPushCampaignHandler)
   router.get("/backoffice/push/campaigns/:id/stats", signedFetch, getPushStatsHandler)
   router.post("/backoffice/push/feed/sync", signedFetch, syncPushFeedHandler)
+  router.get("/backoffice/push/stats/daily", signedFetch, getPushDailySendsHandler)
 
   return router
 }
