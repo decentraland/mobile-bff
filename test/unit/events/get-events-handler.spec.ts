@@ -4,6 +4,7 @@ import { createCacheMockComponent } from '../../mocks/cache-mock'
 import { createFetchMockComponent, createMockResponse } from '../../mocks/fetch-mock'
 import { createConfigJestMockComponent } from '../../mocks/config-mock'
 import { createLogsMockComponent } from '../../mocks/logs-mock'
+import { createContentPolicyMockComponent } from '../../mocks/content-policy-mock'
 
 function createTestEvent(overrides: Partial<Event> = {}): Event {
   return {
@@ -27,6 +28,7 @@ describe('get-events-handler', () => {
   let mockFetch: ReturnType<typeof createFetchMockComponent>
   let mockConfig: ReturnType<typeof createConfigJestMockComponent>
   let mockLogs: ReturnType<typeof createLogsMockComponent>
+  let mockContentPolicy: ReturnType<typeof createContentPolicyMockComponent>
 
   beforeEach(() => {
     mockPlacesDb = createPlacesDbMockComponent()
@@ -37,6 +39,8 @@ describe('get-events-handler', () => {
       EVENTS_CACHE_TTL_MS: '7200000'
     })
     mockLogs = createLogsMockComponent()
+    // Flag off: `allowed_ios` is the legacy allow-list these suites pin down
+    mockContentPolicy = createContentPolicyMockComponent()
 
     // Default cache behavior: always miss
     mockCache.get.mockResolvedValue(null)
@@ -50,6 +54,7 @@ describe('get-events-handler', () => {
         cache: mockCache,
         fetch: mockFetch,
         config: mockConfig,
+        contentPolicy: mockContentPolicy,
         logs: mockLogs
       },
       url: new URL(url)
@@ -309,7 +314,7 @@ describe('get-events-handler', () => {
 
       mockPlacesDb.getAllPlaces.mockResolvedValue(places)
       mockCache.get.mockImplementation(async (key: string) => {
-        if (key === 'events:query:places:5,5::') {
+        if (key === 'events:query:places:5,5:::') {
           return ['events:id:cached-tag-event']
         }
         if (key === 'events:id:cached-tag-event') {
@@ -400,6 +405,63 @@ describe('get-events-handler', () => {
       await getEventsHandler(context as any)
 
       expect(mockFetch.fetch).toHaveBeenCalledWith('https://events.decentraland.org/api/events')
+    })
+  })
+
+  describe('block list (ios-blocklist flag on)', () => {
+    const atCasino = createTestEvent({ id: 'casino', place_id: 'casino-place', position: [1, 1] })
+    const atBannedParcel = createTestEvent({ id: 'banned', position: [4, 5] })
+    const inBannedWorld = createTestEvent({ id: 'world', world: true, server: 'Sin.dcl.eth', position: [0, 0] })
+    const open1 = createTestEvent({ id: 'open1', place_id: 'fine', position: [9, 9] })
+    const open2 = createTestEvent({ id: 'open2', world: true, server: 'fine.dcl.eth', position: [0, 0] })
+
+    beforeEach(() => {
+      mockContentPolicy = createContentPolicyMockComponent({
+        blockList: true,
+        index: {
+          placeIds: new Set(['casino-place']),
+          parcels: new Set(['4,5']),
+          worlds: new Set(['sin.dcl.eth'])
+        }
+      })
+    })
+
+    it('should list every event except those at blocked places, worlds and parcels', async () => {
+      mockFetch.fetch.mockResolvedValue(
+        createMockResponse(createEventsResponse([atCasino, atBannedParcel, inBannedWorld, open1, open2]))
+      )
+
+      const context = createContext('http://localhost/events?sdk=7&tag=allowed_ios')
+      const response = await getEventsHandler(context as any)
+
+      expect(response.status).toBe(200)
+      expect(response.body).toEqual({ ok: true, data: [open1, open2], total: 2 })
+      expect(mockPlacesDb.getAllPlaces).not.toHaveBeenCalled()
+      expect(mockFetch.fetch).toHaveBeenCalledWith('https://events.decentraland.org/api/events')
+    })
+
+    it('should forward list and search, and apply offset and limit after filtering', async () => {
+      mockFetch.fetch.mockResolvedValue(createMockResponse(createEventsResponse([atCasino, open1, open2])))
+
+      const context = createContext('http://localhost/events?list=live&search=party&limit=1&offset=1&tag=allowed_ios')
+      const response = await getEventsHandler(context as any)
+
+      expect(response.body).toEqual({ ok: true, data: [open2], total: 1 })
+      expect(mockFetch.fetch).toHaveBeenCalledWith('https://events.decentraland.org/api/events?search=party&list=live')
+    })
+
+    it('should keep a curated tag and filter its events too', async () => {
+      mockPlacesDb.getAllPlaces.mockResolvedValue([
+        createTestPlace({ id: 'p1', basePosition: '1,1', positions: ['1,1'] }),
+        createTestPlace({ id: 'p2', basePosition: '9,9', positions: ['9,9'] })
+      ])
+      mockFetch.fetch.mockResolvedValue(createMockResponse(createEventsResponse([atCasino, open1, open2])))
+
+      const context = createContext('http://localhost/events?tag=featured&tag=allowed_ios')
+      const response = await getEventsHandler(context as any)
+
+      expect(response.body).toEqual({ ok: true, data: [open1], total: 1 })
+      expect(mockPlacesDb.getAllPlaces).toHaveBeenCalledWith(['featured'])
     })
   })
 })

@@ -1,5 +1,6 @@
 import { HandlerContextWithPath } from '../../../types'
-import { Destination, DestinationsResponse } from '../../../adapters/destinations-api'
+import { Destination, DestinationsResponse, IDestinationsApiComponent } from '../../../adapters/destinations-api'
+import { ALLOWED_IOS_TAG, isDestinationBlocked } from '../../../logic/content-policy'
 
 // TEMP workaround (decentraland/godot-explorer#1827):
 // places.org `/destinations?order_by=most_active` does NOT sort by connected
@@ -41,11 +42,45 @@ function sortByConnectedUsers(response: DestinationsResponse, offset: number, li
   }
 }
 
+// The block list walks the upstream list from its first page, so a page that lost rows to the
+// filter is topped up from the next one and offsets keep meaning the same rows. Pages come from
+// the proxy cache.
+const SCAN_PAGE_SIZE = 100
+const SCAN_MAX_PAGES = 30
+
+function keepOnly(response: DestinationsResponse, keep: (d: Destination) => boolean): DestinationsResponse {
+  const data = response.data.filter(keep)
+  return { ok: response.ok, data, total: data.length }
+}
+
+async function scanUnblocked(
+  destinationsApi: IDestinationsApiComponent,
+  params: URLSearchParams,
+  needed: number,
+  keep: (d: Destination) => boolean,
+  headers: Record<string, string>
+): Promise<DestinationsResponse> {
+  const kept: Destination[] = []
+  for (let page = 0; page < SCAN_MAX_PAGES && kept.length < needed; page++) {
+    params.set('offset', String(page * SCAN_PAGE_SIZE))
+    params.set('limit', String(SCAN_PAGE_SIZE))
+    const response = await destinationsApi.proxyQuery(params.toString(), headers)
+    if (!response.ok) {
+      return kept.length > 0 ? { ok: true, data: kept, total: kept.length } : response
+    }
+    kept.push(...response.data.filter(keep))
+    if (response.data.length < SCAN_PAGE_SIZE) {
+      break
+    }
+  }
+  return { ok: true, data: kept, total: kept.length }
+}
+
 export async function getDestinationsHandler(
-  context: HandlerContextWithPath<'placesDb' | 'destinationsApi' | 'logs', '/destinations'>
+  context: HandlerContextWithPath<'placesDb' | 'destinationsApi' | 'contentPolicy' | 'logs', '/destinations'>
 ) {
   const {
-    components: { placesDb, destinationsApi, logs },
+    components: { placesDb, destinationsApi, contentPolicy, logs },
     url,
     request
   } = context
@@ -84,7 +119,27 @@ export async function getDestinationsHandler(
 
     let response: DestinationsResponse
 
-    if (tagParam) {
+    // Every `tag` param: clients send the curated tag and `allowed_ios` as two of them
+    const requestedTags = searchParams.getAll('tag').flatMap((t) => t.split(',')).map((t) => t.trim())
+    if (requestedTags.includes(ALLOWED_IOS_TAG) && (await contentPolicy.isBlockListEnabled())) {
+      const index = await contentPolicy.getBlockIndex()
+      const keep = (d: Destination) => !isDestinationBlocked(d, index)
+      const curatedTags = requestedTags.filter((t) => t && t !== ALLOWED_IOS_TAG)
+      searchParams.delete('tag')
+
+      if (curatedTags.length > 0) {
+        const places = await placesDb.getAllPlaces(curatedTags)
+        response = keepOnly(await destinationsApi.getForPlaces(places, searchParams.toString(), headersToForward), keep)
+      } else if (isMostActive) {
+        response = keepOnly(await destinationsApi.proxyQuery(searchParams.toString(), headersToForward), keep)
+      } else {
+        response = await scanUnblocked(destinationsApi, searchParams, clientOffset + clientLimit, keep, headersToForward)
+        if (orderBy !== MOST_ACTIVE) {
+          response = { ...response, data: response.data.slice(clientOffset, clientOffset + clientLimit) }
+          response.total = response.data.length
+        }
+      }
+    } else if (tagParam) {
       const tags = tagParam
         .split(',')
         .map((t) => t.trim())

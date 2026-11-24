@@ -3,6 +3,7 @@ import { Place } from '../../../adapters/places-db'
 import { ICacheComponent } from '../../../adapters/cache'
 import { IFetchComponent, ILoggerComponent } from '@well-known-components/interfaces'
 import { IPlacesDbComponent } from '../../../adapters/places-db'
+import { ALLOWED_IOS_TAG, isEventBlocked } from '../../../logic/content-policy'
 
 export type Event = {
   id: string
@@ -42,9 +43,23 @@ function eventMatchesPlaces(event: Event, positionSet: Set<string>, worldSet: Se
   return false
 }
 
+// `list` (live / upcoming) is what the 2.x client asks for; `limit` is never forwarded, the
+// place filters run on the whole list.
+function upstreamParams(search: string | undefined, list: string | undefined): URLSearchParams {
+  const params = new URLSearchParams()
+  if (search) {
+    params.set('search', search)
+  }
+  if (list) {
+    params.set('list', list)
+  }
+  return params
+}
+
 async function fetchEventsForPlaces(
   places: Place[],
   search: string | undefined,
+  list: string | undefined,
   apiUrl: string,
   ttl: number,
   components: FetchComponents
@@ -74,7 +89,7 @@ async function fetchEventsForPlaces(
   const worldsSorted = Array.from(worldSet).sort()
 
   // Create cache key from all positions + worlds + search
-  const cacheKey = `events:query:places:${positionsSorted.join(',')}:${worldsSorted.join(',')}:${search || ''}`
+  const cacheKey = `events:query:places:${positionsSorted.join(',')}:${worldsSorted.join(',')}:${search || ''}:${list || ''}`
 
   // Check cache first
   const startCacheRead = Date.now()
@@ -102,10 +117,7 @@ async function fetchEventsForPlaces(
 
   try {
     // Fetch all events, then filter client-side by place membership
-    const params = new URLSearchParams()
-    if (search) {
-      params.set('search', search)
-    }
+    const params = upstreamParams(search, list)
     const url = params.toString() ? `${apiUrl}?${params}` : apiUrl
 
     const startFetch = Date.now()
@@ -154,6 +166,7 @@ async function fetchEventsForPlaces(
 
 async function proxyEvents(
   search: string | undefined,
+  list: string | undefined,
   apiUrl: string,
   ttl: number,
   components: FetchComponents
@@ -162,11 +175,7 @@ async function proxyEvents(
   const logger = logs.getLogger('get-events')
   const startTotal = Date.now()
 
-  const params = new URLSearchParams()
-  if (search) {
-    params.set('search', search)
-  }
-  const queryString = params.toString()
+  const queryString = upstreamParams(search, list).toString()
   const queryKey = `events:query:${queryString}`
 
   const startCacheRead = Date.now()
@@ -223,21 +232,41 @@ async function proxyEvents(
 }
 
 export async function getEventsHandler(
-  context: HandlerContextWithPath<'placesDb' | 'fetch' | 'cache' | 'config' | 'logs', '/events'>
+  context: HandlerContextWithPath<'placesDb' | 'fetch' | 'cache' | 'config' | 'contentPolicy' | 'logs', '/events'>
 ) {
-  const { components: { placesDb, fetch, cache, config, logs }, url } = context
+  const { components: { placesDb, fetch, cache, config, contentPolicy, logs }, url } = context
   const logger = logs.getLogger('get-events')
 
   try {
     const searchParams = new URL(url.toString()).searchParams
     const tagParam = searchParams.get('tag')
     const search = searchParams.get('search') || undefined
+    const list = searchParams.get('list') || undefined
 
     // Config
     const apiUrl = await config.getString('EVENTS_API_URL') ?? 'https://events.decentraland.org/api/events'
     const ttl = parseInt(await config.getString('EVENTS_CACHE_TTL_MS') ?? '7200000')
 
     const fetchComponents = { fetch, cache, logs }
+
+    // Every `tag` param: clients send the curated tag and `allowed_ios` as two of them
+    const requestedTags = searchParams.getAll('tag').flatMap(t => t.split(',')).map(t => t.trim())
+    if (requestedTags.includes(ALLOWED_IOS_TAG) && await contentPolicy.isBlockListEnabled()) {
+      const curatedTags = requestedTags.filter(t => t && t !== ALLOWED_IOS_TAG)
+      const [index, all] = await Promise.all([
+        contentPolicy.getBlockIndex(),
+        curatedTags.length > 0
+          ? placesDb.getAllPlaces(curatedTags).then(places =>
+              fetchEventsForPlaces(places, search, list, apiUrl, ttl, fetchComponents))
+          : proxyEvents(search, list, apiUrl, ttl, fetchComponents)
+      ])
+      const offset = Math.max(0, parseInt(searchParams.get('offset') || '0', 10) || 0)
+      const limit = parseInt(searchParams.get('limit') || '', 10) || undefined
+      const kept = all.data.filter(event => !isEventBlocked(event, index))
+      const data = kept.slice(offset, limit === undefined ? undefined : offset + limit)
+
+      return { status: 200, body: { ok: all.ok, data, total: data.length } }
+    }
 
     if (tagParam) {
       const tags = tagParam.split(',').map(t => t.trim()).filter(Boolean)
@@ -246,13 +275,13 @@ export async function getEventsHandler(
       }
 
       const places = await placesDb.getAllPlaces(tags)
-      const response = await fetchEventsForPlaces(places, search, apiUrl, ttl, fetchComponents)
+      const response = await fetchEventsForPlaces(places, search, list, apiUrl, ttl, fetchComponents)
 
       return { status: 200, body: response }
     }
 
     // Proxy mode: direct fetch with optional search
-    const response = await proxyEvents(search, apiUrl, ttl, fetchComponents)
+    const response = await proxyEvents(search, list, apiUrl, ttl, fetchComponents)
     return { status: 200, body: response }
 
   } catch (error) {

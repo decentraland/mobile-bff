@@ -37,6 +37,7 @@ import { createAttestationSessionComponent } from './adapters/attestation-sessio
 import { createThirdwebProxyComponent } from './adapters/thirdweb-proxy'
 import { createRateLimiterComponent } from './adapters/rate-limiter'
 import { createMagicComponent } from './adapters/magic'
+import { createContentPolicyComponent } from './adapters/content-policy'
 
 // Initialize all the components of the app
 export async function initComponents(): Promise<AppComponents> {
@@ -102,6 +103,7 @@ export async function initComponents(): Promise<AppComponents> {
   const thirdwebProxy = await createThirdwebProxyComponent({ config, fetch, logs, metrics })
   const rateLimiter = await createRateLimiterComponent({ metrics })
   const magic = await createMagicComponent({ config, fetch, logs })
+  const contentPolicy = await createContentPolicyComponent({ fetch, config, logs, featureFlagsDb, placesDb })
 
   await instrumentHttpServerWithPromClientRegistry({ metrics, server, config, registry: metrics.registry! })
 
@@ -139,7 +141,8 @@ export async function initComponents(): Promise<AppComponents> {
     attestationSession,
     thirdwebProxy,
     rateLimiter,
-    magic
+    magic,
+    contentPolicy
   }
 }
 

@@ -254,7 +254,8 @@ Both endpoints support filtering by internal tags stored in this BFF's database.
 
 | Tag | Description |
 |-----|-------------|
-| `allowed_ios` | Places approved for iOS app |
+| `allowed_ios` | Places approved for iOS app (only with the `ios-blocklist` flag off, see [iOS block list](#ios-block-list)) |
+| `banned_ios` | Places hidden from iOS Discover (only with the `ios-blocklist` flag on) |
 | `featured` | Highlighted/promoted places |
 
 ### Multiple Tags (AND Logic)
@@ -265,6 +266,45 @@ When multiple tags are specified (comma-separated), only places matching **all**
 # Returns only places that are BOTH allowed_ios AND featured
 curl "https://api.example.com/destinations?tag=allowed_ios,featured"
 ```
+
+---
+
+## iOS block list
+
+iOS clients send `tag=allowed_ios` on every Discover request (carousels, search, events, featured).
+The `ios-blocklist` feature flag decides what that tag means:
+
+| Flag | Meaning of `allowed_ios` |
+|------|--------------------------|
+| on (default, also when the row is missing) | Block list: the whole catalog except blocked content |
+| off | Legacy allow-list: only places tagged `allowed_ios` |
+
+Requests without `allowed_ios` (Android) are never filtered, whatever the flag.
+
+### What is blocked
+
+- Places in the `casino` category, or rated `A` (adult) or `R` (restricted) on Places. Unrated places
+  (`RP`, `PR`) are allowed.
+- Every place tagged `banned_ios` in the backoffice (every parcel of a scene, or a world), the
+  manual list for porn, nudity, gambling and crypto scams.
+
+### How each endpoint applies it
+
+- `GET /destinations?tag=allowed_ios`: `allowed_ios` is dropped. Any other tag (`ftue`, `season`,
+  `featured`) still selects its curated places; with none, the request is proxied. Blocked rows are
+  removed, and an untagged list is read from the first upstream page on, so a page that lost rows
+  is topped up from the next one and `offset` keeps pointing at the same rows.
+- `GET /events?tag=allowed_ios`: every event (`list` and `search` are forwarded) except those at a
+  blocked place id, parcel or world. `offset` and `limit` apply after the filter.
+
+Every `tag` param counts: clients send the curated tag and `allowed_ios` as two separate params.
+
+### Freshness
+
+The block index (upstream catalog + `banned_ios` places) is rebuilt every
+`CONTENT_POLICY_CACHE_TTL_MS` (10 minutes); a stale index answers while the next one builds. Lists
+are filtered on every request, after their own cache, so a new `banned_ios` tag reaches Discover
+within that window. Flipping the flag applies to the next request.
 
 ---
 
@@ -300,3 +340,4 @@ Both endpoints implement a two-level caching strategy:
 | `DESTINATIONS_CACHE_TTL_MS` | `7200000` | Cache TTL in milliseconds |
 | `EVENTS_API_URL` | `https://events.decentraland.org/api/events` | Upstream events API URL |
 | `EVENTS_CACHE_TTL_MS` | `7200000` | Cache TTL in milliseconds |
+| `CONTENT_POLICY_CACHE_TTL_MS` | `600000` | How often the iOS block index is rebuilt |

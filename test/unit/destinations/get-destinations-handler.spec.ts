@@ -2,16 +2,20 @@ import { getDestinationsHandler } from '../../../src/controllers/handlers/destin
 import { createPlacesDbMockComponent, createTestPlace, createTestWorldPlace } from '../../mocks/places-db-mock'
 import { createDestinationsApiMockComponent, createTestDestination, createTestWorldDestination, createDestinationsResponse } from '../../mocks/destinations-api-mock'
 import { createLogsMockComponent } from '../../mocks/logs-mock'
+import { createContentPolicyMockComponent } from '../../mocks/content-policy-mock'
 
 describe('get-destinations-handler', () => {
   let mockPlacesDb: ReturnType<typeof createPlacesDbMockComponent>
   let mockDestinationsApi: ReturnType<typeof createDestinationsApiMockComponent>
   let mockLogs: ReturnType<typeof createLogsMockComponent>
+  let mockContentPolicy: ReturnType<typeof createContentPolicyMockComponent>
 
   beforeEach(() => {
     mockPlacesDb = createPlacesDbMockComponent()
     mockDestinationsApi = createDestinationsApiMockComponent()
     mockLogs = createLogsMockComponent()
+    // Flag off: `allowed_ios` is the legacy allow-list these suites pin down
+    mockContentPolicy = createContentPolicyMockComponent()
   })
 
   function createContext(url: string, headers: Record<string, string> = {}) {
@@ -20,6 +24,7 @@ describe('get-destinations-handler', () => {
       components: {
         placesDb: mockPlacesDb,
         destinationsApi: mockDestinationsApi,
+        contentPolicy: mockContentPolicy,
         logs: mockLogs
       },
       url: new URL(url),
@@ -392,6 +397,110 @@ describe('get-destinations-handler', () => {
 
       const logger = mockLogs.getLogger('get-destinations')
       expect(logger.error).toHaveBeenCalledWith('Error', { error: 'Connection timeout' })
+    })
+  })
+
+  describe('block list (ios-blocklist flag on)', () => {
+    const casino = createTestDestination({ id: 'casino', base_position: '1,1', categories: ['casino'] })
+    const adult = createTestDestination({ id: 'adult', base_position: '2,2', content_rating: 'A' })
+    const restricted = createTestDestination({ id: 'restricted', base_position: '3,3', content_rating: 'R' })
+    const banned = createTestDestination({ id: 'banned', base_position: '4,4', positions: ['4,4', '4,5'] })
+    const bannedWorld = createTestWorldDestination({ id: 'banned-world', world_name: 'Sin.dcl.eth' })
+    const unrated = createTestDestination({ id: 'unrated', base_position: '5,5', content_rating: 'RP' })
+    const teen = createTestDestination({ id: 'teen', base_position: '6,6', content_rating: 'T', categories: ['game'] })
+
+    beforeEach(() => {
+      mockContentPolicy = createContentPolicyMockComponent({
+        blockList: true,
+        index: { parcels: new Set(['4,5']), worlds: new Set(['sin.dcl.eth']) }
+      })
+    })
+
+    describe('when the request carries only allowed_ios', () => {
+      it('should list the whole catalog minus casino, adult, restricted and banned rows', async () => {
+        mockDestinationsApi.proxyQuery.mockResolvedValue(
+          createDestinationsResponse([casino, adult, restricted, banned, bannedWorld, unrated, teen])
+        )
+
+        const context = createContext('http://localhost/destinations?tag=allowed_ios&only_places=true&limit=12')
+        const response = await getDestinationsHandler(context as any)
+
+        expect(response.status).toBe(200)
+        expect(response.body).toEqual({ ok: true, data: [unrated, teen], total: 2 })
+        expect(mockPlacesDb.getAllPlaces).not.toHaveBeenCalled()
+        expect(mockDestinationsApi.proxyQuery).toHaveBeenCalledWith('only_places=true&limit=100&offset=0', {})
+      })
+
+      it('should top a filtered page up from the next upstream page so offsets stay stable', async () => {
+        const firstPage = Array.from({ length: 100 }, (_, i) =>
+          createTestDestination({ id: `a${i}`, base_position: `10,${i}`, content_rating: i < 5 ? 'A' : 'T' })
+        )
+        const secondPage = Array.from({ length: 20 }, (_, i) =>
+          createTestDestination({ id: `b${i}`, base_position: `20,${i}` })
+        )
+        mockDestinationsApi.proxyQuery.mockImplementation(async (query: string) =>
+          createDestinationsResponse(new URLSearchParams(query).get('offset') === '0' ? firstPage : secondPage)
+        )
+
+        const context = createContext('http://localhost/destinations?tag=allowed_ios&offset=90&limit=10')
+        const response = await getDestinationsHandler(context as any)
+
+        const body = response.body as { data: { id: string }[] }
+        // 95 rows survive the first page: 90..94 are its last five, then the second page starts
+        expect(body.data.map((d) => d.id)).toEqual(['a95', 'a96', 'a97', 'a98', 'a99', 'b0', 'b1', 'b2', 'b3', 'b4'])
+        expect(mockDestinationsApi.proxyQuery).toHaveBeenCalledTimes(2)
+      })
+
+      it('should stop at the last upstream page', async () => {
+        mockDestinationsApi.proxyQuery.mockResolvedValue(createDestinationsResponse([casino, unrated]))
+
+        const context = createContext('http://localhost/destinations?tag=allowed_ios&offset=12&limit=12')
+        const response = await getDestinationsHandler(context as any)
+
+        expect(response.body).toEqual({ ok: true, data: [], total: 0 })
+        expect(mockDestinationsApi.proxyQuery).toHaveBeenCalledTimes(1)
+      })
+
+      it('should rank most_active over the filtered window', async () => {
+        const busyCasino = { ...casino, user_count: 50 }
+        const busy = createTestDestination({ id: 'busy', base_position: '7,7', user_count: 9 })
+        const quiet = createTestDestination({ id: 'quiet', base_position: '8,8', user_count: 3 })
+        mockDestinationsApi.proxyQuery.mockResolvedValue(createDestinationsResponse([quiet, busyCasino, busy]))
+
+        const context = createContext('http://localhost/destinations?tag=allowed_ios&order_by=most_active&limit=12')
+        const response = await getDestinationsHandler(context as any)
+
+        const body = response.body as { data: { id: string }[] }
+        expect(body.data.map((d) => d.id)).toEqual(['busy', 'quiet'])
+        expect(mockDestinationsApi.proxyQuery).toHaveBeenCalledWith('order_by=most_active&limit=100&offset=0', {})
+      })
+    })
+
+    describe('when the request also carries a curated tag', () => {
+      it('should keep the curated places of that tag, minus the blocked ones', async () => {
+        const places = [createTestPlace({ id: 'p1', basePosition: '1,1' }), createTestPlace({ id: 'p2', basePosition: '5,5' })]
+        mockPlacesDb.getAllPlaces.mockResolvedValue(places)
+        mockDestinationsApi.getForPlaces.mockResolvedValue(createDestinationsResponse([casino, unrated]))
+
+        const context = createContext('http://localhost/destinations?offset=0&tag=ftue&sdk=7&tag=allowed_ios')
+        const response = await getDestinationsHandler(context as any)
+
+        expect(response.body).toEqual({ ok: true, data: [unrated], total: 1 })
+        expect(mockPlacesDb.getAllPlaces).toHaveBeenCalledWith(['ftue'])
+        expect(mockDestinationsApi.getForPlaces).toHaveBeenCalledWith(places, 'offset=0&sdk=7', {})
+      })
+    })
+
+    describe('when the request does not carry allowed_ios', () => {
+      it('should proxy unfiltered without reading the flag', async () => {
+        mockDestinationsApi.proxyQuery.mockResolvedValue(createDestinationsResponse([casino, unrated]))
+
+        const context = createContext('http://localhost/destinations?limit=12')
+        const response = await getDestinationsHandler(context as any)
+
+        expect(response.body).toEqual({ ok: true, data: [casino, unrated], total: 2 })
+        expect(mockContentPolicy.isBlockListEnabled).not.toHaveBeenCalled()
+      })
     })
   })
 })
