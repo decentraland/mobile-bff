@@ -2,6 +2,7 @@ import { IConfigComponent, IFetchComponent, ILoggerComponent } from '@well-known
 import { IFeatureFlagsDbComponent } from './feature-flags-db'
 import { IPlacesDbComponent } from './places-db'
 import {
+  ALLOWED_IOS_TAG,
   BANNED_IOS_TAG,
   BlockIndex,
   buildBlockIndex,
@@ -91,7 +92,10 @@ export async function createContentPolicyComponent(components: Components): Prom
 
   async function build(): Promise<BlockIndex> {
     const start = Date.now()
-    const banned = await placesDb.getAllPlaces([BANNED_IOS_TAG])
+    const [banned, allowed] = await Promise.all([
+      placesDb.getAllPlaces([BANNED_IOS_TAG]),
+      placesDb.getAllPlaces([ALLOWED_IOS_TAG])
+    ])
     let catalog: DestinationRow[] = []
     try {
       catalog = await fetchCatalog()
@@ -103,10 +107,11 @@ export async function createContentPolicyComponent(components: Components): Prom
         return cached.index
       }
     }
-    const index = buildBlockIndex(catalog, banned)
+    const index = buildBlockIndex(catalog, banned, allowed)
     logger.info('Block index built', {
       catalog: catalog.length,
       banned: banned.length,
+      allowed: allowed.length,
       placeIds: index.placeIds.size,
       parcels: index.parcels.size,
       worlds: index.worlds.size,

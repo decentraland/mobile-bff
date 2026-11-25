@@ -254,8 +254,8 @@ Both endpoints support filtering by internal tags stored in this BFF's database.
 
 | Tag | Description |
 |-----|-------------|
-| `allowed_ios` | Places approved for iOS app (only with the `ios-blocklist` flag off, see [iOS block list](#ios-block-list)) |
-| `banned_ios` | Places hidden from iOS Discover (only with the `ios-blocklist` flag on) |
+| `allowed_ios` | Flag off: the only places the iOS app lists. Flag on: listed on iOS even when the rules below would hide them (see [iOS block list](#ios-block-list)) |
+| `banned_ios` | Places hidden from iOS Discover, even when also tagged `allowed_ios` (only with the `ios-blocklist` flag on) |
 | `featured` | Highlighted/promoted places |
 
 ### Multiple Tags (AND Logic)
@@ -283,10 +283,10 @@ Requests without `allowed_ios` (Android) are never filtered, whatever the flag.
 
 ### What is blocked
 
-- Places in the `casino` category, or rated `A` (adult) or `R` (restricted) on Places. Unrated places
-  (`RP`, `PR`) are allowed.
+- Places in the `casino` category, or rated `A` (adult) or `R` (restricted) on Places, unless they
+  are tagged `allowed_ios`. Unrated places (`RP`, `PR`) are allowed.
 - Every place tagged `banned_ios` in the backoffice (every parcel of a scene, or a world), the
-  manual list for porn, nudity, gambling and crypto scams.
+  manual list for porn, nudity, gambling and crypto scams. It wins over `allowed_ios`.
 
 ### How each endpoint applies it
 
@@ -301,7 +301,7 @@ Every `tag` param counts: clients send the curated tag and `allowed_ios` as two 
 
 ### Freshness
 
-The block index (upstream catalog + `banned_ios` places) is rebuilt every
+The block index (upstream catalog + `banned_ios` and `allowed_ios` places) is rebuilt every
 `CONTENT_POLICY_CACHE_TTL_MS` (10 minutes); a stale index answers while the next one builds. Lists
 are filtered on every request, after their own cache, so a new `banned_ios` tag reaches Discover
 within that window. Flipping the flag applies to the next request.

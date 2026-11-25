@@ -431,6 +431,19 @@ describe('get-destinations-handler', () => {
         expect(mockDestinationsApi.proxyQuery).toHaveBeenCalledWith('only_places=true&limit=100&offset=0', {})
       })
 
+      it('should list a rated place tagged allowed_ios', async () => {
+        mockContentPolicy = createContentPolicyMockComponent({
+          blockList: true,
+          index: { allowed: { parcels: new Set(['2,2']), worlds: new Set() } }
+        })
+        mockDestinationsApi.proxyQuery.mockResolvedValue(createDestinationsResponse([adult, restricted]))
+
+        const context = createContext('http://localhost/destinations?tag=allowed_ios')
+        const response = await getDestinationsHandler(context as any)
+
+        expect(response.body).toEqual({ ok: true, data: [adult], total: 1 })
+      })
+
       it('should top a filtered page up from the next upstream page so offsets stay stable', async () => {
         const firstPage = Array.from({ length: 100 }, (_, i) =>
           createTestDestination({ id: `a${i}`, base_position: `10,${i}`, content_rating: i < 5 ? 'A' : 'T' })

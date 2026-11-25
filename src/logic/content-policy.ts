@@ -1,10 +1,12 @@
 import type { Place } from '../adapters/places-db'
 
 // The tag iOS clients send on every Discover request. With the block list on it no longer
-// restricts results to the places tagged with it: it marks the request as one to filter.
+// restricts results to the places tagged with it: it marks the request as one to filter, and a
+// place tagged with it stays listed even when the rules below would hide it.
 export const ALLOWED_IOS_TAG = 'allowed_ios'
 
 // The manual block list: places tagged with it in the backoffice, on top of the rules below.
+// It wins over `allowed_ios`.
 export const BANNED_IOS_TAG = 'banned_ios'
 
 // Seeded on, so a missing row or an unreadable flag also means the block list.
@@ -15,11 +17,16 @@ export const IOS_BLOCKLIST_FLAG = 'ios-blocklist'
 export const BLOCKED_CATEGORIES = ['casino']
 export const BLOCKED_RATINGS = ['A', 'R']
 
-export type BlockIndex = {
-  placeIds: Set<string>
+type PlaceSet = {
   parcels: Set<string>
   // Lowercased `.dcl.eth` names
   worlds: Set<string>
+}
+
+export type BlockIndex = PlaceSet & {
+  placeIds: Set<string>
+  // The places tagged `allowed_ios`, which the rules leave listed
+  allowed: PlaceSet
 }
 
 // The fields of a Places destination the rules read; the rest of the row passes through.
@@ -41,7 +48,12 @@ export type EventRow = {
 }
 
 export function emptyBlockIndex(): BlockIndex {
-  return { placeIds: new Set(), parcels: new Set(), worlds: new Set() }
+  return {
+    placeIds: new Set(),
+    parcels: new Set(),
+    worlds: new Set(),
+    allowed: { parcels: new Set(), worlds: new Set() }
+  }
 }
 
 export function isBlockedByRule(destination: DestinationRow): boolean {
@@ -59,28 +71,40 @@ function parcelsOf(destination: DestinationRow): string[] {
   return destination.base_position ? [destination.base_position, ...positions] : positions
 }
 
-function addPlace(index: BlockIndex, place: Place): void {
+function addPlace(set: PlaceSet, place: Place): void {
   if (place.type === 'world') {
     if (place.worldName) {
-      index.worlds.add(place.worldName.toLowerCase())
+      set.worlds.add(place.worldName.toLowerCase())
     }
     return
   }
   for (const parcel of place.positions) {
-    index.parcels.add(parcel)
+    set.parcels.add(parcel)
   }
   if (place.basePosition) {
-    index.parcels.add(place.basePosition)
+    set.parcels.add(place.basePosition)
   }
 }
 
-// Everything iOS keeps out: the upstream catalog matched against the rules, plus the places
-// tagged `banned_ios` in the BFF's own place table.
-export function buildBlockIndex(catalog: DestinationRow[], banned: Place[]): BlockIndex {
+// A world by name, a scene by any parcel it shares, so a redeploy that moved the base still matches
+function covers(set: PlaceSet, destination: DestinationRow): boolean {
+  if (destination.world_name) {
+    return set.worlds.has(destination.world_name.toLowerCase())
+  }
+  return parcelsOf(destination).some((parcel) => set.parcels.has(parcel))
+}
+
+// Everything iOS keeps out: the upstream catalog matched against the rules, minus the places
+// tagged `allowed_ios`, plus the places tagged `banned_ios` in the BFF's own place table.
+export function buildBlockIndex(catalog: DestinationRow[], banned: Place[], allowed: Place[]): BlockIndex {
   const index = emptyBlockIndex()
 
+  for (const place of allowed) {
+    addPlace(index.allowed, place)
+  }
+
   for (const destination of catalog) {
-    if (!isBlockedByRule(destination)) {
+    if (!isBlockedByRule(destination) || covers(index.allowed, destination)) {
       continue
     }
     index.placeIds.add(destination.id)
@@ -103,13 +127,10 @@ export function buildBlockIndex(catalog: DestinationRow[], banned: Place[]): Blo
 }
 
 export function isDestinationBlocked(destination: DestinationRow, index: BlockIndex): boolean {
-  if (isBlockedByRule(destination) || index.placeIds.has(destination.id)) {
+  if (index.placeIds.has(destination.id) || covers(index, destination)) {
     return true
   }
-  if (destination.world_name) {
-    return index.worlds.has(destination.world_name.toLowerCase())
-  }
-  return parcelsOf(destination).some((parcel) => index.parcels.has(parcel))
+  return isBlockedByRule(destination) && !covers(index.allowed, destination)
 }
 
 export function isEventBlocked(event: EventRow, index: BlockIndex): boolean {

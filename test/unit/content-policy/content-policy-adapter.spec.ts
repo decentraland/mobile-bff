@@ -4,6 +4,7 @@ import { createFeatureFlagsDbJestMockComponent, createTestFeatureFlag } from '..
 import { createFetchMockComponent, createMockResponse } from '../../mocks/fetch-mock'
 import { createLogsMockComponent } from '../../mocks/logs-mock'
 import { createPlacesDbMockComponent, createTestPlace } from '../../mocks/places-db-mock'
+import type { Place } from '../../../src/adapters/places-db'
 
 const API = 'https://places.example.com/api/destinations'
 
@@ -18,6 +19,13 @@ describe('content-policy adapter', () => {
     placesDb = createPlacesDbMockComponent()
     placesDb.getAllPlaces.mockResolvedValue([])
   })
+
+  // getAllPlaces answers per tag: the banned_ios places and the allowed_ios ones
+  function tagged(places: { banned?: Place[]; allowed?: Place[] }) {
+    placesDb.getAllPlaces.mockImplementation(async (tags?: string[]) =>
+      tags?.[0] === 'banned_ios' ? (places.banned ?? []) : (places.allowed ?? [])
+    )
+  }
 
   function create(ttl = '600000') {
     return createContentPolicyComponent({
@@ -64,11 +72,12 @@ describe('content-policy adapter', () => {
           createMockResponse({ data: [{ id: 'c', world: true, world_name: 'Casino.dcl.eth', categories: ['casino'] }] })
         )
         .mockResolvedValueOnce(createMockResponse({ data: [] }))
-      placesDb.getAllPlaces.mockResolvedValue([createTestPlace({ basePosition: '9,9', positions: ['9,9'] })])
+      tagged({ banned: [createTestPlace({ basePosition: '9,9', positions: ['9,9'] })] })
 
       const index = await (await create()).getBlockIndex()
 
       expect(placesDb.getAllPlaces).toHaveBeenCalledWith(['banned_ios'])
+      expect(placesDb.getAllPlaces).toHaveBeenCalledWith(['allowed_ios'])
       expect(fetch.fetch).toHaveBeenNthCalledWith(1, `${API}?offset=0&limit=100`)
       expect(fetch.fetch).toHaveBeenNthCalledWith(2, `${API}?offset=100&limit=100`)
       expect(index.placeIds).toEqual(new Set(['a', 'c']))
@@ -88,6 +97,23 @@ describe('content-policy adapter', () => {
       expect(fetch.fetch).toHaveBeenLastCalledWith(`${API}?offset=400&limit=100`)
     })
 
+    it('should leave out the rule-blocked places tagged allowed_ios', async () => {
+      fetch.fetch.mockResolvedValue(
+        createMockResponse({
+          data: [
+            { id: 'kept', base_position: '1,1', positions: ['1,1'], content_rating: 'A' },
+            { id: 'hidden', base_position: '2,2', positions: ['2,2'], content_rating: 'A' }
+          ]
+        })
+      )
+      tagged({ allowed: [createTestPlace({ basePosition: '1,1', positions: ['1,1'] })] })
+
+      const index = await (await create()).getBlockIndex()
+
+      expect(index.placeIds).toEqual(new Set(['hidden']))
+      expect(index.allowed.parcels).toEqual(new Set(['1,1']))
+    })
+
     it('should build once and serve concurrent and later callers from the cache', async () => {
       fetch.fetch.mockResolvedValue(createMockResponse({ data: [] }))
       const policy = await create()
@@ -96,17 +122,17 @@ describe('content-policy adapter', () => {
       await policy.getBlockIndex()
 
       expect(fetch.fetch).toHaveBeenCalledTimes(1)
-      expect(placesDb.getAllPlaces).toHaveBeenCalledTimes(1)
+      // Once for banned_ios, once for allowed_ios
+      expect(placesDb.getAllPlaces).toHaveBeenCalledTimes(2)
     })
 
     it('should answer the stale index while it rebuilds once the cache expires', async () => {
       fetch.fetch.mockResolvedValue(createMockResponse({ data: [] }))
-      placesDb.getAllPlaces
-        .mockResolvedValueOnce([createTestPlace({ basePosition: '1,1', positions: ['1,1'] })])
-        .mockResolvedValueOnce([createTestPlace({ basePosition: '2,2', positions: ['2,2'] })])
+      tagged({ banned: [createTestPlace({ basePosition: '1,1', positions: ['1,1'] })] })
       const policy = await create('0')
 
       const first = await policy.getBlockIndex()
+      tagged({ banned: [createTestPlace({ basePosition: '2,2', positions: ['2,2'] })] })
       await new Promise((resolve) => setTimeout(resolve, 2))
       const stale = await policy.getBlockIndex()
       await new Promise((resolve) => setTimeout(resolve, 2))
@@ -119,7 +145,7 @@ describe('content-policy adapter', () => {
 
     it('should still index the banned_ios places when the catalog is unreachable', async () => {
       fetch.fetch.mockResolvedValue(createMockResponse({}, false, 503))
-      placesDb.getAllPlaces.mockResolvedValue([createTestPlace({ basePosition: '9,9', positions: ['9,9'] })])
+      tagged({ banned: [createTestPlace({ basePosition: '9,9', positions: ['9,9'] })] })
 
       const index = await (await create()).getBlockIndex()
 
@@ -135,7 +161,8 @@ describe('content-policy adapter', () => {
       await policy.getBlockIndex()
 
       expect(index.parcels.size + index.worlds.size + index.placeIds.size).toBe(0)
-      expect(placesDb.getAllPlaces).toHaveBeenCalledTimes(2)
+      // Two builds, each asking for banned_ios and allowed_ios
+      expect(placesDb.getAllPlaces).toHaveBeenCalledTimes(4)
     })
   })
 })

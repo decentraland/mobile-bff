@@ -34,6 +34,7 @@ describe('content-policy rules', () => {
           { id: 'world', world: true, world_name: 'Sin.dcl.eth', categories: ['casino'] },
           { id: 'fine', base_position: '9,9', positions: ['9,9'], content_rating: 'T' }
         ],
+        [],
         []
       )
 
@@ -48,12 +49,41 @@ describe('content-policy rules', () => {
         createTestWorldPlace({ id: 'world', worldName: 'Banned.dcl.eth' })
       ]
 
-      const index = buildBlockIndex([], banned)
+      const index = buildBlockIndex([], banned, [])
 
       expect(index.parcels).toEqual(new Set(['5,5', '5,6']))
       expect(index.worlds).toEqual(new Set(['banned.dcl.eth']))
       // The BFF's own place ids are not Places ids
       expect(index.placeIds.size).toBe(0)
+    })
+
+    it('should leave a rule-blocked place tagged allowed_ios out, matching a scene on any parcel', () => {
+      const allowed = [
+        createTestPlace({ id: 'scene', basePosition: '1,1', positions: ['1,1'] }),
+        createTestWorldPlace({ id: 'world', worldName: 'Sin.dcl.eth' })
+      ]
+
+      const index = buildBlockIndex(
+        [
+          { id: 'scene', base_position: '1,2', positions: ['1,1', '1,2'], content_rating: 'A' },
+          { id: 'world', world: true, world_name: 'sin.dcl.eth', categories: ['casino'] },
+          { id: 'other', world: true, world_name: 'other.dcl.eth', content_rating: 'R' }
+        ],
+        [],
+        allowed
+      )
+
+      expect(index.placeIds).toEqual(new Set(['other']))
+      expect(index.parcels.size).toBe(0)
+      expect(index.worlds).toEqual(new Set(['other.dcl.eth']))
+    })
+
+    it('should keep a place tagged both banned_ios and allowed_ios blocked', () => {
+      const place = createTestWorldPlace({ worldName: 'both.dcl.eth' })
+
+      const index = buildBlockIndex([], [place], [place])
+
+      expect(index.worlds).toEqual(new Set(['both.dcl.eth']))
     })
   })
 
@@ -75,6 +105,22 @@ describe('content-policy rules', () => {
     it('should let everything else through', () => {
       expect(isDestinationBlocked({ id: 'p', base_position: '4,4', positions: ['4,4'] }, index)).toBe(false)
       expect(isDestinationBlocked({ id: 'w', world: true, world_name: 'fine.dcl.eth' }, index)).toBe(false)
+    })
+
+    it('should let a place tagged allowed_ios through the rules, but not through a ban', () => {
+      const withAllowed = {
+        ...index,
+        allowed: { parcels: new Set(['7,7', '4,5']), worlds: new Set(['adult.dcl.eth', 'sin.dcl.eth']) }
+      }
+
+      expect(
+        isDestinationBlocked({ id: 'a', base_position: '7,7', positions: ['7,7'], content_rating: 'A' }, withAllowed)
+      ).toBe(false)
+      expect(
+        isDestinationBlocked({ id: 'w', world: true, world_name: 'Adult.dcl.eth', categories: ['casino'] }, withAllowed)
+      ).toBe(false)
+      expect(isDestinationBlocked({ id: 'w', world: true, world_name: 'sin.dcl.eth' }, withAllowed)).toBe(true)
+      expect(isDestinationBlocked({ id: 'p', base_position: '4,5', positions: ['4,5'] }, withAllowed)).toBe(true)
     })
   })
 
