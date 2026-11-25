@@ -4,17 +4,22 @@ import { IPlacesDbComponent } from './places-db'
 import {
   ALLOWED_IOS_TAG,
   BANNED_IOS_TAG,
+  BANNED_TAG,
   BlockIndex,
   buildBlockIndex,
   DestinationRow,
   emptyBlockIndex,
-  IOS_BLOCKLIST_FLAG
+  IOS_BLOCKLIST_FLAG,
+  PlaceSet,
+  placeSetOf
 } from '../logic/content-policy'
 
 export interface IContentPolicyComponent {
   // Whether iOS requests get the block list (true) or the legacy `allowed_ios` allow-list (false)
   isBlockListEnabled(): Promise<boolean>
   getBlockIndex(): Promise<BlockIndex>
+  // The places tagged `banned`, hidden on every platform; null while there are none
+  getBannedPlaces(): Promise<PlaceSet | null>
 }
 
 type Components = {
@@ -36,8 +41,8 @@ export async function createContentPolicyComponent(components: Components): Prom
   const logger = logs.getLogger('content-policy')
 
   const apiUrl = (await config.getString('DESTINATIONS_API_URL')) ?? 'https://places.decentraland.org/api/destinations'
-  // A `banned_ios` tag and upstream ratings reach iOS within this window; the list responses are
-  // filtered on every request, after their own (longer) cache.
+  // A `banned` or `banned_ios` tag and upstream ratings reach the apps within this window; the
+  // list responses are filtered on every request, after their own (longer) cache.
   const ttl = parseInt((await config.getString('CONTENT_POLICY_CACHE_TTL_MS')) ?? '600000')
 
   let cached: { index: BlockIndex; expiresAt: number } | null = null
@@ -143,5 +148,21 @@ export async function createContentPolicyComponent(components: Components): Prom
     return cached ? cached.index : building
   }
 
-  return { isBlockListEnabled, getBlockIndex }
+  let banned: { set: PlaceSet | null; expiresAt: number } | null = null
+
+  async function getBannedPlaces(): Promise<PlaceSet | null> {
+    if (banned && Date.now() < banned.expiresAt) {
+      return banned.set
+    }
+    try {
+      const places = await placesDb.getAllPlaces([BANNED_TAG])
+      banned = { set: places.length > 0 ? placeSetOf(places) : null, expiresAt: Date.now() + ttl }
+      return banned.set
+    } catch (error) {
+      logger.warn('Could not read the banned places, keeping the last list', { error: (error as Error).message })
+      return banned?.set ?? null
+    }
+  }
+
+  return { isBlockListEnabled, getBlockIndex, getBannedPlaces }
 }

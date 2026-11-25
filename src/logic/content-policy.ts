@@ -9,6 +9,9 @@ export const ALLOWED_IOS_TAG = 'allowed_ios'
 // It wins over `allowed_ios`.
 export const BANNED_IOS_TAG = 'banned_ios'
 
+// Hidden from Discover on every platform, whatever the flag or `allowed_ios` say.
+export const BANNED_TAG = 'banned'
+
 // Seeded on, so a missing row or an unreadable flag also means the block list.
 export const IOS_BLOCKLIST_FLAG = 'ios-blocklist'
 
@@ -17,7 +20,7 @@ export const IOS_BLOCKLIST_FLAG = 'ios-blocklist'
 export const BLOCKED_CATEGORIES = ['casino']
 export const BLOCKED_RATINGS = ['A', 'R']
 
-type PlaceSet = {
+export type PlaceSet = {
   parcels: Set<string>
   // Lowercased `.dcl.eth` names
   worlds: Set<string>
@@ -86,8 +89,16 @@ function addPlace(set: PlaceSet, place: Place): void {
   }
 }
 
+export function placeSetOf(places: Place[]): PlaceSet {
+  const set: PlaceSet = { parcels: new Set(), worlds: new Set() }
+  for (const place of places) {
+    addPlace(set, place)
+  }
+  return set
+}
+
 // A world by name, a scene by any parcel it shares, so a redeploy that moved the base still matches
-function covers(set: PlaceSet, destination: DestinationRow): boolean {
+export function covers(set: PlaceSet, destination: DestinationRow): boolean {
   if (destination.world_name) {
     return set.worlds.has(destination.world_name.toLowerCase())
   }
@@ -137,12 +148,16 @@ export function isEventBlocked(event: EventRow, index: BlockIndex): boolean {
   if (typeof event.place_id === 'string' && index.placeIds.has(event.place_id)) {
     return true
   }
+  return coversEvent(index, event)
+}
+
+export function coversEvent(set: PlaceSet, event: EventRow): boolean {
   // A world event carries a placeholder `[0, 0]` position: its world is the server name.
   if (event.world) {
-    return typeof event.server === 'string' && index.worlds.has(event.server.toLowerCase())
+    return typeof event.server === 'string' && set.worlds.has(event.server.toLowerCase())
   }
   if (Array.isArray(event.position) && event.position.length === 2) {
-    return index.parcels.has(`${event.position[0]},${event.position[1]}`)
+    return set.parcels.has(`${event.position[0]},${event.position[1]}`)
   }
   return false
 }

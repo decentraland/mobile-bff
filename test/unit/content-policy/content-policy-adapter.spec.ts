@@ -3,7 +3,7 @@ import { createConfigJestMockComponent } from '../../mocks/config-mock'
 import { createFeatureFlagsDbJestMockComponent, createTestFeatureFlag } from '../../mocks/feature-flags-db-mock'
 import { createFetchMockComponent, createMockResponse } from '../../mocks/fetch-mock'
 import { createLogsMockComponent } from '../../mocks/logs-mock'
-import { createPlacesDbMockComponent, createTestPlace } from '../../mocks/places-db-mock'
+import { createPlacesDbMockComponent, createTestPlace, createTestWorldPlace } from '../../mocks/places-db-mock'
 import type { Place } from '../../../src/adapters/places-db'
 
 const API = 'https://places.example.com/api/destinations'
@@ -163,6 +163,37 @@ describe('content-policy adapter', () => {
       expect(index.parcels.size + index.worlds.size + index.placeIds.size).toBe(0)
       // Two builds, each asking for banned_ios and allowed_ios
       expect(placesDb.getAllPlaces).toHaveBeenCalledTimes(4)
+    })
+  })
+
+  describe('getBannedPlaces', () => {
+    const scene = createTestPlace({ id: 'scene', basePosition: '1,1', positions: ['1,1', '1,2'] })
+    const world = createTestWorldPlace({ id: 'world', worldName: 'Sin.dcl.eth' })
+
+    it('should answer the parcels and worlds tagged banned, read once per window', async () => {
+      placesDb.getAllPlaces.mockResolvedValue([scene, world])
+      const policy = await create()
+
+      const banned = await policy.getBannedPlaces()
+      await policy.getBannedPlaces()
+
+      expect(banned).toEqual({ parcels: new Set(['1,1', '1,2']), worlds: new Set(['sin.dcl.eth']) })
+      expect(placesDb.getAllPlaces).toHaveBeenCalledTimes(1)
+      expect(placesDb.getAllPlaces).toHaveBeenCalledWith(['banned'])
+    })
+
+    it('should answer null while no place is tagged banned', async () => {
+      expect(await (await create()).getBannedPlaces()).toBeNull()
+    })
+
+    it('should keep the last list when the database fails', async () => {
+      placesDb.getAllPlaces.mockResolvedValueOnce([scene]).mockRejectedValueOnce(new Error('db down'))
+      const policy = await create('0')
+
+      const first = await policy.getBannedPlaces()
+
+      expect(await policy.getBannedPlaces()).toBe(first)
+      expect(placesDb.getAllPlaces).toHaveBeenCalledTimes(2)
     })
   })
 })

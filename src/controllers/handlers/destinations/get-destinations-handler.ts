@@ -1,6 +1,6 @@
 import { HandlerContextWithPath } from '../../../types'
 import { Destination, DestinationsResponse, IDestinationsApiComponent } from '../../../adapters/destinations-api'
-import { ALLOWED_IOS_TAG, isDestinationBlocked } from '../../../logic/content-policy'
+import { ALLOWED_IOS_TAG, covers, isDestinationBlocked } from '../../../logic/content-policy'
 
 // TEMP workaround (decentraland/godot-explorer#1827):
 // places.org `/destinations?order_by=most_active` does NOT sort by connected
@@ -121,10 +121,26 @@ export async function getDestinationsHandler(
 
     // Every `tag` param: clients send the curated tag and `allowed_ios` as two of them
     const requestedTags = searchParams.getAll('tag').flatMap((t) => t.split(',')).map((t) => t.trim())
+    const banned = await contentPolicy.getBannedPlaces()
+    let keep: ((d: Destination) => boolean) | null = null
+    let curatedTags: string[] = []
     if (requestedTags.includes(ALLOWED_IOS_TAG) && (await contentPolicy.isBlockListEnabled())) {
       const index = await contentPolicy.getBlockIndex()
-      const keep = (d: Destination) => !isDestinationBlocked(d, index)
-      const curatedTags = requestedTags.filter((t) => t && t !== ALLOWED_IOS_TAG)
+      keep = (d) => !isDestinationBlocked(d, index) && !(banned && covers(banned, d))
+      curatedTags = requestedTags.filter((t) => t && t !== ALLOWED_IOS_TAG)
+    } else if (banned) {
+      // Android, or iOS on the allow-list: the request's own tag filter as below, minus banned places
+      curatedTags = (tagParam ?? '')
+        .split(',')
+        .map((t) => t.trim())
+        .filter(Boolean)
+      if (tagParam && curatedTags.length === 0) {
+        return { status: 400, body: { ok: false, error: 'Invalid tag parameter' } }
+      }
+      keep = (d) => !covers(banned, d)
+    }
+
+    if (keep) {
       searchParams.delete('tag')
 
       if (curatedTags.length > 0) {
