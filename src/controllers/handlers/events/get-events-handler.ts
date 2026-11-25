@@ -3,7 +3,7 @@ import { Place } from '../../../adapters/places-db'
 import { ICacheComponent } from '../../../adapters/cache'
 import { IFetchComponent, ILoggerComponent } from '@well-known-components/interfaces'
 import { IPlacesDbComponent } from '../../../adapters/places-db'
-import { ALLOWED_IOS_TAG, isEventBlocked } from '../../../logic/content-policy'
+import { ALLOWED_IOS_TAG, coversEvent, isEventBlocked, PlaceSet } from '../../../logic/content-policy'
 
 export type Event = {
   id: string
@@ -231,6 +231,14 @@ async function proxyEvents(
   }
 }
 
+function withoutBanned(response: EventsResponse, banned: PlaceSet | null): EventsResponse {
+  if (!banned) {
+    return response
+  }
+  const data = response.data.filter(event => !coversEvent(banned, event))
+  return { ...response, data, total: data.length }
+}
+
 export async function getEventsHandler(
   context: HandlerContextWithPath<'placesDb' | 'fetch' | 'cache' | 'config' | 'contentPolicy' | 'logs', '/events'>
 ) {
@@ -251,6 +259,7 @@ export async function getEventsHandler(
 
     // Every `tag` param: clients send the curated tag and `allowed_ios` as two of them
     const requestedTags = searchParams.getAll('tag').flatMap(t => t.split(',')).map(t => t.trim())
+    const banned = await contentPolicy.getBannedPlaces()
     if (requestedTags.includes(ALLOWED_IOS_TAG) && await contentPolicy.isBlockListEnabled()) {
       const curatedTags = requestedTags.filter(t => t && t !== ALLOWED_IOS_TAG)
       const [index, all] = await Promise.all([
@@ -262,7 +271,7 @@ export async function getEventsHandler(
       ])
       const offset = Math.max(0, parseInt(searchParams.get('offset') || '0', 10) || 0)
       const limit = parseInt(searchParams.get('limit') || '', 10) || undefined
-      const kept = all.data.filter(event => !isEventBlocked(event, index))
+      const kept = withoutBanned(all, banned).data.filter(event => !isEventBlocked(event, index))
       const data = kept.slice(offset, limit === undefined ? undefined : offset + limit)
 
       return { status: 200, body: { ok: all.ok, data, total: data.length } }
@@ -277,12 +286,12 @@ export async function getEventsHandler(
       const places = await placesDb.getAllPlaces(tags)
       const response = await fetchEventsForPlaces(places, search, list, apiUrl, ttl, fetchComponents)
 
-      return { status: 200, body: response }
+      return { status: 200, body: withoutBanned(response, banned) }
     }
 
     // Proxy mode: direct fetch with optional search
     const response = await proxyEvents(search, list, apiUrl, ttl, fetchComponents)
-    return { status: 200, body: response }
+    return { status: 200, body: withoutBanned(response, banned) }
 
   } catch (error) {
     logger.error('Error', { error: (error as Error).message })

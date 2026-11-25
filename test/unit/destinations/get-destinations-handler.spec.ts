@@ -516,4 +516,72 @@ describe('get-destinations-handler', () => {
       })
     })
   })
+
+  describe('banned places (every platform)', () => {
+    const kept = createTestDestination({ id: 'kept', base_position: '1,1' })
+    const adult = createTestDestination({ id: 'adult', base_position: '2,2', content_rating: 'A' })
+    const bannedScene = createTestDestination({ id: 'banned', base_position: '4,4', positions: ['4,4', '4,5'] })
+    const bannedWorld = createTestWorldDestination({ id: 'banned-world', world_name: 'Sin.dcl.eth' })
+    const banned = { parcels: new Set(['4,5']), worlds: new Set(['sin.dcl.eth']) }
+
+    beforeEach(() => {
+      mockContentPolicy = createContentPolicyMockComponent({ banned })
+    })
+
+    it('should drop them from an Android list, read from the first upstream page', async () => {
+      mockDestinationsApi.proxyQuery.mockResolvedValue(createDestinationsResponse([bannedScene, kept, bannedWorld, adult]))
+
+      const context = createContext('http://localhost/destinations?only_places=true&limit=12')
+      const response = await getDestinationsHandler(context as any)
+
+      expect(response.body).toEqual({ ok: true, data: [kept, adult], total: 2 })
+      expect(mockDestinationsApi.proxyQuery).toHaveBeenCalledWith('only_places=true&limit=100&offset=0', {})
+      expect(mockContentPolicy.isBlockListEnabled).not.toHaveBeenCalled()
+    })
+
+    it('should drop them from a curated Android list', async () => {
+      const places = [createTestPlace({ id: 'p1', basePosition: '1,1' }), createTestPlace({ id: 'p2', basePosition: '4,4' })]
+      mockPlacesDb.getAllPlaces.mockResolvedValue(places)
+      mockDestinationsApi.getForPlaces.mockResolvedValue(createDestinationsResponse([kept, bannedScene]))
+
+      const context = createContext('http://localhost/destinations?tag=featured&sdk=7')
+      const response = await getDestinationsHandler(context as any)
+
+      expect(response.body).toEqual({ ok: true, data: [kept], total: 1 })
+      expect(mockPlacesDb.getAllPlaces).toHaveBeenCalledWith(['featured'])
+      expect(mockDestinationsApi.getForPlaces).toHaveBeenCalledWith(places, 'sdk=7', {})
+    })
+
+    it('should drop them from the iOS allow-list, even when tagged allowed_ios', async () => {
+      mockPlacesDb.getAllPlaces.mockResolvedValue([])
+      mockDestinationsApi.getForPlaces.mockResolvedValue(createDestinationsResponse([kept, bannedScene]))
+
+      const context = createContext('http://localhost/destinations?tag=allowed_ios')
+      const response = await getDestinationsHandler(context as any)
+
+      expect(response.body).toEqual({ ok: true, data: [kept], total: 1 })
+      expect(mockPlacesDb.getAllPlaces).toHaveBeenCalledWith(['allowed_ios'])
+    })
+
+    it('should drop them from the iOS block list, even when tagged allowed_ios', async () => {
+      mockContentPolicy = createContentPolicyMockComponent({
+        blockList: true,
+        banned,
+        index: { allowed: { parcels: new Set(['2,2', '4,4']), worlds: new Set() } }
+      })
+      mockDestinationsApi.proxyQuery.mockResolvedValue(createDestinationsResponse([adult, bannedScene, kept]))
+
+      const context = createContext('http://localhost/destinations?tag=allowed_ios')
+      const response = await getDestinationsHandler(context as any)
+
+      expect(response.body).toEqual({ ok: true, data: [adult, kept], total: 2 })
+    })
+
+    it('should still reject a whitespace-only tag', async () => {
+      const context = createContext('http://localhost/destinations?tag=%20%20')
+      const response = await getDestinationsHandler(context as any)
+
+      expect(response.status).toBe(400)
+    })
+  })
 })

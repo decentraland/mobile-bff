@@ -464,4 +464,43 @@ describe('get-events-handler', () => {
       expect(mockPlacesDb.getAllPlaces).toHaveBeenCalledWith(['featured'])
     })
   })
+
+  describe('banned places (every platform)', () => {
+    const atBannedParcel = createTestEvent({ id: 'banned', position: [4, 5] })
+    const inBannedWorld = createTestEvent({ id: 'world', world: true, server: 'Sin.dcl.eth', position: [0, 0] })
+    const open = createTestEvent({ id: 'open', place_id: 'fine', position: [9, 9] })
+    const banned = { parcels: new Set(['4,5']), worlds: new Set(['sin.dcl.eth']) }
+
+    it('should drop their events from an Android list', async () => {
+      mockContentPolicy = createContentPolicyMockComponent({ banned })
+      mockFetch.fetch.mockResolvedValue(createMockResponse(createEventsResponse([atBannedParcel, open, inBannedWorld])))
+
+      const response = await getEventsHandler(createContext('http://localhost/events?sdk=7') as any)
+
+      expect(response.body).toEqual({ ok: true, data: [open], total: 1 })
+      expect(mockContentPolicy.isBlockListEnabled).not.toHaveBeenCalled()
+    })
+
+    it('should drop their events from a curated list', async () => {
+      mockContentPolicy = createContentPolicyMockComponent({ banned })
+      mockPlacesDb.getAllPlaces.mockResolvedValue([
+        createTestPlace({ id: 'p1', basePosition: '4,5', positions: ['4,5'] }),
+        createTestPlace({ id: 'p2', basePosition: '9,9', positions: ['9,9'] })
+      ])
+      mockFetch.fetch.mockResolvedValue(createMockResponse(createEventsResponse([atBannedParcel, open])))
+
+      const response = await getEventsHandler(createContext('http://localhost/events?tag=featured') as any)
+
+      expect(response.body).toEqual({ ok: true, data: [open], total: 1 })
+    })
+
+    it('should drop their events from the iOS block list too', async () => {
+      mockContentPolicy = createContentPolicyMockComponent({ blockList: true, banned })
+      mockFetch.fetch.mockResolvedValue(createMockResponse(createEventsResponse([atBannedParcel, open, inBannedWorld])))
+
+      const response = await getEventsHandler(createContext('http://localhost/events?tag=allowed_ios') as any)
+
+      expect(response.body).toEqual({ ok: true, data: [open], total: 1 })
+    })
+  })
 })
